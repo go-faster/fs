@@ -15,6 +15,10 @@ func Root() *cobra.Command {
 		Use:   "fs",
 		Short: "go-faster file system utilities",
 	}
+
+	// Add subcommands
+	cmd.AddCommand(newS3Command())
+
 	return cmd
 }
 

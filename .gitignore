@@ -13,3 +13,8 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# S3 server data directory
+.s3data/
+bin/
+
