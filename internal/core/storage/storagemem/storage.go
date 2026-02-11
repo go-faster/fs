@@ -30,3 +30,13 @@ func (s Storage) CreateBucket(ctx context.Context, bucket string) error {
 	// TODO: implement me
 	panic("implement me")
 }
+
+func (s Storage) DeleteBucket(ctx context.Context, bucket string) error {
+	// TODO: implement me
+	panic("implement me")
+}
+
+func (s Storage) DeleteObject(ctx context.Context, bucket, key string) error {
+	// TODO: implement me
+	panic("implement me")
+}

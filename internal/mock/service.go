@@ -23,6 +23,12 @@ var _ fs.Service = &ServiceMock{}
 //			CreateBucketFunc: func(ctx context.Context, bucket string) error {
 //				panic("mock out the CreateBucket method")
 //			},
+//			DeleteBucketFunc: func(ctx context.Context, bucket string) error {
+//				panic("mock out the DeleteBucket method")
+//			},
+//			DeleteObjectFunc: func(ctx context.Context, bucket string, key string) error {
+//				panic("mock out the DeleteObject method")
+//			},
 //			ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 //				panic("mock out the ListBuckets method")
 //			},
@@ -42,6 +48,12 @@ type ServiceMock struct {
 	// CreateBucketFunc mocks the CreateBucket method.
 	CreateBucketFunc func(ctx context.Context, bucket string) error
 
+	// DeleteBucketFunc mocks the DeleteBucket method.
+	DeleteBucketFunc func(ctx context.Context, bucket string) error
+
+	// DeleteObjectFunc mocks the DeleteObject method.
+	DeleteObjectFunc func(ctx context.Context, bucket string, key string) error
+
 	// ListBucketsFunc mocks the ListBuckets method.
 	ListBucketsFunc func(ctx context.Context) ([]fs.Bucket, error)
 
@@ -59,6 +71,22 @@ type ServiceMock struct {
 			Ctx context.Context
 			// Bucket is the bucket argument value.
 			Bucket string
+		}
+		// DeleteBucket holds details about calls to the DeleteBucket method.
+		DeleteBucket []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+		}
+		// DeleteObject holds details about calls to the DeleteObject method.
+		DeleteObject []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
 		}
 		// ListBuckets holds details about calls to the ListBuckets method.
 		ListBuckets []struct {
@@ -83,6 +111,8 @@ type ServiceMock struct {
 		}
 	}
 	lockCreateBucket sync.RWMutex
+	lockDeleteBucket sync.RWMutex
+	lockDeleteObject sync.RWMutex
 	lockListBuckets  sync.RWMutex
 	lockListObjects  sync.RWMutex
 	lockPutObject    sync.RWMutex
@@ -121,6 +151,82 @@ func (mock *ServiceMock) CreateBucketCalls() []struct {
 	mock.lockCreateBucket.RLock()
 	calls = mock.calls.CreateBucket
 	mock.lockCreateBucket.RUnlock()
+	return calls
+}
+
+// DeleteBucket calls DeleteBucketFunc.
+func (mock *ServiceMock) DeleteBucket(ctx context.Context, bucket string) error {
+	if mock.DeleteBucketFunc == nil {
+		panic("ServiceMock.DeleteBucketFunc: method is nil but Service.DeleteBucket was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+	}
+	mock.lockDeleteBucket.Lock()
+	mock.calls.DeleteBucket = append(mock.calls.DeleteBucket, callInfo)
+	mock.lockDeleteBucket.Unlock()
+	return mock.DeleteBucketFunc(ctx, bucket)
+}
+
+// DeleteBucketCalls gets all the calls that were made to DeleteBucket.
+// Check the length with:
+//
+//	len(mockedService.DeleteBucketCalls())
+func (mock *ServiceMock) DeleteBucketCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+	}
+	mock.lockDeleteBucket.RLock()
+	calls = mock.calls.DeleteBucket
+	mock.lockDeleteBucket.RUnlock()
+	return calls
+}
+
+// DeleteObject calls DeleteObjectFunc.
+func (mock *ServiceMock) DeleteObject(ctx context.Context, bucket string, key string) error {
+	if mock.DeleteObjectFunc == nil {
+		panic("ServiceMock.DeleteObjectFunc: method is nil but Service.DeleteObject was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		Key:    key,
+	}
+	mock.lockDeleteObject.Lock()
+	mock.calls.DeleteObject = append(mock.calls.DeleteObject, callInfo)
+	mock.lockDeleteObject.Unlock()
+	return mock.DeleteObjectFunc(ctx, bucket, key)
+}
+
+// DeleteObjectCalls gets all the calls that were made to DeleteObject.
+// Check the length with:
+//
+//	len(mockedService.DeleteObjectCalls())
+func (mock *ServiceMock) DeleteObjectCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	Key    string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}
+	mock.lockDeleteObject.RLock()
+	calls = mock.calls.DeleteObject
+	mock.lockDeleteObject.RUnlock()
 	return calls
 }
 

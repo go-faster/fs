@@ -50,3 +50,22 @@ func (s Service) CreateBucket(ctx context.Context, bucket string) error {
 
 	return s.storage.CreateBucket(ctx, bucket)
 }
+
+func (s Service) DeleteBucket(ctx context.Context, bucket string) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	return s.storage.DeleteBucket(ctx, bucket)
+}
+
+func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.DeleteObject(ctx, bucket, key)
+}
