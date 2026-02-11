@@ -12,7 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/root/handler"
+	"github.com/go-faster/fs/internal/root/service"
+	"github.com/go-faster/fs/internal/root/storage/storagefs"
 )
 
 func newS3Command() *cobra.Command {
@@ -64,15 +66,17 @@ func runS3Server(ctx context.Context, addr, root, logLevel string) error {
 		return fmt.Errorf("failed to resolve root path: %w", err)
 	}
 
-	// Create S3 server
-	s3Server, err := fs.NewS3Server(absRoot)
+	storage, err := storagefs.New(absRoot)
 	if err != nil {
-		return fmt.Errorf("failed to create S3 server: %w", err)
+		return fmt.Errorf("failed to create storage: %w", err)
 	}
+
+	svc := service.New(storage)
+	h := handler.New(svc)
 
 	// Create HTTP server
 	mux := http.NewServeMux()
-	mux.Handle("/", s3Server)
+	mux.Handle("/", h)
 
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

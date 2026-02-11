@@ -30,19 +30,7 @@ func NewS3Server(root string) (*S3Server, error) {
 	}, nil
 }
 
-// Object represents an S3 object.
-type Object struct {
-	Key          string
-	Size         int64
-	LastModified time.Time
-	ETag         string
-}
-
 // Bucket represents an S3 bucket.
-type Bucket struct {
-	Name         string
-	CreationDate time.Time
-}
 
 // ListAllMyBucketsResult is the XML response for listing buckets.
 type ListAllMyBucketsResult struct {
@@ -111,6 +99,7 @@ func (s *S3Server) CreateBucket(ctx context.Context, bucket string) error {
 	if err := os.MkdirAll(bucketPath, 0750); err != nil {
 		return fmt.Errorf("failed to create bucket: %w", err)
 	}
+
 	return nil
 }
 
