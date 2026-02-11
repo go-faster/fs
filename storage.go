@@ -4,6 +4,9 @@ import (
 	"context"
 )
 
+// Storage defines the interface for S3-compatible storage operations.
+//
+//go:generate go tool moq -fmt goimports -out ./internal/mock/storage.go -pkg mock . Storage
 type Storage interface {
 	ListBuckets(ctx context.Context) ([]Bucket, error)
 	CreateBucket(ctx context.Context, bucket string) error
