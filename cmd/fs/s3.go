@@ -12,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/go-faster/fs/internal/root/handler"
-	"github.com/go-faster/fs/internal/root/service"
-	"github.com/go-faster/fs/internal/root/storage/storagefs"
+	"github.com/go-faster/fs/internal/core/handler"
+	"github.com/go-faster/fs/internal/core/service"
+	"github.com/go-faster/fs/internal/core/storage/storagefs"
 )
 
 func newS3Command() *cobra.Command {

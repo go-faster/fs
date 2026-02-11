@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-faster/fs/internal/root/storage/storagefs"
+	"github.com/go-faster/fs/internal/core/storage/storagefs"
 )
 
 func newStorage(t testing.TB) *storagefs.Storage {

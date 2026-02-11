@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
-	"github.com/go-faster/fs/internal/root/handler"
+	"github.com/go-faster/fs/internal/core/handler"
 )
 
 func NewClient(t testing.TB, srv *TestServer) *minio.Client {
