@@ -1,0 +1,23 @@
+# https://taskfile.dev
+version: '3'
+
+env:
+  GO111MODULE: on
+  GOPROXY: https://proxy.golang.org,direct
+  IMAGE: '{{default "registry.localhost/go-faster/simon" .IMAGE}}'
+
+vars:
+  DOCKER: '{{default "docker" .DOCKER}}'
+
+tasks:
+  goreleaser:
+    desc: Run GoReleaser either in snapshot or release mode
+    deps:
+      - build
+    env:
+      IMAGE: '{{default "localhost/simon" .IMAGE}}'
+    vars:
+      SNAPSHOT:
+        sh: 'if [[ $GITHUB_REF != refs/tags/v* ]]; then echo "--snapshot"; fi'
+    cmds:
+      - goreleaser release --clean --timeout 60m {{.SNAPSHOT}}
