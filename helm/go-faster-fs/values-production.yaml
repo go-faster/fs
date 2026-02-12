@@ -1,0 +1,89 @@
+# Example values for go-faster-fs with persistent storage
+# This file demonstrates a production-ready configuration
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/go-faster/fs
+  pullPolicy: IfNotPresent
+  tag: ""
+
+config:
+  addr: ":8080"
+  root: "/data"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Enable persistent storage with a 50Gi PVC
+persistence:
+  enabled: true
+  emptyDir: false
+  storageClass: "standard"
+  accessMode: ReadWriteOnce
+  size: 50Gi
+
+# Set resource limits for production
+resources:
+  limits:
+    cpu: 2000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 256Mi
+
+# Enable ingress for external access
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: s3.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: fs-tls
+      hosts:
+        - s3.example.com
+
+# Enable horizontal pod autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+
+# Pod anti-affinity to spread replicas across nodes
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - go-faster-fs
+          topologyKey: kubernetes.io/hostname
+
