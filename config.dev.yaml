@@ -1,0 +1,39 @@
+# Development Configuration for go-faster/fs
+#
+# This configuration is optimized for local development with:
+# - Fast timeouts
+# - Verbose logging
+# - Local-only binding
+
+server:
+  # Bind to localhost only for security
+  addr: "127.0.0.1:8080"
+
+  # Shorter timeouts for development
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 30s
+
+  health_path: "/health"
+
+storage:
+  # Local development storage
+  root: ".s3data"
+
+  type: "filesystem"
+
+  # Pre-create development buckets
+  buckets:
+    - dev-bucket
+    - test-bucket
+
+observability:
+  service_name: "go-faster/fs-dev"
+
+  # Enable request logging for debugging
+  enable_request_logging: true
+
+  # Metrics and tracing can be disabled for faster local development
+  enable_metrics: true
+  enable_tracing: true
+

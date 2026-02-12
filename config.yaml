@@ -1,0 +1,49 @@
+# go-faster/fs Configuration File
+#
+# This file contains the configuration for the S3-compatible storage server.
+# All settings have sensible defaults and can be overridden via command-line flags.
+
+# Server configuration
+server:
+  # Address to listen on
+  # Format: "host:port" or ":port"
+  # Examples: ":8080", "127.0.0.1:8080", "0.0.0.0:9000"
+  addr: ":8080"
+
+  # HTTP server timeouts
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+  # Health check endpoint path
+  health_path: "/health"
+
+# Storage configuration
+storage:
+  # Root directory for S3 storage
+  # This directory will contain all buckets and objects
+  root: ".s3data"
+
+  # Storage backend type (currently only "filesystem" is supported)
+  type: "filesystem"
+
+  # Pre-create these buckets on startup (optional)
+  # Useful for Kubernetes deployments or development environments
+  # buckets:
+  #   - my-bucket
+  #   - test-bucket
+
+# Observability configuration
+observability:
+  # Service name for telemetry (OpenTelemetry traces, metrics, logs)
+  service_name: "go-faster/fs"
+
+  # Enable HTTP request logging
+  enable_request_logging: true
+
+  # Enable Prometheus metrics
+  enable_metrics: true
+
+  # Enable OpenTelemetry tracing
+  enable_tracing: true
+

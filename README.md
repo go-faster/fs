@@ -57,15 +57,55 @@ go build -o bin/fs ./cmd/fs
 
 ## Usage
 
+### Quick Start
+
 ```bash
 # Start S3 server with defaults
 fs s3
 
 # Show help
 fs s3 --help
+```
 
-# Custom configuration
+### Configuration
+
+The server supports both YAML configuration files and command-line flags:
+
+```bash
+# Using YAML configuration
+fs s3 --config config.yaml
+
+# Using command-line flags
 fs s3 --addr :9000 --root /var/lib/s3data
+
+# Mix both (flags override config file)
+fs s3 --config config.yaml --addr :9000
+
+# Generate example configuration
+fs s3 --generate-config > my-config.yaml
+```
+
+See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration documentation.
+
+### Example Configuration
+
+```yaml
+server:
+  addr: ":8080"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  health_path: "/health"
+
+storage:
+  root: ".s3data"
+  type: "filesystem"
+
+observability:
+  service_name: "go-faster/fs"
+  enable_request_logging: true
+  enable_metrics: true
+  enable_tracing: true
 ```
 
 ## Development

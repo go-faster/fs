@@ -35,7 +35,38 @@ helm delete my-fs
 
 ## Configuration
 
-The following table lists the configurable parameters of the go-faster-fs chart and their default values.
+The chart uses a ConfigMap to manage application configuration. All configuration is defined in YAML format in the `values.yaml` file under the `config` section.
+
+### Configuration Parameters
+
+#### Server Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `config.server.addr` | Server listen address | `":8080"` |
+| `config.server.readTimeout` | HTTP read timeout | `"30s"` |
+| `config.server.writeTimeout` | HTTP write timeout | `"30s"` |
+| `config.server.idleTimeout` | HTTP idle timeout | `"2m0s"` |
+| `config.server.healthPath` | Health check endpoint path | `"/health"` |
+
+#### Storage Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `config.storage.root` | Root directory for S3 storage | `"/data"` |
+| `config.storage.type` | Storage backend type | `"filesystem"` |
+| `config.storage.buckets` | List of buckets to pre-create on startup | `[]` |
+
+#### Observability Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `config.observability.serviceName` | Service name for telemetry | `"go-faster/fs"` |
+| `config.observability.enableRequestLogging` | Enable HTTP request logging | `true` |
+| `config.observability.enableMetrics` | Enable Prometheus metrics | `true` |
+| `config.observability.enableTracing` | Enable OpenTelemetry tracing | `true` |
+
+#### General Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -43,8 +74,6 @@ The following table lists the configurable parameters of the go-faster-fs chart 
 | `image.repository` | Image repository | `ghcr.io/go-faster/fs` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `image.tag` | Image tag (defaults to chart appVersion) | `""` |
-| `config.addr` | Server listen address | `":8080"` |
-| `config.root` | Root directory for S3 storage | `"/data"` |
 | `service.type` | Kubernetes service type | `ClusterIP` |
 | `service.port` | Service port | `8080` |
 | `persistence.enabled` | Enable persistent storage | `true` |
@@ -73,6 +102,58 @@ Alternatively, a YAML file that specifies the values for the parameters can be p
 ```bash
 helm install my-fs ./go-faster-fs -f values.yaml
 ```
+
+### ConfigMap-Based Configuration
+
+The chart automatically creates a ConfigMap containing the application configuration. The entire `config` section from `values.yaml` is rendered as a YAML configuration file and mounted into the pod at `/etc/fs/config.yaml`.
+
+Example configuration in `values.yaml`:
+
+```yaml
+config:
+  server:
+    addr: ":9000"
+    readTimeout: "60s"
+    writeTimeout: "2m0s"
+    idleTimeout: "5m0s"
+  storage:
+    root: "/data"
+    type: "filesystem"
+  observability:
+    serviceName: "my-s3-server"
+    enableRequestLogging: true
+    enableMetrics: true
+    enableTracing: true
+```
+
+This will be automatically converted to a ConfigMap and mounted into the application. Configuration changes require a pod restart to take effect.
+
+#### Pre-Creating Buckets
+
+You can configure buckets to be automatically created when the server starts:
+
+```yaml
+config:
+  storage:
+    root: "/data"
+    buckets:
+      - uploads
+      - backups
+      - temp-files
+```
+
+This is useful for:
+- Ensuring required buckets exist before applications connect
+- Kubernetes deployments with init requirements
+- Simplifying setup in development/staging environments
+
+To view the generated ConfigMap:
+
+```bash
+kubectl get configmap <release-name>-go-faster-fs-config -o yaml
+```
+
+For detailed configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Storage Configuration
 

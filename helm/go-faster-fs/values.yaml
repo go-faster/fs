@@ -55,10 +55,43 @@ securityContext:
 
 # Application-specific configuration
 config:
-  # Address to listen on
-  addr: ":8080"
-  # Root directory for S3 storage (will be mounted as a volume)
-  root: "/data"
+
+  # Server configuration
+  server:
+    # Address to listen on
+    addr: ":8080"
+    # HTTP server timeouts (Go duration format: 30s, 5m, 1h)
+    readTimeout: "30s"
+    writeTimeout: "30s"
+    idleTimeout: "2m0s"
+    # Health check endpoint path
+    healthPath: "/health"
+
+  # Storage configuration
+  storage:
+    # Root directory for S3 storage (will be mounted as a volume)
+    root: "/data"
+    # Storage backend type (currently only "filesystem" is supported)
+    type: "filesystem"
+    # Pre-create these buckets on startup (optional)
+    # Useful for ensuring required buckets exist
+    buckets: []
+    # Example:
+    # buckets:
+    #   - my-bucket
+    #   - uploads
+    #   - backups
+
+  # Observability configuration
+  observability:
+    # Service name for telemetry
+    serviceName: "go-faster/fs"
+    # Enable HTTP request logging
+    enableRequestLogging: true
+    # Enable Prometheus metrics
+    enableMetrics: true
+    # Enable OpenTelemetry tracing
+    enableTracing: true
 
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:

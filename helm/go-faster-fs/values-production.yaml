@@ -9,8 +9,31 @@ image:
   tag: ""
 
 config:
-  addr: ":8080"
-  root: "/data"
+  # Server configuration optimized for production
+  server:
+    addr: ":8080"
+    # Increased timeouts for production workloads
+    readTimeout: "60s"
+    writeTimeout: "2m0s"   # 2 minutes for large file uploads
+    idleTimeout: "5m0s"    # 5 minutes
+    healthPath: "/health"
+
+  # Storage configuration
+  storage:
+    root: "/data"
+    type: "filesystem"
+    # Pre-create production buckets
+    # buckets:
+    #   - production-data
+    #   - backups
+    #   - uploads
+
+  # Observability - all features enabled for production
+  observability:
+    serviceName: "go-faster/fs-prod"
+    enableRequestLogging: true
+    enableMetrics: true
+    enableTracing: true
 
 service:
   type: ClusterIP

@@ -44,8 +44,7 @@ spec:
             - /usr/local/bin/fs
           args:
             - s3
-            - --addr={{ .Values.config.addr }}
-            - --root={{ .Values.config.root }}
+            - --config=/etc/fs/config.yaml
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -64,7 +63,10 @@ spec:
           {{- end }}
           volumeMounts:
             - name: data
-              mountPath: {{ .Values.config.root }}
+              mountPath: {{ .Values.config.storage.root }}
+            - name: config
+              mountPath: /etc/fs
+              readOnly: true
           {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -83,6 +85,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "go-faster-fs.fullname" . }}-config
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
       {{- end }}

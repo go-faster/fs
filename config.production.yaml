@@ -1,0 +1,39 @@
+# Production Configuration for go-faster/fs
+#
+# This configuration is optimized for production deployments with:
+# - Increased timeouts for better resilience
+# - Enhanced observability settings
+# - Production-ready paths
+
+server:
+  # Listen on all interfaces in production (use with proper firewall rules)
+  addr: ":8080"
+
+  # Increased timeouts for production workloads
+  read_timeout: 60s
+  write_timeout: 120s   # Increased for large file uploads
+  idle_timeout: 300s    # 5 minutes
+
+  health_path: "/health"
+
+storage:
+  # Production storage directory
+  # Should be mounted to a persistent volume in containerized environments
+  root: "/data/s3"
+
+  type: "filesystem"
+
+  # Pre-create production buckets (optional)
+  # Uncomment and configure as needed
+  # buckets:
+  #   - prod-bucket
+  #   - backups
+
+observability:
+  service_name: "go-faster/fs"
+
+  # Enable all observability features in production
+  enable_request_logging: true
+  enable_metrics: true
+  enable_tracing: true
+
