@@ -44,6 +44,7 @@ func BenchmarkHandler_ListBuckets(b *testing.B) {
 	client := newTestClient(b, svc)
 
 	b.ResetTimer()
+
 	for b.Loop() {
 		_, err := client.ListBuckets(ctx)
 		require.NoError(b, err)

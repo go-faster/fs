@@ -29,6 +29,9 @@ var _ fs.Service = &ServiceMock{}
 //			DeleteObjectFunc: func(ctx context.Context, bucket string, key string) error {
 //				panic("mock out the DeleteObject method")
 //			},
+//			GetObjectFunc: func(ctx context.Context, bucket string, key string) (*fs.GetObjectResponse, error) {
+//				panic("mock out the GetObject method")
+//			},
 //			ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 //				panic("mock out the ListBuckets method")
 //			},
@@ -53,6 +56,9 @@ type ServiceMock struct {
 
 	// DeleteObjectFunc mocks the DeleteObject method.
 	DeleteObjectFunc func(ctx context.Context, bucket string, key string) error
+
+	// GetObjectFunc mocks the GetObject method.
+	GetObjectFunc func(ctx context.Context, bucket string, key string) (*fs.GetObjectResponse, error)
 
 	// ListBucketsFunc mocks the ListBuckets method.
 	ListBucketsFunc func(ctx context.Context) ([]fs.Bucket, error)
@@ -88,6 +94,15 @@ type ServiceMock struct {
 			// Key is the key argument value.
 			Key string
 		}
+		// GetObject holds details about calls to the GetObject method.
+		GetObject []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
+		}
 		// ListBuckets holds details about calls to the ListBuckets method.
 		ListBuckets []struct {
 			// Ctx is the ctx argument value.
@@ -113,6 +128,7 @@ type ServiceMock struct {
 	lockCreateBucket sync.RWMutex
 	lockDeleteBucket sync.RWMutex
 	lockDeleteObject sync.RWMutex
+	lockGetObject    sync.RWMutex
 	lockListBuckets  sync.RWMutex
 	lockListObjects  sync.RWMutex
 	lockPutObject    sync.RWMutex
@@ -227,6 +243,46 @@ func (mock *ServiceMock) DeleteObjectCalls() []struct {
 	mock.lockDeleteObject.RLock()
 	calls = mock.calls.DeleteObject
 	mock.lockDeleteObject.RUnlock()
+	return calls
+}
+
+// GetObject calls GetObjectFunc.
+func (mock *ServiceMock) GetObject(ctx context.Context, bucket string, key string) (*fs.GetObjectResponse, error) {
+	if mock.GetObjectFunc == nil {
+		panic("ServiceMock.GetObjectFunc: method is nil but Service.GetObject was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		Key:    key,
+	}
+	mock.lockGetObject.Lock()
+	mock.calls.GetObject = append(mock.calls.GetObject, callInfo)
+	mock.lockGetObject.Unlock()
+	return mock.GetObjectFunc(ctx, bucket, key)
+}
+
+// GetObjectCalls gets all the calls that were made to GetObject.
+// Check the length with:
+//
+//	len(mockedService.GetObjectCalls())
+func (mock *ServiceMock) GetObjectCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	Key    string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}
+	mock.lockGetObject.RLock()
+	calls = mock.calls.GetObject
+	mock.lockGetObject.RUnlock()
 	return calls
 }
 

@@ -3,25 +3,29 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
+	"github.com/go-faster/errors"
+	"github.com/go-faster/sdk/app"
+	"github.com/go-faster/sdk/zctx"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faster/fs/internal/core/handler"
 	"github.com/go-faster/fs/internal/core/service"
 	"github.com/go-faster/fs/internal/core/storage/storagefs"
 )
 
-func newS3Command() *cobra.Command {
+func S3() *cobra.Command {
 	var (
-		addr     string
-		root     string
-		logLevel string
+		addr string
+		root string
 	)
 
 	cmd := &cobra.Command{
@@ -44,92 +48,87 @@ compatible with S3 clients.`,
 
   # Start server and bind to specific interface
   fs s3 --addr 127.0.0.1:8080`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runS3Server(cmd.Context(), addr, root, logLevel)
+		Run: func(cmd *cobra.Command, args []string) {
+			app.Run(func(ctx context.Context, lg *zap.Logger, t *app.Telemetry) error {
+				// Make root path absolute
+				absRoot, err := filepath.Abs(root)
+				if err != nil {
+					return fmt.Errorf("failed to resolve root path: %w", err)
+				}
+
+				storage, err := storagefs.New(absRoot)
+				if err != nil {
+					return fmt.Errorf("failed to create storage: %w", err)
+				}
+
+				svc := service.New(storage)
+				h := handler.New(svc)
+
+				// Create HTTP server
+				mux := http.NewServeMux()
+				mux.Handle("/", h)
+
+				// Add health check endpoint
+				mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+
+					if _, err := fmt.Fprintf(w, "OK"); err != nil {
+						// Log error but don't fail since headers already sent
+						fmt.Fprintf(os.Stderr, "Health check write error: %v\n", err)
+					}
+				})
+
+				server := &http.Server{
+					Addr: addr,
+					Handler: otelhttp.NewHandler(loggingMiddleware(mux), "Operation",
+						otelhttp.WithPropagators(t.TextMapPropagator()),
+						otelhttp.WithMeterProvider(t.MeterProvider()),
+						otelhttp.WithTracerProvider(t.TracerProvider()),
+					),
+					ReadTimeout:  30 * time.Second,
+					WriteTimeout: 30 * time.Second,
+					IdleTimeout:  120 * time.Second,
+					ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+						return t.BaseContext()
+					},
+				}
+
+				g, gCtx := errgroup.WithContext(ctx)
+				g.Go(func() error {
+					lg.Info("Starting server", zap.String("addr", server.Addr))
+
+					if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						return errors.Wrap(err, "listen and serve")
+					}
+
+					return nil
+				})
+				g.Go(func() error {
+					// NB: Using ShutdownContext is important to properly execute graceful shutdown.
+					shutdownContext := t.ShutdownContext()
+					select {
+					case <-gCtx.Done():
+						// Non-graceful shutdown.
+						lg.Warn("Context done before shutdown")
+					case <-shutdownContext.Done():
+						lg.Info("Shutting down server")
+					}
+					// NB: Explicitly using t.BaseContext() to ensure that server
+					// is properly shut down before application exits.
+					//
+					// This context is canceled when shutdown is completed.
+					return server.Shutdown(t.BaseContext())
+				})
+
+				return g.Wait()
+			})
 		},
 	}
 
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "Address to listen on")
 	cmd.Flags().StringVar(&root, "root", ".s3data", "Root directory for S3 storage")
-	cmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 
 	return cmd
-}
-
-func runS3Server(ctx context.Context, addr, root, logLevel string) error {
-	// TODO: Use logLevel for configuring logging verbosity
-	_ = logLevel
-
-	// Make root path absolute
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("failed to resolve root path: %w", err)
-	}
-
-	storage, err := storagefs.New(absRoot)
-	if err != nil {
-		return fmt.Errorf("failed to create storage: %w", err)
-	}
-
-	svc := service.New(storage)
-	h := handler.New(svc)
-
-	// Create HTTP server
-	mux := http.NewServeMux()
-	mux.Handle("/", h)
-
-	// Add health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprintf(w, "OK"); err != nil {
-			// Log error but don't fail since headers already sent
-			fmt.Fprintf(os.Stderr, "Health check write error: %v\n", err)
-		}
-	})
-
-	server := &http.Server{
-		Addr:         addr,
-		Handler:      loggingMiddleware(mux),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	// Setup graceful shutdown
-	shutdownCh := make(chan struct{})
-	go func() {
-		sigint := make(chan os.Signal, 1)
-		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
-		select {
-		case <-sigint:
-			fmt.Println("\nReceived interrupt signal, shutting down...")
-		case <-ctx.Done():
-			fmt.Println("\nContext canceled, shutting down...")
-		}
-
-		// Give outstanding requests 30 seconds to complete
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(os.Stderr, "HTTP server shutdown error: %v\n", err)
-		}
-		close(shutdownCh)
-	}()
-
-	// Start server
-	fmt.Printf("S3-compatible server starting on %s\n", addr)
-	fmt.Printf("Storage root: %s\n", absRoot)
-	fmt.Printf("Health check available at http://%s/health\n", addr)
-	fmt.Println("\nPress Ctrl+C to stop the server")
-
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("HTTP server error: %w", err)
-	}
-
-	<-shutdownCh
-	fmt.Println("Server stopped")
-	return nil
 }
 
 // loggingMiddleware logs HTTP requests
@@ -143,12 +142,13 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(ww, r)
 
 		duration := time.Since(start)
-		fmt.Printf("[%s] %s %s - %d (%v)\n",
-			start.Format("2006-01-02 15:04:05"),
-			r.Method,
-			r.URL.Path,
-			ww.statusCode,
-			duration,
+
+		zctx.From(r.Context()).Info(r.Method,
+			zap.String("path", r.URL.Path),
+			zap.Int("status", ww.statusCode),
+			zap.Duration("duration", duration),
+			zap.String("remote_addr", r.RemoteAddr),
+			zap.String("user_agent", r.UserAgent()),
 		)
 	})
 }

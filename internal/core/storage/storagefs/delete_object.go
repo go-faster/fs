@@ -18,6 +18,7 @@ func (s *Storage) DeleteObject(ctx context.Context, bucket, key string) error {
 		if os.IsNotExist(err) {
 			return errors.New("object not found")
 		}
+
 		return errors.Wrap(err, "delete object")
 	}
 

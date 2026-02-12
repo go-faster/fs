@@ -24,9 +24,11 @@ func BucketName(name string) error {
 	if strings.Contains(name, "..") {
 		return errors.New("bucket name cannot contain '..'")
 	}
+
 	if strings.Contains(name, "/") {
 		return errors.New("bucket name cannot contain '/'")
 	}
+
 	if strings.Contains(name, "\\") {
 		return errors.New("bucket name cannot contain '\\'")
 	}
@@ -83,11 +85,13 @@ func isValidS3BucketName(name string) bool {
 		parts := strings.Split(name, ".")
 		if len(parts) == 4 {
 			allNumeric := true
+
 			for _, part := range parts {
 				if part == "" || len(part) > 3 {
 					allNumeric = false
 					break
 				}
+
 				for _, ch := range part {
 					if ch < '0' || ch > '9' {
 						allNumeric = false
@@ -95,6 +99,7 @@ func isValidS3BucketName(name string) bool {
 					}
 				}
 			}
+
 			if allNumeric {
 				return false
 			}

@@ -15,12 +15,14 @@ func (s *Storage) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
 	}
 
 	var buckets []fs.Bucket
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			info, err := entry.Info()
 			if err != nil {
 				continue
 			}
+
 			buckets = append(buckets, fs.Bucket{
 				Name:         entry.Name(),
 				CreationDate: info.ModTime(),

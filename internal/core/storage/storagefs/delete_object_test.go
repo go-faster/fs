@@ -19,6 +19,7 @@ func TestStorage_DeleteObject(t *testing.T) {
 		bucket = "test-bucket"
 		key    = "test-object.txt"
 	)
+
 	content := []byte("test content")
 
 	// Create bucket first

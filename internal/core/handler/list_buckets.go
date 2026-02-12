@@ -36,6 +36,7 @@ type ListAllMyBucketsResult struct {
 
 func (h *handler) ListBuckets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
 	buckets, err := h.service.ListBuckets(ctx)
 	if err != nil {
 		renderError(ctx, w, err)
@@ -55,10 +56,12 @@ func (h *handler) ListBuckets(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
+
 	if _, err := w.Write([]byte(xml.Header)); err != nil {
 		renderError(ctx, w, err)
 		return
 	}
+
 	if err := xml.NewEncoder(w).Encode(response); err != nil {
 		renderError(ctx, w, err)
 		return

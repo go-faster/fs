@@ -19,6 +19,7 @@ func TestStorage_ListObjects(t *testing.T) {
 		bucket  = "bucket"
 		object1 = "object1"
 	)
+
 	data := []byte("hello, world!\n")
 
 	err := storage.CreateBucket(ctx, bucket)

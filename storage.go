@@ -13,5 +13,6 @@ type Storage interface {
 	DeleteBucket(ctx context.Context, bucket string) error
 	ListObjects(ctx context.Context, bucket, prefix string) ([]Object, error)
 	PutObject(ctx context.Context, req *PutObjectRequest) error
+	GetObject(ctx context.Context, bucket, key string) (*GetObjectResponse, error)
 	DeleteObject(ctx context.Context, bucket, key string) error
 }

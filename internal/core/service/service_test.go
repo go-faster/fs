@@ -98,6 +98,7 @@ func TestService_ListObjects(t *testing.T) {
 			ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
 				require.Equal(t, "valid-bucket", bucket)
 				require.Equal(t, "prefix/", prefix)
+
 				return expectedObjects, nil
 			},
 		}
@@ -139,6 +140,7 @@ func TestService_PutObject(t *testing.T) {
 			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) error {
 				require.Equal(t, "valid-bucket", req.Bucket)
 				require.Equal(t, "valid-key.txt", req.Key)
+
 				return nil
 			},
 		}
@@ -188,6 +190,7 @@ func TestService_DeleteObject(t *testing.T) {
 			DeleteObjectFunc: func(ctx context.Context, bucket, key string) error {
 				require.Equal(t, "valid-bucket", bucket)
 				require.Equal(t, "valid-key.txt", key)
+
 				return nil
 			},
 		}

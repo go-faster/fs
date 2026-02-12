@@ -28,6 +28,15 @@ type PutObjectRequest struct {
 	Size   int64
 }
 
+// GetObjectResponse represents the response for GetObject operation.
+type GetObjectResponse struct {
+	Reader       io.ReadCloser
+	Size         int64
+	LastModified time.Time
+	ETag         string
+	ContentType  string
+}
+
 // Service defines the interface for S3-compatible storage operations.
 //
 //go:generate go tool moq -fmt goimports -out ./internal/mock/service.go -pkg mock . Service
@@ -37,5 +46,6 @@ type Service interface {
 	DeleteBucket(ctx context.Context, bucket string) error
 	ListObjects(ctx context.Context, bucket, prefix string) ([]Object, error)
 	PutObject(ctx context.Context, req *PutObjectRequest) error
+	GetObject(ctx context.Context, bucket, key string) (*GetObjectResponse, error)
 	DeleteObject(ctx context.Context, bucket, key string) error
 }

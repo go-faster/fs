@@ -4,6 +4,10 @@ import (
 	"net/http"
 	"strings"
 
+	"go.uber.org/zap"
+
+	"github.com/go-faster/sdk/zctx"
+
 	"github.com/go-faster/fs"
 )
 
@@ -18,6 +22,8 @@ func New(s fs.Service) http.Handler {
 	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
 			// Root path - list buckets.
@@ -27,11 +33,16 @@ func New(s fs.Service) http.Handler {
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
+
 			return
 		}
 
 		// Parse bucket and key from path
-		_, key, _ := strings.Cut(path, "/")
+		bucket, key, _ := strings.Cut(path, "/")
+		zctx.From(ctx).Debug("Parsed bucket and key from path",
+			zap.String("bucket", bucket),
+			zap.String("key", key),
+		)
 
 		if key == "" {
 			// Bucket operation only.
@@ -43,11 +54,14 @@ func New(s fs.Service) http.Handler {
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
+
 			return
 		}
 
 		// Object operation.
 		switch r.Method {
+		case http.MethodGet:
+			h.GetObject(w, r)
 		case http.MethodPut:
 			h.PutObject(w, r)
 		default:

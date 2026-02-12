@@ -43,5 +43,6 @@ func newTestClient(t testing.TB, svc fs.Service) *minio.Client {
 	t.Helper()
 
 	srv := newTestServer(t, svc)
+
 	return NewClient(t, srv)
 }

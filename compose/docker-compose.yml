@@ -1,0 +1,62 @@
+services:
+  fs:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - s3
+      - --addr
+      - :8080
+      - --root
+      - /data/
+    ports:
+      - "127.0.0.1:8080:8080"
+    tmpfs:
+      - /data
+    restart: unless-stopped
+    environment:
+      OTEL_EXPORTER_PROMETHEUS_HOST: 0.0.0.0
+      OTEL_EXPORTER_PROMETHEUS_PORT: 9464
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4317
+      OTEL_LOGS_EXPORTER: none
+      OTEL_LOG_LEVEL: debug
+      OTEL_METRICS_EXPORTER: prometheus
+      PPROF_ADDR: 0.0.0.0:9090
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080", "||", "exit", "1"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 1s
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+  tempo:
+    image: "grafana/tempo"
+    command: ["-config.file=/etc/tempo.yml"]
+    restart: unless-stopped
+    depends_on:
+      - fs
+    volumes:
+      - ./tempo.yml:/etc/tempo.yml
+
+  grafana:
+    image: "grafana/grafana:12.3"
+    restart: unless-stopped
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_ALERTING_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_LOG_LEVEL=warn
+    depends_on:
+      - tempo
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/default.yml
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro

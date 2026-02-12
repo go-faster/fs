@@ -1,0 +1,14 @@
+server:
+  http_listen_port: 3200
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: "tempo" # Replace with your S3 bucket name
+      endpoint: "fs:8080"
+      region: "us-west-2"
+      access_key: access
+      secret_key: secret
+      insecure: true
+      prefix: "data"

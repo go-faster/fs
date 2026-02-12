@@ -40,3 +40,8 @@ func (s Storage) DeleteObject(ctx context.Context, bucket, key string) error {
 	// TODO: implement me
 	panic("implement me")
 }
+
+func (s Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
+	// TODO: implement me
+	panic("implement me")
+}

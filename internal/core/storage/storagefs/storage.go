@@ -14,6 +14,7 @@ func New(root string) (*Storage, error) {
 	if err := os.MkdirAll(root, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create root directory: %w", err)
 	}
+
 	return &Storage{
 		root: root,
 	}, nil

@@ -63,6 +63,7 @@ func Prefix(prefix string) error {
 		if ch < 32 && ch != '\t' {
 			return errors.New("prefix cannot contain control characters")
 		}
+
 		if ch == 127 {
 			return errors.New("prefix cannot contain DEL character")
 		}

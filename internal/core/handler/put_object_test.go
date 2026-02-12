@@ -17,6 +17,7 @@ func TestPutObject(t *testing.T) {
 		bucketName = "test-bucket"
 		objectKey  = "hello.txt"
 	)
+
 	expectedContent := []byte("Hello, World!")
 
 	svc := &mock.ServiceMock{

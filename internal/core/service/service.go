@@ -23,9 +23,11 @@ func (s Service) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.O
 	if err := validate.BucketName(bucket); err != nil {
 		return nil, errors.Wrap(err, "validate bucket name")
 	}
+
 	if err := validate.Prefix(prefix); err != nil {
 		return nil, errors.Wrap(err, "validate prefix")
 	}
+
 	return s.storage.ListObjects(ctx, bucket, prefix)
 }
 
@@ -33,9 +35,11 @@ func (s Service) PutObject(ctx context.Context, req *fs.PutObjectRequest) error 
 	if err := validate.BucketName(req.Bucket); err != nil {
 		return errors.Wrap(err, "validate bucket name")
 	}
+
 	if err := validate.Key(req.Key); err != nil {
 		return errors.Wrap(err, "validate object key")
 	}
+
 	return s.storage.PutObject(ctx, req)
 }
 
@@ -63,9 +67,22 @@ func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
 	if err := validate.BucketName(bucket); err != nil {
 		return errors.Wrap(err, "validate bucket name")
 	}
+
 	if err := validate.Key(key); err != nil {
 		return errors.Wrap(err, "validate object key")
 	}
 
 	return s.storage.DeleteObject(ctx, bucket, key)
+}
+
+func (s Service) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.GetObject(ctx, bucket, key)
 }

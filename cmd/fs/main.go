@@ -13,11 +13,11 @@ func Root() *cobra.Command {
 		SilenceUsage:  true,
 
 		Use:   "fs",
-		Short: "go-faster file system utilities",
+		Short: "go-faster/fs",
 	}
 
 	// Add subcommands
-	cmd.AddCommand(newS3Command())
+	cmd.AddCommand(S3())
 
 	return cmd
 }

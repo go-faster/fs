@@ -18,6 +18,7 @@ func (s *Storage) DeleteBucket(ctx context.Context, bucket string) error {
 		if os.IsNotExist(err) {
 			return errors.New("bucket not found")
 		}
+
 		return errors.Wrap(err, "delete bucket")
 	}
 

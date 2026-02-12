@@ -13,6 +13,7 @@ func TestStorage_CreateBucket(t *testing.T) {
 	storage := newStorage(t)
 
 	const bucketName = "bucket"
+
 	err := storage.CreateBucket(ctx, "bucket")
 	require.NoError(t, err)
 

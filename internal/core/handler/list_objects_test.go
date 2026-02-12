@@ -14,6 +14,7 @@ import (
 
 func TestListObjects(t *testing.T) {
 	const bucketName = "test-bucket"
+
 	expectedObjects := []fs.Object{
 		{Key: "file1.txt", Size: 12, LastModified: time.Now()},
 		{Key: "file2.txt", Size: 12, LastModified: time.Now()},
@@ -26,16 +27,19 @@ func TestListObjects(t *testing.T) {
 		},
 		ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
 			require.Equal(t, bucketName, bucket)
+
 			if prefix == "" {
 				return expectedObjects, nil
 			}
 			// Filter by prefix
 			var filtered []fs.Object
+
 			for _, obj := range expectedObjects {
 				if len(obj.Key) >= len(prefix) && obj.Key[:len(prefix)] == prefix {
 					filtered = append(filtered, obj)
 				}
 			}
+
 			return filtered, nil
 		},
 	}
@@ -46,7 +50,9 @@ func TestListObjects(t *testing.T) {
 	// List all objects
 	t.Run("ListAll", func(t *testing.T) {
 		objectCh := client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{})
+
 		var found []string
+
 		for obj := range objectCh {
 			require.NoError(t, obj.Err)
 			found = append(found, obj.Key)
@@ -63,7 +69,9 @@ func TestListObjects(t *testing.T) {
 		objectCh := client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{
 			Prefix: "dir/",
 		})
+
 		var found []string
+
 		for obj := range objectCh {
 			require.NoError(t, obj.Err)
 			found = append(found, obj.Key)
@@ -92,7 +100,9 @@ func TestListObjects_EmptyBucket(t *testing.T) {
 
 	// List objects in empty bucket
 	objectCh := client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{})
+
 	var found []string
+
 	for obj := range objectCh {
 		require.NoError(t, obj.Err)
 		found = append(found, obj.Key)

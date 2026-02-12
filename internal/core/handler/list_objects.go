@@ -4,6 +4,10 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strings"
+
+	"github.com/go-faster/errors"
+
+	"github.com/go-faster/fs"
 )
 
 func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
@@ -13,6 +17,11 @@ func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
 
 	objects, err := h.service.ListObjects(ctx, bucket, prefix)
+	if errors.Is(err, fs.ErrBucketNotFound) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	if err != nil {
 		renderError(ctx, w, err)
 		return
@@ -35,10 +44,12 @@ func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
+
 	if _, err := w.Write([]byte(xml.Header)); err != nil {
 		renderError(ctx, w, err)
 		return
 	}
+
 	if err := xml.NewEncoder(w).Encode(response); err != nil {
 		renderError(ctx, w, err)
 		return

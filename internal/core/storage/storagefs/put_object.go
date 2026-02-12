@@ -23,6 +23,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) error
 	if err != nil {
 		return errors.Wrap(err, "create object")
 	}
+
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil && err == nil {
 			err = errors.Join(err, closeErr)

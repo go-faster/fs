@@ -19,6 +19,7 @@ func TestStorage_PutObject(t *testing.T) {
 		bucket = "test-bucket"
 		key    = "test-object.txt"
 	)
+
 	content := []byte("hello, world!")
 
 	// Create bucket first
@@ -52,6 +53,7 @@ func TestStorage_PutObject_NestedKey(t *testing.T) {
 		bucket = "test-bucket"
 		key    = "path/to/nested/object.txt"
 	)
+
 	content := []byte("nested content")
 
 	// Create bucket first
@@ -84,6 +86,7 @@ func TestStorage_PutObject_Overwrite(t *testing.T) {
 		bucket = "test-bucket"
 		key    = "test-object.txt"
 	)
+
 	content1 := []byte("original content")
 	content2 := []byte("updated content with more data")
 

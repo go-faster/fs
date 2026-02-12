@@ -16,6 +16,7 @@ import (
 // NB: bucket and prefix are already sanitized.
 func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
 	bucketPath := filepath.Join(s.root, bucket)
+
 	var objects []fs.Object
 
 	err := filepath.Walk(bucketPath, func(path string, info os.FileInfo, err error) error {
@@ -26,9 +27,14 @@ func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.
 		default:
 		}
 
+		if os.IsNotExist(err) {
+			return fs.ErrBucketNotFound
+		}
+
 		if err != nil {
 			return errors.Wrap(err, "walk objects")
 		}
+
 		if info.IsDir() {
 			return nil
 		}
@@ -51,7 +57,6 @@ func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, errors.Wrap(err, "list objects")
 	}
