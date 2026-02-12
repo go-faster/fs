@@ -121,7 +121,9 @@ compatible with S3 clients.`,
 				})
 
 				return g.Wait()
-			})
+			},
+				app.WithServiceName("go-faster/fs"),
+			)
 		},
 	}
 
