@@ -17,7 +17,7 @@ RUN apk add --no-cache bash \
 	tini \
 	upx
 
-COPY $TARGETPLATFORM/goreleaser_*.apk /tmp/
-RUN apk add --no-cache --allow-untrusted /tmp/goreleaser_*.apk
+COPY $TARGETPLATFORM/go-faster-fs*.apk /tmp/
+RUN apk add --no-cache --allow-untrusted /tmp/go-faster-fs*.apk
 
 ENTRYPOINT ["/usr/bin/fs"]
