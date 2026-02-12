@@ -100,11 +100,12 @@ func LoadConfig(path string) (Config, error) {
 	}
 
 	// Read the file
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- config files
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil
 		}
+
 		return Config{}, errors.Wrap(err, "read config file")
 	}
 
@@ -151,6 +152,7 @@ func (c *Config) Validate() error {
 		if bucket == "" {
 			return errors.New("storage.buckets cannot contain empty bucket names")
 		}
+
 		if len(bucket) < 3 || len(bucket) > 63 {
 			return fmt.Errorf("invalid bucket name %q: must be between 3 and 63 characters", bucket)
 		}
@@ -166,6 +168,7 @@ func SaveConfig(cfg Config, path string) error {
 		return errors.Wrap(err, "marshal config")
 	}
 
+	// #nosec G306 -- config files
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return errors.Wrap(err, "write config file")
 	}

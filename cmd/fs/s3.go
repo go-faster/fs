@@ -64,12 +64,15 @@ Command-line flags override YAML configuration values.`,
 			generateConfig, _ := cmd.Flags().GetBool("generate-config")
 			if generateConfig {
 				cfg := DefaultConfig()
+
 				data, err := yaml.Marshal(&cfg)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error generating config: %v\n", err)
 					os.Exit(1)
 				}
+
 				fmt.Print(string(data))
+
 				return
 			}
 
@@ -84,6 +87,7 @@ Command-line flags override YAML configuration values.`,
 			if cmd.Flags().Changed("addr") {
 				cfg.Server.Addr = addr
 			}
+
 			if cmd.Flags().Changed("root") {
 				cfg.Storage.Root = root
 			}
@@ -118,16 +122,13 @@ Command-line flags override YAML configuration values.`,
 				// Pre-create buckets if configured
 				if len(cfg.Storage.Buckets) > 0 {
 					lg.Info("Pre-creating buckets", zap.Strings("buckets", cfg.Storage.Buckets))
+
 					for _, bucketName := range cfg.Storage.Buckets {
 						if err := storage.CreateBucket(ctx, bucketName); err != nil {
-							// Check if bucket already exists (not an error)
-							if _, listErr := storage.ListObjects(ctx, bucketName, ""); listErr == nil {
-								lg.Info("Bucket already exists, skipping", zap.String("bucket", bucketName))
-								continue
-							}
 							return fmt.Errorf("failed to create bucket %q: %w", bucketName, err)
 						}
-						lg.Info("Created bucket", zap.String("bucket", bucketName))
+
+						lg.Info("Ensured bucket exists", zap.String("bucket", bucketName))
 					}
 				}
 
