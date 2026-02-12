@@ -12,8 +12,6 @@ vars:
 tasks:
   goreleaser:
     desc: Run GoReleaser either in snapshot or release mode
-    deps:
-      - build
     env:
       IMAGE: '{{default "localhost/simon" .IMAGE}}'
     vars:
