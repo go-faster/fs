@@ -46,6 +46,12 @@ spec:
           args:
             - s3
             - --config=/etc/fs/config.yaml
+          env:
+            - name: USER
+              value: "fs"
+          {{- with .Values.env }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

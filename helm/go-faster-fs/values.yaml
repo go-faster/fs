@@ -53,6 +53,18 @@ securityContext:
   runAsUser: 1000
   allowPrivilegeEscalation: false
 
+# Additional environment variables for the container
+# Note: USER is already set to "fs" by default in the StatefulSet template
+env: []
+  # Example:
+  # - name: MY_ENV_VAR
+  #   value: "my-value"
+  # - name: SECRET_VAR
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: my-secret
+  #       key: secret-key
+
 # Application-specific configuration
 config:
 

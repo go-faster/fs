@@ -20,4 +20,7 @@ RUN apk add --no-cache bash \
 COPY $TARGETPLATFORM/go-faster-fs*.apk /tmp/
 RUN apk add --no-cache --allow-untrusted /tmp/go-faster-fs*.apk
 
+# Set USER environment variable for Go's user.Current() when cgo is not available
+ENV USER=fs
+
 ENTRYPOINT ["/usr/bin/fs"]
