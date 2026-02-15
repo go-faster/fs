@@ -166,6 +166,7 @@ func TestHandler_HeadObject_NestedKey(t *testing.T) {
 	t.Parallel()
 
 	const objectKey = "path/to/nested/file.txt"
+
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
 	svc := &mock.ServiceMock{
@@ -201,6 +202,7 @@ func TestHandler_HeadObject_LargeFile(t *testing.T) {
 	t.Parallel()
 
 	const fileSize = 10 * 1024 * 1024 * 1024 // 10GB
+
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
 	svc := &mock.ServiceMock{
