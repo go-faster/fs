@@ -197,7 +197,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	})
 
 	// Create the final object path.
-	objectPath := filepath.Join(s.root, meta.Bucket, meta.Key)
+	objectPath := filepath.Join(s.root, meta.Bucket, toOSPath(meta.Key))
 
 	// Ensure parent directory exists.
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0750); err != nil {

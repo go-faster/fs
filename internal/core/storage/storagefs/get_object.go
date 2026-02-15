@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
-	objectPath := filepath.Join(s.root, bucket, key)
+	objectPath := filepath.Join(s.root, bucket, toOSPath(key))
 
 	// Check if bucket exists
 	bucketPath := filepath.Join(s.root, bucket)

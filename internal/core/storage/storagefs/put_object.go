@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) error {
-	objectPath := filepath.Join(s.root, req.Bucket, req.Key)
+	objectPath := filepath.Join(s.root, req.Bucket, toOSPath(req.Key))
 	if err := os.MkdirAll(filepath.Dir(objectPath), defaultDirPermissions); err != nil {
 		return errors.Wrap(err, "create object directory")
 	}

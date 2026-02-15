@@ -12,7 +12,7 @@ import (
 //
 // NB: bucket and key are already sanitized.
 func (s *Storage) DeleteObject(ctx context.Context, bucket, key string) error {
-	objectPath := filepath.Join(s.root, bucket, key)
+	objectPath := filepath.Join(s.root, bucket, toOSPath(key))
 
 	if err := os.Remove(objectPath); err != nil {
 		if os.IsNotExist(err) {
