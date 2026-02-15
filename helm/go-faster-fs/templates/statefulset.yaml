@@ -1,10 +1,11 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "go-faster-fs.fullname" . }}
   labels:
     {{- include "go-faster-fs.labels" . | nindent 4 }}
 spec:
+  serviceName: {{ include "go-faster-fs.fullname" . }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
@@ -71,20 +72,14 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
       volumes:
+        {{- if or (not .Values.persistence.enabled) .Values.persistence.emptyDir }}
         - name: data
-          {{- if .Values.persistence.enabled }}
-          {{- if .Values.persistence.emptyDir }}
           emptyDir: {}
-          {{- else if .Values.persistence.existingClaim }}
+        {{- else if .Values.persistence.existingClaim }}
+        - name: data
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim }}
-          {{- else }}
-          persistentVolumeClaim:
-            claimName: {{ include "go-faster-fs.fullname" . }}
-          {{- end }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
+        {{- end }}
         - name: config
           configMap:
             name: {{ include "go-faster-fs.fullname" . }}-config
@@ -103,3 +98,20 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- if and .Values.persistence.enabled (not .Values.persistence.emptyDir) (not .Values.persistence.existingClaim) }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "go-faster-fs.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.accessMode }}
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}
+
