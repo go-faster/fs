@@ -32,6 +32,7 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 
 	// S3 key with forward slashes (S3 standard).
 	const s3Key = "path/to/nested/file.txt"
+
 	content := []byte("test content")
 
 	// Put object using S3-style key.
@@ -84,6 +85,7 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 	// Count the directory depth to ensure structure is correct.
 	relPath, err := filepath.Rel(filepath.Join(root, "test-bucket"), expectedPath)
 	require.NoError(t, err)
+
 	depth := strings.Count(relPath, string(filepath.Separator))
 	require.Equal(t, 3, depth, "Should have 3 levels: path/to/nested/file.txt")
 }
@@ -105,6 +107,7 @@ func TestGetObject_WindowsPathSeparators(t *testing.T) {
 
 	// Manually create a file with OS-native path separators.
 	const s3Key = "dir1/dir2/file.txt"
+
 	content := []byte("test data")
 
 	osPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
@@ -146,6 +149,7 @@ func TestDeleteObject_WindowsPathSeparators(t *testing.T) {
 
 	// Create a file with OS-native path separators.
 	const s3Key = "nested/path/file.txt"
+
 	content := []byte("content")
 
 	osPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
@@ -183,6 +187,7 @@ func TestPutObject_DeepNestedPath_WindowsFailure(t *testing.T) {
 
 	// Very deep S3-style path.
 	const s3Key = "a/b/c/d/e/f/g/h/i/j/file.txt"
+
 	content := []byte("deep content")
 
 	err = storage.PutObject(ctx, &fs.PutObjectRequest{
@@ -236,6 +241,7 @@ func TestPutGetDelete_MultipleSeparators(t *testing.T) {
 
 	// S3 allows multiple slashes (though uncommon).
 	const s3Key = "path//with///multiple////slashes/file.txt"
+
 	content := []byte("multi-slash content")
 
 	err = storage.PutObject(ctx, &fs.PutObjectRequest{
@@ -286,6 +292,7 @@ func TestPutObject_TrailingSlash(t *testing.T) {
 
 	// Key with trailing slash (represents a directory-like object in S3).
 	const s3Key = "path/to/dir/"
+
 	content := []byte("dir marker")
 
 	err = storage.PutObject(ctx, &fs.PutObjectRequest{
@@ -354,6 +361,7 @@ func TestRoundTrip_ComplexPaths(t *testing.T) {
 			buf := make([]byte, len(content))
 			n, err := resp.Reader.Read(buf)
 			_ = resp.Reader.Close()
+
 			require.NoError(t, err)
 			require.Equal(t, len(content), n)
 			require.Equal(t, content, buf)

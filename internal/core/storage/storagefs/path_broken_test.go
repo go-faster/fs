@@ -61,9 +61,10 @@ func TestToOSPath_PartialImplementation(t *testing.T) {
 	// Broken: only converts first slash.
 	partialToOSPath := func(key string) string {
 		// BROKEN: only replaces first occurrence
-		if len(key) > 0 && key[0] == '/' {
+		if key != "" && key[0] == '/' {
 			return "\\" + key[1:]
 		}
+
 		return key
 	}
 
