@@ -467,4 +467,3 @@ func TestHandler_CompleteMultipartUpload_ETagWithMixedQuotes(t *testing.T) {
 	_, err := core.CompleteMultipartUpload(ctx, bucketName, objectKey, uploadID, completeParts, minio.PutObjectOptions{})
 	require.NoError(t, err)
 }
-

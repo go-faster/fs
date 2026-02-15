@@ -15,6 +15,7 @@ import (
 
 func TestHandler_UploadPart(t *testing.T) {
 	t.Parallel()
+
 	const (
 		bucketName = "test-bucket"
 		objectKey  = "test-object.txt"
@@ -22,6 +23,7 @@ func TestHandler_UploadPart(t *testing.T) {
 		partNumber = 1
 		partETag   = "abc123def456"
 	)
+
 	partData := []byte("test part data content")
 	svc := baseMock()
 	svc.UploadPartFunc = func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
@@ -33,6 +35,7 @@ func TestHandler_UploadPart(t *testing.T) {
 		data, err := io.ReadAll(req.Reader)
 		require.NoError(t, err)
 		require.Equal(t, partData, data)
+
 		return &fs.Part{
 			PartNumber: partNumber,
 			ETag:       partETag,
@@ -50,11 +53,13 @@ func TestHandler_UploadPart(t *testing.T) {
 
 func TestHandler_UploadPart_MultipleParts(t *testing.T) {
 	t.Parallel()
+
 	const (
 		bucketName = "test-bucket"
 		objectKey  = "test-object.txt"
 		uploadID   = "test-upload-id"
 	)
+
 	parts := []struct {
 		number int
 		data   []byte
@@ -72,7 +77,9 @@ func TestHandler_UploadPart_MultipleParts(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
+
 				require.Equal(t, p.data, data)
+
 				return &fs.Part{
 					PartNumber: p.number,
 					ETag:       p.etag,
@@ -80,9 +87,11 @@ func TestHandler_UploadPart_MultipleParts(t *testing.T) {
 				}, nil
 			}
 		}
+
 		return nil, errors.New("unexpected part number")
 	}
 	ctx := t.Context()
+
 	core := minio.Core{Client: newTestClient(t, svc)}
 	for _, p := range parts {
 		info, err := core.PutObjectPart(ctx, bucketName, objectKey, uploadID, p.number,
@@ -95,6 +104,7 @@ func TestHandler_UploadPart_MultipleParts(t *testing.T) {
 
 func TestHandler_UploadPart_UploadNotFound(t *testing.T) {
 	t.Parallel()
+
 	svc := baseMock()
 	svc.UploadPartFunc = func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 		return nil, fs.ErrUploadNotFound
@@ -108,6 +118,7 @@ func TestHandler_UploadPart_UploadNotFound(t *testing.T) {
 
 func TestHandler_UploadPart_LargePart(t *testing.T) {
 	t.Parallel()
+
 	const (
 		bucketName = "test-bucket"
 		objectKey  = "large-object.bin"
@@ -116,16 +127,19 @@ func TestHandler_UploadPart_LargePart(t *testing.T) {
 	)
 	// Create 1MB part.
 	partSize := 1024 * 1024
+
 	partData := make([]byte, partSize)
 	for i := range partData {
 		partData[i] = byte(i % 256)
 	}
+
 	svc := baseMock()
 	svc.UploadPartFunc = func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 		data, err := io.ReadAll(req.Reader)
 		require.NoError(t, err)
 		require.Len(t, data, partSize)
 		require.Equal(t, partData, data)
+
 		return &fs.Part{
 			PartNumber: partNumber,
 			ETag:       "large-etag",
@@ -141,16 +155,19 @@ func TestHandler_UploadPart_LargePart(t *testing.T) {
 }
 func TestHandler_UploadPart_EmptyPart(t *testing.T) {
 	t.Parallel()
+
 	const (
 		bucketName = "test-bucket"
 		objectKey  = "test-object.txt"
 		uploadID   = "test-upload-id"
 	)
+
 	svc := baseMock()
 	svc.UploadPartFunc = func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 		data, err := io.ReadAll(req.Reader)
 		require.NoError(t, err)
 		require.Empty(t, data)
+
 		return &fs.Part{
 			PartNumber: req.PartNumber,
 			ETag:       "empty-etag",

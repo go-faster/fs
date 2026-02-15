@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -59,4 +60,26 @@ func newTestClient(t testing.TB, svc fs.Service) *minio.Client {
 	srv := newTestServer(t, svc)
 
 	return NewClient(t, srv)
+}
+
+// newTestHandler creates an HTTP handler for direct testing without starting a server.
+func newTestHandler(svc fs.Service) http.Handler {
+	return handler.New(svc)
+}
+
+// newTestRequest creates an HTTP request for testing.
+//
+//nolint:unparam
+func newTestRequest(t testing.TB, method, path string) *http.Request {
+	t.Helper()
+
+	req := httptest.NewRequest(method, path, http.NoBody)
+	req = req.WithContext(context.Background())
+
+	return req
+}
+
+// newTestResponseRecorder creates a response recorder for testing.
+func newTestResponseRecorder() *httptest.ResponseRecorder {
+	return httptest.NewRecorder()
 }

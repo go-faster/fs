@@ -63,7 +63,7 @@ func TestHandler_UnsupportedOperations(t *testing.T) {
 				url += "?" + tt.query
 			}
 
-			req := httptest.NewRequest(tt.method, url, nil)
+			req := httptest.NewRequest(tt.method, url, http.NoBody)
 			req = req.WithContext(context.Background())
 			w := httptest.NewRecorder()
 
@@ -165,4 +165,3 @@ func TestHandler_SupportedOperations(t *testing.T) {
 		})
 	}
 }
-
