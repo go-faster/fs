@@ -17,7 +17,7 @@ func New(root string) (*Storage, error) {
 
 	return &Storage{
 		root:      root,
-		multipart: newMultipartManager(),
+		multipart: newMultipartManager(root),
 	}, nil
 }
 
