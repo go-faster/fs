@@ -48,6 +48,8 @@ func httpStatusFromError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, fs.ErrUploadNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, fs.ErrInvalidBucketName):
+		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}

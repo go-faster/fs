@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
@@ -17,9 +16,15 @@ func TestHandler_HeadBucket(t *testing.T) {
 	const bucketName = "test-bucket"
 
 	svc := &mock.ServiceMock{
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
+		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 			require.Equal(t, bucketName, bucket)
+			return true, nil
+		},
+		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
 			return []fs.Object{}, nil
+		},
+		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
+			return []fs.Bucket{}, nil
 		},
 	}
 
@@ -37,8 +42,14 @@ func TestHandler_HeadBucket_NotFound(t *testing.T) {
 	const bucketName = "nonexistent-bucket"
 
 	svc := &mock.ServiceMock{
+		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
+			return false, nil
+		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return nil, fs.ErrBucketNotFound
+			return []fs.Object{}, nil
+		},
+		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
+			return []fs.Bucket{}, nil
 		},
 	}
 
@@ -50,43 +61,25 @@ func TestHandler_HeadBucket_NotFound(t *testing.T) {
 	require.False(t, exists)
 }
 
-func TestHandler_HeadBucket_InternalError(t *testing.T) {
+func TestHandler_HeadBucket_InvalidBucketName(t *testing.T) {
 	t.Parallel()
 
 	svc := &mock.ServiceMock{
+		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
+			return false, fs.ErrInvalidBucketName
+		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return nil, errors.New("database connection failed")
+			return []fs.Object{}, nil
+		},
+		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
+			return []fs.Bucket{}, nil
 		},
 	}
 
 	ctx := t.Context()
 	client := newTestClient(t, svc)
 
-	// BucketExists returns error for 500 errors.
+	// BucketExists returns error for invalid bucket names.
 	_, err := client.BucketExists(ctx, "some-bucket")
 	require.Error(t, err)
-}
-
-func TestHandler_HeadBucket_WithObjects(t *testing.T) {
-	t.Parallel()
-
-	const bucketName = "bucket-with-objects"
-
-	svc := &mock.ServiceMock{
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			require.Equal(t, bucketName, bucket)
-
-			return []fs.Object{
-				{Key: "file1.txt", Size: 100},
-				{Key: "file2.txt", Size: 200},
-			}, nil
-		},
-	}
-
-	ctx := t.Context()
-	client := newTestClient(t, svc)
-
-	exists, err := client.BucketExists(ctx, bucketName)
-	require.NoError(t, err)
-	require.True(t, exists)
 }

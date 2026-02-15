@@ -94,6 +94,15 @@ func (s *Storage) CreateBucket(ctx context.Context, bucketName string) error {
 	return nil
 }
 
+func (s *Storage) BucketExists(_ context.Context, bucketName string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	_, exists := s.buckets[bucketName]
+
+	return exists, nil
+}
+
 func (s *Storage) DeleteBucket(ctx context.Context, bucketName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

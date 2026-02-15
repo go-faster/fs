@@ -63,6 +63,14 @@ func (s Service) DeleteBucket(ctx context.Context, bucket string) error {
 	return s.storage.DeleteBucket(ctx, bucket)
 }
 
+func (s Service) BucketExists(ctx context.Context, bucket string) (bool, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return false, errors.Wrap(err, "validate bucket name")
+	}
+
+	return s.storage.BucketExists(ctx, bucket)
+}
+
 func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
 	if err := validate.BucketName(bucket); err != nil {
 		return errors.Wrap(err, "validate bucket name")

@@ -23,6 +23,9 @@ var _ fs.Storage = &StorageMock{}
 //			AbortMultipartUploadFunc: func(ctx context.Context, bucket string, key string, uploadID string) error {
 //				panic("mock out the AbortMultipartUpload method")
 //			},
+//			BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
+//				panic("mock out the BucketExists method")
+//			},
 //			CompleteMultipartUploadFunc: func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
 //				panic("mock out the CompleteMultipartUpload method")
 //			},
@@ -62,6 +65,9 @@ var _ fs.Storage = &StorageMock{}
 type StorageMock struct {
 	// AbortMultipartUploadFunc mocks the AbortMultipartUpload method.
 	AbortMultipartUploadFunc func(ctx context.Context, bucket string, key string, uploadID string) error
+
+	// BucketExistsFunc mocks the BucketExists method.
+	BucketExistsFunc func(ctx context.Context, bucket string) (bool, error)
 
 	// CompleteMultipartUploadFunc mocks the CompleteMultipartUpload method.
 	CompleteMultipartUploadFunc func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error)
@@ -105,6 +111,13 @@ type StorageMock struct {
 			Key string
 			// UploadID is the uploadID argument value.
 			UploadID string
+		}
+		// BucketExists holds details about calls to the BucketExists method.
+		BucketExists []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
 		}
 		// CompleteMultipartUpload holds details about calls to the CompleteMultipartUpload method.
 		CompleteMultipartUpload []struct {
@@ -184,6 +197,7 @@ type StorageMock struct {
 		}
 	}
 	lockAbortMultipartUpload    sync.RWMutex
+	lockBucketExists            sync.RWMutex
 	lockCompleteMultipartUpload sync.RWMutex
 	lockCreateBucket            sync.RWMutex
 	lockCreateMultipartUpload   sync.RWMutex
@@ -237,6 +251,42 @@ func (mock *StorageMock) AbortMultipartUploadCalls() []struct {
 	mock.lockAbortMultipartUpload.RLock()
 	calls = mock.calls.AbortMultipartUpload
 	mock.lockAbortMultipartUpload.RUnlock()
+	return calls
+}
+
+// BucketExists calls BucketExistsFunc.
+func (mock *StorageMock) BucketExists(ctx context.Context, bucket string) (bool, error) {
+	if mock.BucketExistsFunc == nil {
+		panic("StorageMock.BucketExistsFunc: method is nil but Storage.BucketExists was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+	}
+	mock.lockBucketExists.Lock()
+	mock.calls.BucketExists = append(mock.calls.BucketExists, callInfo)
+	mock.lockBucketExists.Unlock()
+	return mock.BucketExistsFunc(ctx, bucket)
+}
+
+// BucketExistsCalls gets all the calls that were made to BucketExists.
+// Check the length with:
+//
+//	len(mockedStorage.BucketExistsCalls())
+func (mock *StorageMock) BucketExistsCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+	}
+	mock.lockBucketExists.RLock()
+	calls = mock.calls.BucketExists
+	mock.lockBucketExists.RUnlock()
 	return calls
 }
 
