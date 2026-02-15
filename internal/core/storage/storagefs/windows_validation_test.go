@@ -55,23 +55,30 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 	require.False(t, info.IsDir())
 	require.Equal(t, int64(len(content)), info.Size())
 
-	// CRITICAL: On Windows, if toOSPath is broken, the file would be created at:
-	// root\test-bucket\path/to/nested/file.txt (literal forward slashes in filename)
-	// We must verify this broken path does NOT exist.
+	// CRITICAL: Verify that proper directory structure was created.
+	// If toOSPath is broken, no intermediate directories would exist.
 	if runtime.GOOS == "windows" {
-		// This is the path that would be created if toOSPath just returns key as-is.
-		brokenPath := filepath.Join(root, "test-bucket", s3Key)
+		// Verify each intermediate directory exists.
+		pathDir := filepath.Join(root, "test-bucket", "path")
+		info, err := os.Stat(pathDir)
+		require.NoError(t, err, "Intermediate directory 'path' should exist")
+		require.True(t, info.IsDir())
 
-		// Check if any component contains a forward slash.
-		// If toOSPath is broken, "path/to/nested/file.txt" would be treated as a single filename.
-		_, err := os.Stat(brokenPath)
-		require.True(t, os.IsNotExist(err),
-			"File should NOT exist at broken path with forward slashes in filename: %s", brokenPath)
+		toDir := filepath.Join(root, "test-bucket", "path", "to")
+		info, err = os.Stat(toDir)
+		require.NoError(t, err, "Intermediate directory 'to' should exist")
+		require.True(t, info.IsDir())
 
-		// Also verify that the filename itself doesn't contain forward slashes.
+		nestedDir := filepath.Join(root, "test-bucket", "path", "to", "nested")
+		info, err = os.Stat(nestedDir)
+		require.NoError(t, err, "Intermediate directory 'nested' should exist")
+		require.True(t, info.IsDir())
+
+		// Verify the filename itself doesn't contain forward slashes.
 		actualFilename := filepath.Base(expectedPath)
 		require.False(t, strings.Contains(actualFilename, "/"),
 			"Filename should not contain forward slashes: %s", actualFilename)
+		require.Equal(t, "file.txt", actualFilename)
 	}
 
 	// Verify intermediate directories were created with proper structure.
@@ -261,13 +268,15 @@ func TestPutGetDelete_MultipleSeparators(t *testing.T) {
 	resp, err := storage.GetObject(ctx, "test-bucket", s3Key)
 	require.NoError(t, err)
 
-	defer func() { _ = resp.Reader.Close() }()
-
 	buf := make([]byte, len(content))
 	n, err := resp.Reader.Read(buf)
 	require.NoError(t, err)
 	require.Equal(t, len(content), n)
 	require.Equal(t, content, buf)
+
+	// Close file handle before deletion (Windows requirement).
+	err = resp.Reader.Close()
+	require.NoError(t, err)
 
 	// Delete object.
 	err = storage.DeleteObject(ctx, "test-bucket", s3Key)

@@ -81,14 +81,16 @@ func TestStorage_WindowsPathCompatibility(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, resp)
 
-			defer func() { _ = resp.Reader.Close() }()
-
 			// Verify content.
 			buf := make([]byte, len(tt.content))
 			n, err := resp.Reader.Read(buf)
 			require.NoError(t, err)
 			require.Equal(t, len(tt.content), n)
 			require.Equal(t, tt.content, buf)
+
+			// IMPORTANT: Close the reader before deleting (Windows locks the file).
+			err = resp.Reader.Close()
+			require.NoError(t, err)
 
 			// Delete object.
 			err = storage.DeleteObject(ctx, "test-bucket", tt.key)
