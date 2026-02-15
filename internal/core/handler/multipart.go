@@ -50,6 +50,7 @@ func (h *handler) HandleBucketPost(w http.ResponseWriter, r *http.Request) {
 		// For now, just acknowledge the delete request
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
+
 		return
 	}
 
@@ -97,7 +98,7 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(result)
+	_ = xml.NewEncoder(w).Encode(result)
 }
 
 func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
@@ -149,7 +150,7 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(result)
+	_ = xml.NewEncoder(w).Encode(result)
 }
 
 func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {

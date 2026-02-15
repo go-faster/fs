@@ -33,6 +33,7 @@ func TestStorage_ListBuckets(t *testing.T) {
 	for _, b := range buckets {
 		bucketNames[b.Name] = true
 	}
+
 	require.True(t, bucketNames["bucket1"])
 	require.True(t, bucketNames["bucket2"])
 }

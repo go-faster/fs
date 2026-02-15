@@ -4,7 +4,7 @@ package storagemem
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -108,6 +108,7 @@ func (s *Storage) DeleteBucket(ctx context.Context, bucketName string) error {
 	}
 
 	delete(s.buckets, bucketName)
+
 	return nil
 }
 
@@ -150,8 +151,8 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) error
 		return errors.Wrap(err, "read data")
 	}
 
-	// Calculate ETag (MD5 hash)
-	hash := md5.Sum(data)
+	// Calculate ETag (MD5 hash).
+	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	etag := fmt.Sprintf("%x", hash)
 
 	b.objects[req.Key] = &object{
@@ -203,6 +204,7 @@ func (s *Storage) DeleteObject(ctx context.Context, bucketName, key string) erro
 	}
 
 	delete(b.objects, key)
+
 	return nil
 }
 
@@ -239,7 +241,7 @@ func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*f
 
 	upload, exists := s.uploads[req.UploadID]
 	if !exists {
-		return nil, errors.New("upload not found")
+		return nil, fs.ErrUploadNotFound
 	}
 
 	data, err := io.ReadAll(req.Reader)
@@ -247,7 +249,7 @@ func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*f
 		return nil, errors.Wrap(err, "read part data")
 	}
 
-	hash := md5.Sum(data)
+	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	etag := hex.EncodeToString(hash[:])
 
 	upload.parts[req.PartNumber] = &uploadPart{
@@ -269,7 +271,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 
 	upload, exists := s.uploads[req.UploadID]
 	if !exists {
-		return nil, errors.New("upload not found")
+		return nil, fs.ErrUploadNotFound
 	}
 
 	b, exists := s.buckets[upload.bucket]
@@ -287,6 +289,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 
 	// Concatenate all parts
 	var totalSize int64
+
 	for _, part := range parts {
 		if p, ok := upload.parts[part.PartNumber]; ok {
 			totalSize += int64(len(p.data))
@@ -294,13 +297,14 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 	}
 
 	data := make([]byte, 0, totalSize)
+
 	for _, part := range parts {
 		if p, ok := upload.parts[part.PartNumber]; ok {
 			data = append(data, p.data...)
 		}
 	}
 
-	hash := md5.Sum(data)
+	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	etag := hex.EncodeToString(hash[:])
 
 	b.objects[upload.key] = &object{
@@ -324,9 +328,10 @@ func (s *Storage) AbortMultipartUpload(ctx context.Context, bucket, key, uploadI
 	defer s.mu.Unlock()
 
 	if _, exists := s.uploads[uploadID]; !exists {
-		return errors.New("upload not found")
+		return fs.ErrUploadNotFound
 	}
 
 	delete(s.uploads, uploadID)
+
 	return nil
 }

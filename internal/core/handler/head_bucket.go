@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/go-faster/errors"
+
 	"github.com/go-faster/fs"
 )
 
@@ -20,7 +21,9 @@ func (h *handler) HeadBucket(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+
 		renderError(ctx, w, err)
+
 		return
 	}
 

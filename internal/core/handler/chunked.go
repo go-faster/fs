@@ -32,6 +32,7 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 		if toRead > r.remaining {
 			toRead = r.remaining
 		}
+
 		n, err := r.reader.Read(p[:toRead])
 		r.remaining -= int64(n)
 
@@ -52,6 +53,7 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 			r.done = true
 			return 0, io.EOF
 		}
+
 		return 0, err
 	}
 
@@ -76,10 +78,12 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 		// Final chunk - read the trailing empty line
 		_, _ = r.reader.ReadString('\n')
 		r.done = true
+
 		return 0, io.EOF
 	}
 
 	r.remaining = size
+
 	return r.Read(p)
 }
 

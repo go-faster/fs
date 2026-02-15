@@ -2,7 +2,7 @@ package storagefs
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -68,7 +68,7 @@ func (m *multipartManager) saveMetadata(meta *multipartMetadata) error {
 		return errors.Wrap(err, "marshal metadata")
 	}
 
-	if err := os.WriteFile(metaPath, data, 0640); err != nil {
+	if err := os.WriteFile(metaPath, data, 0600); err != nil {
 		return errors.Wrap(err, "write metadata file")
 	}
 
@@ -79,11 +79,12 @@ func (m *multipartManager) saveMetadata(meta *multipartMetadata) error {
 func (m *multipartManager) loadMetadata(uploadID string) (*multipartMetadata, error) {
 	metaPath := m.metadataPath(uploadID)
 
-	data, err := os.ReadFile(metaPath)
+	data, err := os.ReadFile(metaPath) //nolint:gosec // Path is constructed internally from validated uploadID.
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errors.New("upload not found")
+			return nil, fs.ErrUploadNotFound
 		}
+
 		return nil, errors.Wrap(err, "read metadata file")
 	}
 
@@ -126,7 +127,7 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, bucket, key string) (
 	defer s.multipart.mu.Unlock()
 
 	if err := s.multipart.saveMetadata(meta); err != nil {
-		os.RemoveAll(uploadPath)
+		_ = os.RemoveAll(uploadPath)
 		return nil, errors.Wrap(err, "save metadata")
 	}
 
@@ -149,18 +150,20 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 
 	// Write part to file.
 	partPath := filepath.Join(s.multipart.uploadPath(req.UploadID), strconv.Itoa(req.PartNumber))
-	f, err := os.Create(partPath)
+
+	f, err := os.Create(partPath) //nolint:gosec // Path is constructed internally from validated uploadID and partNumber.
 	if err != nil {
 		return nil, errors.Wrap(err, "create part file")
 	}
 
-	hash := md5.New()
+	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	writer := io.MultiWriter(f, hash)
 
 	size, err := io.Copy(writer, req.Reader)
 	if err != nil {
-		f.Close()
-		os.Remove(partPath)
+		_ = f.Close()
+		_ = os.Remove(partPath)
+
 		return nil, errors.Wrap(err, "write part")
 	}
 
@@ -202,26 +205,29 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	}
 
 	// Create the final file.
-	finalFile, err := os.Create(objectPath)
+	finalFile, err := os.Create(objectPath) //nolint:gosec // Path is constructed internally from validated bucket and key.
 	if err != nil {
 		return nil, errors.Wrap(err, "create final file")
 	}
-	defer finalFile.Close()
+
+	defer func() { _ = finalFile.Close() }()
 
 	// Concatenate all parts.
-	hash := md5.New()
+	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	writer := io.MultiWriter(finalFile, hash)
 
 	uploadPath := s.multipart.uploadPath(req.UploadID)
 	for _, part := range parts {
 		partPath := filepath.Join(uploadPath, strconv.Itoa(part.PartNumber))
-		partFile, err := os.Open(partPath)
+
+		partFile, err := os.Open(partPath) //nolint:gosec // Path is constructed internally from validated uploadID and partNumber.
 		if err != nil {
 			return nil, errors.Wrapf(err, "open part %d", part.PartNumber)
 		}
 
 		_, err = io.Copy(writer, partFile)
-		partFile.Close()
+		_ = partFile.Close()
+
 		if err != nil {
 			return nil, errors.Wrapf(err, "copy part %d", part.PartNumber)
 		}

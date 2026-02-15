@@ -116,6 +116,7 @@ func TestStorage_UploadPart_MultipleParts(t *testing.T) {
 	}
 
 	var uploadedParts []fs.CompletedPart
+
 	for i, partData := range parts {
 		part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
 			Bucket:     "test-bucket",
@@ -192,10 +193,8 @@ func TestStorage_CompleteMultipartUpload(t *testing.T) {
 	// Verify object was created with correct content.
 	obj, err := storage.GetObject(ctx, "test-bucket", "test-key.txt")
 	require.NoError(t, err)
-	defer obj.Reader.Close()
 
-	data, err := os.ReadFile(filepath.Join(t.TempDir()))
-	_ = data
+	defer func() { _ = obj.Reader.Close() }()
 
 	buf := make([]byte, 100)
 	n, err := obj.Reader.Read(buf)
@@ -271,6 +270,7 @@ func TestStorage_CompleteMultipartUpload_OutOfOrderParts(t *testing.T) {
 	// Verify content is in correct order.
 	obj, err := storage.GetObject(ctx, "test-bucket", "test-key.txt")
 	require.NoError(t, err)
+
 	defer obj.Reader.Close()
 
 	buf := make([]byte, 100)
@@ -420,7 +420,9 @@ func TestStorage_MultipartUpload_NestedKey(t *testing.T) {
 	// Verify object exists at nested path.
 	obj, err := storage.GetObject(ctx, "test-bucket", "path/to/nested/file.txt")
 	require.NoError(t, err)
+
 	defer obj.Reader.Close()
+
 	require.Equal(t, int64(len(partData)), obj.Size)
 }
 
@@ -448,9 +450,11 @@ func TestStorage_MultipartUpload_LargeFile(t *testing.T) {
 	for i := range part1Data {
 		part1Data[i] = byte(i % 256)
 	}
+
 	for i := range part2Data {
 		part2Data[i] = byte((i + 100) % 256)
 	}
+
 	for i := range part3Data {
 		part3Data[i] = byte((i + 200) % 256)
 	}
@@ -503,7 +507,9 @@ func TestStorage_MultipartUpload_LargeFile(t *testing.T) {
 	// Verify object size.
 	obj, err := storage.GetObject(ctx, "test-bucket", "large-file.bin")
 	require.NoError(t, err)
+
 	defer obj.Reader.Close()
+
 	require.Equal(t, int64(partSize*3), obj.Size)
 }
 
@@ -569,10 +575,12 @@ func TestStorage_MultipartUpload_ConcurrentUploads(t *testing.T) {
 	// Verify both objects.
 	obj1, err := storage.GetObject(ctx, "test-bucket", "file1.txt")
 	require.NoError(t, err)
+
 	defer obj1.Reader.Close()
 
 	obj2, err := storage.GetObject(ctx, "test-bucket", "file2.txt")
 	require.NoError(t, err)
+
 	defer obj2.Reader.Close()
 
 	require.Equal(t, int64(len(part1Data)), obj1.Size)
@@ -629,6 +637,7 @@ func TestStorage_MultipartUpload_OverwritePart(t *testing.T) {
 	// Verify content is from new part.
 	obj, err := storage.GetObject(ctx, "test-bucket", "test-key.txt")
 	require.NoError(t, err)
+
 	defer obj.Reader.Close()
 
 	buf := make([]byte, 100)

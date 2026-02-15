@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/go-faster/errors"
 	"github.com/go-faster/sdk/zctx"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+
+	"github.com/go-faster/fs"
 )
 
 type Error struct {
@@ -17,6 +20,10 @@ type Error struct {
 }
 
 func newError(ctx context.Context, err error) error {
+	if err == nil {
+		err = errors.New("internal error")
+	}
+
 	e := Error{
 		Message: err.Error(),
 	}
@@ -31,6 +38,19 @@ func newError(ctx context.Context, err error) error {
 	)
 
 	return err
+}
+
+func httpStatusFromError(err error) int {
+	switch {
+	case errors.Is(err, fs.ErrBucketNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, fs.ErrObjectNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, fs.ErrUploadNotFound):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func renderError(ctx context.Context, w http.ResponseWriter, err error) {
@@ -49,7 +69,7 @@ func renderError(ctx context.Context, w http.ResponseWriter, err error) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
+	w.WriteHeader(httpStatusFromError(err))
 
 	if _, writeErr := w.Write(data); writeErr != nil {
 		zctx.From(ctx).Error("Failed to write error response",

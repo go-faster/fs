@@ -38,6 +38,7 @@ func TestStorage_GetObject(t *testing.T) {
 	// Get object
 	resp, err := storage.GetObject(ctx, bucket, key)
 	require.NoError(t, err)
+
 	require.NotNil(t, resp)
 	defer resp.Reader.Close()
 

@@ -72,6 +72,7 @@ func TestIntegration_ListBuckets(t *testing.T) {
 	for _, b := range buckets {
 		bucketMap[b.Name] = true
 	}
+
 	for _, name := range bucketNames {
 		require.True(t, bucketMap[name], "bucket %s not found", name)
 	}
@@ -133,6 +134,7 @@ func TestIntegration_GetObject(t *testing.T) {
 	// Get object
 	obj, err := client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
 	require.NoError(t, err)
+
 	defer obj.Close()
 
 	// Read and verify content
@@ -170,6 +172,7 @@ func TestIntegration_ListObjects(t *testing.T) {
 
 	// List all objects
 	var foundObjects []string
+
 	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{}) {
 		require.NoError(t, obj.Err)
 		foundObjects = append(foundObjects, obj.Key)
@@ -208,22 +211,26 @@ func TestIntegration_ListObjectsWithPrefix(t *testing.T) {
 
 	// List objects with "docs/" prefix
 	var docsObjects []string
+
 	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{
 		Prefix: "docs/",
 	}) {
 		require.NoError(t, obj.Err)
 		docsObjects = append(docsObjects, obj.Key)
 	}
+
 	require.Len(t, docsObjects, 2)
 
 	// List objects with "images/" prefix
 	var imageObjects []string
+
 	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{
 		Prefix: "images/",
 	}) {
 		require.NoError(t, obj.Err)
 		imageObjects = append(imageObjects, obj.Key)
 	}
+
 	require.Len(t, imageObjects, 2)
 }
 
@@ -240,6 +247,7 @@ func TestIntegration_PutObjectLarge(t *testing.T) {
 
 	// Create 1MB content
 	contentSize := 1024 * 1024
+
 	content := make([]byte, contentSize)
 	for i := range content {
 		content[i] = byte(i % 256)
@@ -263,6 +271,7 @@ func TestIntegration_PutObjectLarge(t *testing.T) {
 	// Get and verify content
 	obj, err := client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
 	require.NoError(t, err)
+
 	defer obj.Close()
 
 	data, err := io.ReadAll(obj)
@@ -302,6 +311,7 @@ func TestIntegration_OverwriteObject(t *testing.T) {
 	// Get and verify updated content
 	obj, err := client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
 	require.NoError(t, err)
+
 	defer obj.Close()
 
 	data, err := io.ReadAll(obj)
@@ -338,12 +348,14 @@ func TestIntegration_NestedObjects(t *testing.T) {
 
 	// List objects with "a/b/" prefix
 	var foundObjects []string
+
 	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{
 		Prefix: "a/b/",
 	}) {
 		require.NoError(t, obj.Err)
 		foundObjects = append(foundObjects, obj.Key)
 	}
+
 	require.Len(t, foundObjects, 2)
 }
 
@@ -416,10 +428,12 @@ func TestIntegration_MultipleBucketsAndObjects(t *testing.T) {
 	// Verify objects in each bucket
 	for bucketName, expectedObjects := range buckets {
 		var foundObjects []string
+
 		for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{}) {
 			require.NoError(t, obj.Err)
 			foundObjects = append(foundObjects, obj.Key)
 		}
+
 		require.Len(t, foundObjects, len(expectedObjects))
 	}
 }
@@ -443,6 +457,7 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 	for i := 0; i < numObjects; i++ {
 		go func(idx int) {
 			defer func() { done <- true }()
+
 			objectName := fmt.Sprintf("file%d.txt", idx)
 			content := []byte(fmt.Sprintf("content%d", idx))
 			_, err := client.PutObject(ctx, bucketName, objectName,
@@ -459,10 +474,12 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 
 	// Verify all objects were created
 	var foundObjects []string
+
 	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{}) {
 		require.NoError(t, obj.Err)
 		foundObjects = append(foundObjects, obj.Key)
 	}
+
 	require.Len(t, foundObjects, numObjects)
 }
 
@@ -479,6 +496,7 @@ func TestIntegration_MultipartUpload(t *testing.T) {
 
 	// Create 10MB content (forces multipart upload)
 	contentSize := 10 * 1024 * 1024
+
 	content := make([]byte, contentSize)
 	for i := range content {
 		content[i] = byte(i % 256)
@@ -502,6 +520,7 @@ func TestIntegration_MultipartUpload(t *testing.T) {
 	// Get and verify content
 	obj, err := client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
 	require.NoError(t, err)
+
 	defer obj.Close()
 
 	data, err := io.ReadAll(obj)
@@ -533,9 +552,11 @@ func TestIntegration_MultipartUploadManual(t *testing.T) {
 	for i := range part1 {
 		part1[i] = byte(i % 256)
 	}
+
 	for i := range part2 {
 		part2[i] = byte((i + 100) % 256)
 	}
+
 	for i := range part3 {
 		part3[i] = byte((i + 200) % 256)
 	}
@@ -555,6 +576,7 @@ func TestIntegration_MultipartUploadManual(t *testing.T) {
 	partInfo, err := core.PutObjectPart(ctx, bucketName, objectName, uploadID, 1,
 		bytes.NewReader(part1), int64(len(part1)), minio.PutObjectPartOptions{})
 	require.NoError(t, err)
+
 	uploadedParts[0] = minio.CompletePart{
 		PartNumber: partInfo.PartNumber,
 		ETag:       partInfo.ETag,
@@ -564,6 +586,7 @@ func TestIntegration_MultipartUploadManual(t *testing.T) {
 	partInfo, err = core.PutObjectPart(ctx, bucketName, objectName, uploadID, 2,
 		bytes.NewReader(part2), int64(len(part2)), minio.PutObjectPartOptions{})
 	require.NoError(t, err)
+
 	uploadedParts[1] = minio.CompletePart{
 		PartNumber: partInfo.PartNumber,
 		ETag:       partInfo.ETag,
@@ -573,6 +596,7 @@ func TestIntegration_MultipartUploadManual(t *testing.T) {
 	partInfo, err = core.PutObjectPart(ctx, bucketName, objectName, uploadID, 3,
 		bytes.NewReader(part3), int64(len(part3)), minio.PutObjectPartOptions{})
 	require.NoError(t, err)
+
 	uploadedParts[2] = minio.CompletePart{
 		PartNumber: partInfo.PartNumber,
 		ETag:       partInfo.ETag,
@@ -590,6 +614,7 @@ func TestIntegration_MultipartUploadManual(t *testing.T) {
 	// Get and verify content
 	obj, err := client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
 	require.NoError(t, err)
+
 	defer obj.Close()
 
 	data, err := io.ReadAll(obj)
