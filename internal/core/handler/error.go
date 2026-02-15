@@ -19,7 +19,7 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-func newError(ctx context.Context, err error) error {
+func newError(ctx context.Context, err error) Error {
 	if err == nil {
 		err = errors.New("internal error")
 	}
@@ -37,7 +37,7 @@ func newError(ctx context.Context, err error) error {
 		zap.Error(err),
 	)
 
-	return err
+	return e
 }
 
 func httpStatusFromError(err error) int {
@@ -50,6 +50,8 @@ func httpStatusFromError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, fs.ErrInvalidBucketName):
 		return http.StatusBadRequest
+	case errors.Is(err, fs.ErrUnsupportedOperation):
+		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
 	}

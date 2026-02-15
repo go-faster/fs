@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"context"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -10,7 +11,20 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/core/handler"
+	"github.com/go-faster/fs/internal/mock"
 )
+
+// baseMock returns a ServiceMock with common stub methods that minio client requires.
+func baseMock() *mock.ServiceMock {
+	return &mock.ServiceMock{
+		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
+			return []fs.Object{}, nil
+		},
+		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
+			return []fs.Bucket{}, nil
+		},
+	}
+}
 
 func NewClient(t testing.TB, srv *TestServer) *minio.Client {
 	t.Helper()

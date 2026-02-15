@@ -53,7 +53,7 @@
 | GetObject           | GET         | `/{bucket}/{key}`                      | Download an object      | ✅ Yes       |
 | HeadObject          | HEAD        | `/{bucket}/{key}`                      | Get object metadata     | ✅ Yes       |
 | DeleteObject        | DELETE      | `/{bucket}/{key}`                      | Delete an object        | ✅ Yes       |
-| DeleteObjects       | POST        | `/{bucket}?delete`                     | Delete multiple objects | ❌ No        |
+| DeleteObjects       | POST        | `/{bucket}?delete`                     | Delete multiple objects | ✅ Yes       |
 | CopyObject          | PUT         | `/{bucket}/{key}`                      | Copy an object          | ❌ No        |
 | GetObjectAcl        | GET         | `/{bucket}/{key}?acl`                  | Get object ACL          | ❌ No        |
 | PutObjectAcl        | PUT         | `/{bucket}/{key}?acl`                  | Set object ACL          | ❌ No        |
@@ -116,10 +116,10 @@
 ## Implementation Summary
 
 **Total Operations:** ~80 S3 API operations
-**Implemented:** 13 core operations (all with HTTP handlers)
-**Coverage:** ~16% of full S3 API
+**Implemented:** 14 core operations (all with HTTP handlers)
+**Coverage:** ~17.5% of full S3 API
 
-### Implemented Operations (13)
+### Implemented Operations (14)
 1. ✅ ListBuckets - `GET /`
 2. ✅ CreateBucket - `PUT /{bucket}`
 3. ✅ DeleteBucket - `DELETE /{bucket}`
@@ -129,10 +129,11 @@
 7. ✅ GetObject - `GET /{bucket}/{key}`
 8. ✅ HeadObject - `HEAD /{bucket}/{key}`
 9. ✅ DeleteObject - `DELETE /{bucket}/{key}`
-10. ✅ CreateMultipartUpload - `POST /{bucket}/{key}?uploads`
-11. ✅ UploadPart - `PUT /{bucket}/{key}?partNumber={n}&uploadId={id}`
-12. ✅ CompleteMultipartUpload - `POST /{bucket}/{key}?uploadId={id}`
-13. ✅ AbortMultipartUpload - `DELETE /{bucket}/{key}?uploadId={id}`
+10. ✅ DeleteObjects - `POST /{bucket}?delete` (bulk delete)
+11. ✅ CreateMultipartUpload - `POST /{bucket}/{key}?uploads`
+12. ✅ UploadPart - `PUT /{bucket}/{key}?partNumber={n}&uploadId={id}`
+13. ✅ CompleteMultipartUpload - `POST /{bucket}/{key}?uploadId={id}`
+14. ✅ AbortMultipartUpload - `DELETE /{bucket}/{key}?uploadId={id}`
 
 ### Key Features
 - ✅ File system-based storage
