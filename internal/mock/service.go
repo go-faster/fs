@@ -20,8 +20,17 @@ var _ fs.Service = &ServiceMock{}
 //
 //		// make and configure a mocked fs.Service
 //		mockedService := &ServiceMock{
+//			AbortMultipartUploadFunc: func(ctx context.Context, bucket string, key string, uploadID string) error {
+//				panic("mock out the AbortMultipartUpload method")
+//			},
+//			CompleteMultipartUploadFunc: func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
+//				panic("mock out the CompleteMultipartUpload method")
+//			},
 //			CreateBucketFunc: func(ctx context.Context, bucket string) error {
 //				panic("mock out the CreateBucket method")
+//			},
+//			CreateMultipartUploadFunc: func(ctx context.Context, bucket string, key string) (*fs.MultipartUpload, error) {
+//				panic("mock out the CreateMultipartUpload method")
 //			},
 //			DeleteBucketFunc: func(ctx context.Context, bucket string) error {
 //				panic("mock out the DeleteBucket method")
@@ -41,6 +50,9 @@ var _ fs.Service = &ServiceMock{}
 //			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) error {
 //				panic("mock out the PutObject method")
 //			},
+//			UploadPartFunc: func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
+//				panic("mock out the UploadPart method")
+//			},
 //		}
 //
 //		// use mockedService in code that requires fs.Service
@@ -48,8 +60,17 @@ var _ fs.Service = &ServiceMock{}
 //
 //	}
 type ServiceMock struct {
+	// AbortMultipartUploadFunc mocks the AbortMultipartUpload method.
+	AbortMultipartUploadFunc func(ctx context.Context, bucket string, key string, uploadID string) error
+
+	// CompleteMultipartUploadFunc mocks the CompleteMultipartUpload method.
+	CompleteMultipartUploadFunc func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error)
+
 	// CreateBucketFunc mocks the CreateBucket method.
 	CreateBucketFunc func(ctx context.Context, bucket string) error
+
+	// CreateMultipartUploadFunc mocks the CreateMultipartUpload method.
+	CreateMultipartUploadFunc func(ctx context.Context, bucket string, key string) (*fs.MultipartUpload, error)
 
 	// DeleteBucketFunc mocks the DeleteBucket method.
 	DeleteBucketFunc func(ctx context.Context, bucket string) error
@@ -69,14 +90,44 @@ type ServiceMock struct {
 	// PutObjectFunc mocks the PutObject method.
 	PutObjectFunc func(ctx context.Context, req *fs.PutObjectRequest) error
 
+	// UploadPartFunc mocks the UploadPart method.
+	UploadPartFunc func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error)
+
 	// calls tracks calls to the methods.
 	calls struct {
+		// AbortMultipartUpload holds details about calls to the AbortMultipartUpload method.
+		AbortMultipartUpload []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
+			// UploadID is the uploadID argument value.
+			UploadID string
+		}
+		// CompleteMultipartUpload holds details about calls to the CompleteMultipartUpload method.
+		CompleteMultipartUpload []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Req is the req argument value.
+			Req *fs.CompleteMultipartUploadRequest
+		}
 		// CreateBucket holds details about calls to the CreateBucket method.
 		CreateBucket []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// Bucket is the bucket argument value.
 			Bucket string
+		}
+		// CreateMultipartUpload holds details about calls to the CreateMultipartUpload method.
+		CreateMultipartUpload []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
 		}
 		// DeleteBucket holds details about calls to the DeleteBucket method.
 		DeleteBucket []struct {
@@ -124,14 +175,105 @@ type ServiceMock struct {
 			// Req is the req argument value.
 			Req *fs.PutObjectRequest
 		}
+		// UploadPart holds details about calls to the UploadPart method.
+		UploadPart []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Req is the req argument value.
+			Req *fs.UploadPartRequest
+		}
 	}
-	lockCreateBucket sync.RWMutex
-	lockDeleteBucket sync.RWMutex
-	lockDeleteObject sync.RWMutex
-	lockGetObject    sync.RWMutex
-	lockListBuckets  sync.RWMutex
-	lockListObjects  sync.RWMutex
-	lockPutObject    sync.RWMutex
+	lockAbortMultipartUpload    sync.RWMutex
+	lockCompleteMultipartUpload sync.RWMutex
+	lockCreateBucket            sync.RWMutex
+	lockCreateMultipartUpload   sync.RWMutex
+	lockDeleteBucket            sync.RWMutex
+	lockDeleteObject            sync.RWMutex
+	lockGetObject               sync.RWMutex
+	lockListBuckets             sync.RWMutex
+	lockListObjects             sync.RWMutex
+	lockPutObject               sync.RWMutex
+	lockUploadPart              sync.RWMutex
+}
+
+// AbortMultipartUpload calls AbortMultipartUploadFunc.
+func (mock *ServiceMock) AbortMultipartUpload(ctx context.Context, bucket string, key string, uploadID string) error {
+	if mock.AbortMultipartUploadFunc == nil {
+		panic("ServiceMock.AbortMultipartUploadFunc: method is nil but Service.AbortMultipartUpload was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		Bucket   string
+		Key      string
+		UploadID string
+	}{
+		Ctx:      ctx,
+		Bucket:   bucket,
+		Key:      key,
+		UploadID: uploadID,
+	}
+	mock.lockAbortMultipartUpload.Lock()
+	mock.calls.AbortMultipartUpload = append(mock.calls.AbortMultipartUpload, callInfo)
+	mock.lockAbortMultipartUpload.Unlock()
+	return mock.AbortMultipartUploadFunc(ctx, bucket, key, uploadID)
+}
+
+// AbortMultipartUploadCalls gets all the calls that were made to AbortMultipartUpload.
+// Check the length with:
+//
+//	len(mockedService.AbortMultipartUploadCalls())
+func (mock *ServiceMock) AbortMultipartUploadCalls() []struct {
+	Ctx      context.Context
+	Bucket   string
+	Key      string
+	UploadID string
+} {
+	var calls []struct {
+		Ctx      context.Context
+		Bucket   string
+		Key      string
+		UploadID string
+	}
+	mock.lockAbortMultipartUpload.RLock()
+	calls = mock.calls.AbortMultipartUpload
+	mock.lockAbortMultipartUpload.RUnlock()
+	return calls
+}
+
+// CompleteMultipartUpload calls CompleteMultipartUploadFunc.
+func (mock *ServiceMock) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
+	if mock.CompleteMultipartUploadFunc == nil {
+		panic("ServiceMock.CompleteMultipartUploadFunc: method is nil but Service.CompleteMultipartUpload was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		Req *fs.CompleteMultipartUploadRequest
+	}{
+		Ctx: ctx,
+		Req: req,
+	}
+	mock.lockCompleteMultipartUpload.Lock()
+	mock.calls.CompleteMultipartUpload = append(mock.calls.CompleteMultipartUpload, callInfo)
+	mock.lockCompleteMultipartUpload.Unlock()
+	return mock.CompleteMultipartUploadFunc(ctx, req)
+}
+
+// CompleteMultipartUploadCalls gets all the calls that were made to CompleteMultipartUpload.
+// Check the length with:
+//
+//	len(mockedService.CompleteMultipartUploadCalls())
+func (mock *ServiceMock) CompleteMultipartUploadCalls() []struct {
+	Ctx context.Context
+	Req *fs.CompleteMultipartUploadRequest
+} {
+	var calls []struct {
+		Ctx context.Context
+		Req *fs.CompleteMultipartUploadRequest
+	}
+	mock.lockCompleteMultipartUpload.RLock()
+	calls = mock.calls.CompleteMultipartUpload
+	mock.lockCompleteMultipartUpload.RUnlock()
+	return calls
 }
 
 // CreateBucket calls CreateBucketFunc.
@@ -167,6 +309,46 @@ func (mock *ServiceMock) CreateBucketCalls() []struct {
 	mock.lockCreateBucket.RLock()
 	calls = mock.calls.CreateBucket
 	mock.lockCreateBucket.RUnlock()
+	return calls
+}
+
+// CreateMultipartUpload calls CreateMultipartUploadFunc.
+func (mock *ServiceMock) CreateMultipartUpload(ctx context.Context, bucket string, key string) (*fs.MultipartUpload, error) {
+	if mock.CreateMultipartUploadFunc == nil {
+		panic("ServiceMock.CreateMultipartUploadFunc: method is nil but Service.CreateMultipartUpload was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		Key:    key,
+	}
+	mock.lockCreateMultipartUpload.Lock()
+	mock.calls.CreateMultipartUpload = append(mock.calls.CreateMultipartUpload, callInfo)
+	mock.lockCreateMultipartUpload.Unlock()
+	return mock.CreateMultipartUploadFunc(ctx, bucket, key)
+}
+
+// CreateMultipartUploadCalls gets all the calls that were made to CreateMultipartUpload.
+// Check the length with:
+//
+//	len(mockedService.CreateMultipartUploadCalls())
+func (mock *ServiceMock) CreateMultipartUploadCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	Key    string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}
+	mock.lockCreateMultipartUpload.RLock()
+	calls = mock.calls.CreateMultipartUpload
+	mock.lockCreateMultipartUpload.RUnlock()
 	return calls
 }
 
@@ -391,5 +573,41 @@ func (mock *ServiceMock) PutObjectCalls() []struct {
 	mock.lockPutObject.RLock()
 	calls = mock.calls.PutObject
 	mock.lockPutObject.RUnlock()
+	return calls
+}
+
+// UploadPart calls UploadPartFunc.
+func (mock *ServiceMock) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
+	if mock.UploadPartFunc == nil {
+		panic("ServiceMock.UploadPartFunc: method is nil but Service.UploadPart was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		Req *fs.UploadPartRequest
+	}{
+		Ctx: ctx,
+		Req: req,
+	}
+	mock.lockUploadPart.Lock()
+	mock.calls.UploadPart = append(mock.calls.UploadPart, callInfo)
+	mock.lockUploadPart.Unlock()
+	return mock.UploadPartFunc(ctx, req)
+}
+
+// UploadPartCalls gets all the calls that were made to UploadPart.
+// Check the length with:
+//
+//	len(mockedService.UploadPartCalls())
+func (mock *ServiceMock) UploadPartCalls() []struct {
+	Ctx context.Context
+	Req *fs.UploadPartRequest
+} {
+	var calls []struct {
+		Ctx context.Context
+		Req *fs.UploadPartRequest
+	}
+	mock.lockUploadPart.RLock()
+	calls = mock.calls.UploadPart
+	mock.lockUploadPart.RUnlock()
 	return calls
 }

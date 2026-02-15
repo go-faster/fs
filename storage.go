@@ -15,4 +15,10 @@ type Storage interface {
 	PutObject(ctx context.Context, req *PutObjectRequest) error
 	GetObject(ctx context.Context, bucket, key string) (*GetObjectResponse, error)
 	DeleteObject(ctx context.Context, bucket, key string) error
+
+	// Multipart upload operations
+	CreateMultipartUpload(ctx context.Context, bucket, key string) (*MultipartUpload, error)
+	UploadPart(ctx context.Context, req *UploadPartRequest) (*Part, error)
+	CompleteMultipartUpload(ctx context.Context, req *CompleteMultipartUploadRequest) (*CompleteMultipartUploadResponse, error)
+	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }

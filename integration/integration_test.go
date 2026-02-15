@@ -508,3 +508,94 @@ func TestIntegration_MultipartUpload(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, content, data)
 }
+
+func TestIntegration_MultipartUploadManual(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	const (
+		bucketName = "multipart-manual-test"
+		objectName = "manual-multipart.bin"
+	)
+
+	// Create bucket
+	err := client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
+	require.NoError(t, err)
+
+	// Create three parts of 5MB each
+	partSize := 5 * 1024 * 1024
+	part1 := make([]byte, partSize)
+	part2 := make([]byte, partSize)
+	part3 := make([]byte, partSize)
+
+	for i := range part1 {
+		part1[i] = byte(i % 256)
+	}
+	for i := range part2 {
+		part2[i] = byte((i + 100) % 256)
+	}
+	for i := range part3 {
+		part3[i] = byte((i + 200) % 256)
+	}
+
+	// Get Core client for low-level multipart operations
+	core := minio.Core{Client: client}
+
+	// Initiate multipart upload
+	uploadID, err := core.NewMultipartUpload(ctx, bucketName, objectName, minio.PutObjectOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, uploadID)
+
+	// Upload parts
+	uploadedParts := make([]minio.CompletePart, 3)
+
+	// Part 1
+	partInfo, err := core.PutObjectPart(ctx, bucketName, objectName, uploadID, 1,
+		bytes.NewReader(part1), int64(len(part1)), minio.PutObjectPartOptions{})
+	require.NoError(t, err)
+	uploadedParts[0] = minio.CompletePart{
+		PartNumber: partInfo.PartNumber,
+		ETag:       partInfo.ETag,
+	}
+
+	// Part 2
+	partInfo, err = core.PutObjectPart(ctx, bucketName, objectName, uploadID, 2,
+		bytes.NewReader(part2), int64(len(part2)), minio.PutObjectPartOptions{})
+	require.NoError(t, err)
+	uploadedParts[1] = minio.CompletePart{
+		PartNumber: partInfo.PartNumber,
+		ETag:       partInfo.ETag,
+	}
+
+	// Part 3
+	partInfo, err = core.PutObjectPart(ctx, bucketName, objectName, uploadID, 3,
+		bytes.NewReader(part3), int64(len(part3)), minio.PutObjectPartOptions{})
+	require.NoError(t, err)
+	uploadedParts[2] = minio.CompletePart{
+		PartNumber: partInfo.PartNumber,
+		ETag:       partInfo.ETag,
+	}
+
+	// Complete multipart upload
+	_, err = core.CompleteMultipartUpload(ctx, bucketName, objectName, uploadID, uploadedParts, minio.PutObjectOptions{})
+	require.NoError(t, err)
+
+	// Verify object size
+	stat, err := client.StatObject(ctx, bucketName, objectName, minio.StatObjectOptions{})
+	require.NoError(t, err)
+	require.Equal(t, int64(partSize*3), stat.Size)
+
+	// Get and verify content
+	obj, err := client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
+	require.NoError(t, err)
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	require.NoError(t, err)
+
+	// Verify content is correct
+	expectedData := append(append(part1, part2...), part3...)
+	require.Equal(t, expectedData, data)
+}

@@ -86,3 +86,51 @@ func (s Service) GetObject(ctx context.Context, bucket, key string) (*fs.GetObje
 
 	return s.storage.GetObject(ctx, bucket, key)
 }
+
+func (s Service) CreateMultipartUpload(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.CreateMultipartUpload(ctx, bucket, key)
+}
+
+func (s Service) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
+	if err := validate.BucketName(req.Bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(req.Key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.UploadPart(ctx, req)
+}
+
+func (s Service) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
+	if err := validate.BucketName(req.Bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(req.Key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.CompleteMultipartUpload(ctx, req)
+}
+
+func (s Service) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.AbortMultipartUpload(ctx, bucket, key, uploadID)
+}

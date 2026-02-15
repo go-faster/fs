@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
+	"github.com/google/uuid"
 
 	"github.com/go-faster/fs"
 )
@@ -22,6 +25,7 @@ var _ fs.Storage = (*Storage)(nil)
 func New() *Storage {
 	return &Storage{
 		buckets: make(map[string]*bucket),
+		uploads: make(map[string]*multipartUpload),
 	}
 }
 
@@ -37,10 +41,25 @@ type bucket struct {
 	objects      map[string]*object
 }
 
+type uploadPart struct {
+	partNumber int
+	data       []byte
+	etag       string
+}
+
+type multipartUpload struct {
+	id        string
+	bucket    string
+	key       string
+	initiated time.Time
+	parts     map[int]*uploadPart
+}
+
 // Storage implements fs.Storage interface using in-memory storage.
 type Storage struct {
 	mu      sync.RWMutex
 	buckets map[string]*bucket
+	uploads map[string]*multipartUpload
 }
 
 func (s *Storage) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
@@ -184,5 +203,130 @@ func (s *Storage) DeleteObject(ctx context.Context, bucketName, key string) erro
 	}
 
 	delete(b.objects, key)
+	return nil
+}
+
+func (s *Storage) CreateMultipartUpload(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.buckets[bucket]; !exists {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	uploadID := uuid.New().String()
+	upload := &multipartUpload{
+		id:        uploadID,
+		bucket:    bucket,
+		key:       key,
+		initiated: time.Now(),
+		parts:     make(map[int]*uploadPart),
+	}
+
+	s.uploads[uploadID] = upload
+
+	return &fs.MultipartUpload{
+		UploadID:  uploadID,
+		Bucket:    bucket,
+		Key:       key,
+		Initiated: upload.initiated,
+	}, nil
+}
+
+func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	upload, exists := s.uploads[req.UploadID]
+	if !exists {
+		return nil, errors.New("upload not found")
+	}
+
+	data, err := io.ReadAll(req.Reader)
+	if err != nil {
+		return nil, errors.Wrap(err, "read part data")
+	}
+
+	hash := md5.Sum(data)
+	etag := hex.EncodeToString(hash[:])
+
+	upload.parts[req.PartNumber] = &uploadPart{
+		partNumber: req.PartNumber,
+		data:       data,
+		etag:       etag,
+	}
+
+	return &fs.Part{
+		PartNumber: req.PartNumber,
+		ETag:       etag,
+		Size:       int64(len(data)),
+	}, nil
+}
+
+func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	upload, exists := s.uploads[req.UploadID]
+	if !exists {
+		return nil, errors.New("upload not found")
+	}
+
+	b, exists := s.buckets[upload.bucket]
+	if !exists {
+		delete(s.uploads, req.UploadID)
+		return nil, fs.ErrBucketNotFound
+	}
+
+	// Sort parts by part number
+	parts := make([]fs.CompletedPart, len(req.Parts))
+	copy(parts, req.Parts)
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+
+	// Concatenate all parts
+	var totalSize int64
+	for _, part := range parts {
+		if p, ok := upload.parts[part.PartNumber]; ok {
+			totalSize += int64(len(p.data))
+		}
+	}
+
+	data := make([]byte, 0, totalSize)
+	for _, part := range parts {
+		if p, ok := upload.parts[part.PartNumber]; ok {
+			data = append(data, p.data...)
+		}
+	}
+
+	hash := md5.Sum(data)
+	etag := hex.EncodeToString(hash[:])
+
+	b.objects[upload.key] = &object{
+		data:         data,
+		lastModified: time.Now(),
+		etag:         etag,
+	}
+
+	delete(s.uploads, req.UploadID)
+
+	return &fs.CompleteMultipartUploadResponse{
+		Location: "/" + upload.bucket + "/" + upload.key,
+		Bucket:   upload.bucket,
+		Key:      upload.key,
+		ETag:     etag,
+	}, nil
+}
+
+func (s *Storage) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.uploads[uploadID]; !exists {
+		return errors.New("upload not found")
+	}
+
+	delete(s.uploads, uploadID)
 	return nil
 }

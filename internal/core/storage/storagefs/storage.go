@@ -16,10 +16,12 @@ func New(root string) (*Storage, error) {
 	}
 
 	return &Storage{
-		root: root,
+		root:      root,
+		multipart: newMultipartManager(),
 	}, nil
 }
 
 type Storage struct {
-	root string
+	root      string
+	multipart *multipartManager
 }
