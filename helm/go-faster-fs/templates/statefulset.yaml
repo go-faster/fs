@@ -81,6 +81,11 @@ spec:
             - name: OTEL_LOG_LEVEL
               value: {{ .Values.telemetry.logLevel | quote }}
             {{- end }}
+            # OpenTelemetry Go SDK experimental features
+            - name: OTEL_GO_X_DEPRECATED_RUNTIME_METRICS
+              value: "false"
+            - name: OTEL_GO_X_RESOURCE
+              value: "true"
           {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
