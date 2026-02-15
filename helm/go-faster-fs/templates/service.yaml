@@ -11,5 +11,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    - port: 9010
+      targetPort: pprof
+      protocol: TCP
+      name: pprof
   selector:
     {{- include "go-faster-fs.selectorLabels" . | nindent 4 }}

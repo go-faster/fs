@@ -13,3 +13,4 @@ spec:
       command: ['wget']
       args: ['{{ include "go-faster-fs.fullname" . }}:{{ .Values.service.port }}']
   restartPolicy: Never
+

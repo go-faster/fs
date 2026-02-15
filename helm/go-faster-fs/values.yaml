@@ -212,6 +212,28 @@ volumeMounts: []
   #   mountPath: "/etc/foo"
   #   readOnly: true
 
+# OpenTelemetry configuration
+# https://opentelemetry.io/docs/concepts/sdk-configuration/general-sdk-configuration/
+telemetry:
+  # Service name for telemetry
+  serviceName: "go-faster-fs"
+  # Traces exporter: "otlp", "console", "none"
+  tracesExporter: "none"
+  # Logs exporter: "otlp", "console", "none"
+  logsExporter: "none"
+  # Metrics exporter: "otlp", "console", "none"
+  metricsExporter: "none"
+  # OTLP endpoint (used when exporter is "otlp")
+  otlpEndpoint: ""
+  # OTLP protocol: "grpc" or "http/protobuf"
+  otlpProtocol: "grpc"
+  # Resource attributes (key=value,key2=value2 format)
+  resourceAttributes: ""
+  # Propagators: "tracecontext", "baggage", "b3", "b3multi", "jaeger", "xray", "ottrace", "none"
+  propagators: "tracecontext,baggage"
+  # Log level for SDK: "debug", "info", "warn", "error"
+  logLevel: "info"
+
 nodeSelector: {}
 
 tolerations: []

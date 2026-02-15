@@ -10,8 +10,8 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- with .Values.ingress.className }}
-  ingressClassName: {{ . }}
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
   {{- if .Values.ingress.tls }}
   tls:
@@ -30,14 +30,12 @@ spec:
         paths:
           {{- range .paths }}
           - path: {{ .path }}
-            {{- with .pathType }}
-            pathType: {{ . }}
-            {{- end }}
+            pathType: {{ .pathType }}
             backend:
               service:
                 name: {{ include "go-faster-fs.fullname" $ }}
                 port:
-                  number: {{ $.Values.service.port }}
+                  name: http
           {{- end }}
     {{- end }}
 {{- end }}

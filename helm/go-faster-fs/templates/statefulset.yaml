@@ -49,12 +49,47 @@ spec:
           env:
             - name: USER
               value: "fs"
+            # pprof server address
+            - name: PPROF_ADDR
+              value: "0.0.0.0:9010"
+            # OpenTelemetry SDK Configuration
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.telemetry.serviceName | quote }}
+            - name: OTEL_TRACES_EXPORTER
+              value: {{ .Values.telemetry.tracesExporter | quote }}
+            - name: OTEL_LOGS_EXPORTER
+              value: {{ .Values.telemetry.logsExporter | quote }}
+            - name: OTEL_METRICS_EXPORTER
+              value: {{ .Values.telemetry.metricsExporter | quote }}
+            {{- if .Values.telemetry.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.telemetry.otlpEndpoint | quote }}
+            {{- end }}
+            {{- if .Values.telemetry.otlpProtocol }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ .Values.telemetry.otlpProtocol | quote }}
+            {{- end }}
+            {{- if .Values.telemetry.resourceAttributes }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ .Values.telemetry.resourceAttributes | quote }}
+            {{- end }}
+            {{- if .Values.telemetry.propagators }}
+            - name: OTEL_PROPAGATORS
+              value: {{ .Values.telemetry.propagators | quote }}
+            {{- end }}
+            {{- if .Values.telemetry.logLevel }}
+            - name: OTEL_LOG_LEVEL
+              value: {{ .Values.telemetry.logLevel | quote }}
+            {{- end }}
           {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: pprof
+              containerPort: 9010
               protocol: TCP
           {{- with .Values.livenessProbe }}
           livenessProbe:
