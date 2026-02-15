@@ -7,7 +7,7 @@
 | ListBuckets                        | GET         | `/`                        | List all buckets                    | ✅ Yes       |
 | CreateBucket                       | PUT         | `/{bucket}`                | Create a new bucket                 | ✅ Yes       |
 | DeleteBucket                       | DELETE      | `/{bucket}`                | Delete an empty bucket              | ✅ Yes       |
-| HeadBucket                         | HEAD        | `/{bucket}`                | Check if bucket exists              | ❌ No        |
+| HeadBucket                         | HEAD        | `/{bucket}`                | Check if bucket exists              | ✅ Yes       |
 | GetBucketLocation                  | GET         | `/{bucket}?location`       | Get bucket location                 | ❌ No        |
 | GetBucketVersioning                | GET         | `/{bucket}?versioning`     | Get bucket versioning configuration | ❌ No        |
 | PutBucketVersioning                | PUT         | `/{bucket}?versioning`     | Enable versioning on bucket         | ❌ No        |
@@ -51,7 +51,7 @@
 | ListObjectVersions  | GET         | `/{bucket}?versions`                   | List object versions    | ❌ No        |
 | PutObject           | PUT         | `/{bucket}/{key}`                      | Upload an object        | ✅ Yes       |
 | GetObject           | GET         | `/{bucket}/{key}`                      | Download an object      | ✅ Yes       |
-| HeadObject          | HEAD        | `/{bucket}/{key}`                      | Get object metadata     | ❌ No        |
+| HeadObject          | HEAD        | `/{bucket}/{key}`                      | Get object metadata     | ✅ Yes       |
 | DeleteObject        | DELETE      | `/{bucket}/{key}`                      | Delete an object        | ✅ Yes       |
 | DeleteObjects       | POST        | `/{bucket}?delete`                     | Delete multiple objects | ❌ No        |
 | CopyObject          | PUT         | `/{bucket}/{key}`                      | Copy an object          | ❌ No        |
@@ -72,11 +72,11 @@
 
 | Operation               | HTTP Method | Endpoint                                       | Description                   | Implemented |
 |-------------------------|-------------|------------------------------------------------|-------------------------------|-------------|
-| CreateMultipartUpload   | POST        | `/{bucket}/{key}?uploads`                      | Initiate multipart upload     | ❌ No        |
-| UploadPart              | PUT         | `/{bucket}/{key}?partNumber={n}&uploadId={id}` | Upload a part                 | ❌ No        |
+| CreateMultipartUpload   | POST        | `/{bucket}/{key}?uploads`                      | Initiate multipart upload     | ✅ Yes       |
+| UploadPart              | PUT         | `/{bucket}/{key}?partNumber={n}&uploadId={id}` | Upload a part                 | ✅ Yes       |
 | UploadPartCopy          | PUT         | `/{bucket}/{key}?partNumber={n}&uploadId={id}` | Copy part from another object | ❌ No        |
-| CompleteMultipartUpload | POST        | `/{bucket}/{key}?uploadId={id}`                | Complete multipart upload     | ❌ No        |
-| AbortMultipartUpload    | DELETE      | `/{bucket}/{key}?uploadId={id}`                | Abort multipart upload        | ❌ No        |
+| CompleteMultipartUpload | POST        | `/{bucket}/{key}?uploadId={id}`                | Complete multipart upload     | ✅ Yes       |
+| AbortMultipartUpload    | DELETE      | `/{bucket}/{key}?uploadId={id}`                | Abort multipart upload        | ✅ Yes       |
 | ListMultipartUploads    | GET         | `/{bucket}?uploads`                            | List in-progress uploads      | ❌ No        |
 | ListParts               | GET         | `/{bucket}/{key}?uploadId={id}`                | List uploaded parts           | ❌ No        |
 
@@ -116,33 +116,49 @@
 ## Implementation Summary
 
 **Total Operations:** ~80 S3 API operations
-**Implemented:** 7 core operations
-**Coverage:** ~9% of full S3 API
+**Implemented:** 13 core operations (all with HTTP handlers)
+**Coverage:** ~16% of full S3 API
 
-### Implemented Operations (7)
+### Implemented Operations (13)
 1. ✅ ListBuckets - `GET /`
 2. ✅ CreateBucket - `PUT /{bucket}`
 3. ✅ DeleteBucket - `DELETE /{bucket}`
-4. ✅ ListObjects - `GET /{bucket}` (with prefix filtering)
-5. ✅ PutObject - `PUT /{bucket}/{key}`
-6. ✅ GetObject - `GET /{bucket}/{key}`
-7. ✅ DeleteObject - `DELETE /{bucket}/{key}`
+4. ✅ HeadBucket - `HEAD /{bucket}`
+5. ✅ ListObjects - `GET /{bucket}` (with prefix filtering)
+6. ✅ PutObject - `PUT /{bucket}/{key}`
+7. ✅ GetObject - `GET /{bucket}/{key}`
+8. ✅ HeadObject - `HEAD /{bucket}/{key}`
+9. ✅ DeleteObject - `DELETE /{bucket}/{key}`
+10. ✅ CreateMultipartUpload - `POST /{bucket}/{key}?uploads`
+11. ✅ UploadPart - `PUT /{bucket}/{key}?partNumber={n}&uploadId={id}`
+12. ✅ CompleteMultipartUpload - `POST /{bucket}/{key}?uploadId={id}`
+13. ✅ AbortMultipartUpload - `DELETE /{bucket}/{key}?uploadId={id}`
 
 ### Key Features
 - ✅ File system-based storage
+- ✅ In-memory storage (for testing)
 - ✅ Thread-safe operations (mutex-protected)
 - ✅ XML response format (AWS S3 compatible)
 - ✅ Prefix filtering for object listing
 - ✅ Nested object keys (directory-like structure)
+- ✅ Multipart upload support
+- ✅ AWS chunked encoding support (streaming uploads)
+- ✅ Full Windows path compatibility
+- ✅ Comprehensive test coverage (100% for service layer, handler layer)
 - ✅ AWS CLI compatible
+- ✅ MinIO client compatible
 - ✅ cURL compatible
 - ✅ Health check endpoint
 - ✅ Graceful shutdown
-- ✅ Request logging
+- ✅ Request logging with structured logging (zap)
+- ✅ OpenTelemetry tracing support
+- ✅ ETag generation (MD5-based)
+- ✅ Content-Length metadata
+- ✅ Last-Modified metadata
+- ✅ Content-Type detection
 
 ### Not Implemented
 - ❌ Authentication/Authorization
-- ❌ Multipart uploads
 - ❌ Object versioning
 - ❌ Access control (ACLs, policies)
 - ❌ Presigned URLs

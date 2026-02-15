@@ -58,8 +58,10 @@ func New(s fs.Service) http.Handler {
 				h.CreateBucket(w, r)
 			case http.MethodHead:
 				h.HeadBucket(w, r)
+			case http.MethodDelete:
+				h.DeleteBucket(w, r)
 			case http.MethodPost:
-				// POST to bucket can be used for multipart upload initiation or completion
+				// POST to bucket can be used for multipart upload initiation or completion.
 				h.HandleBucketPost(w, r)
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -76,8 +78,10 @@ func New(s fs.Service) http.Handler {
 			h.PutObject(w, r)
 		case http.MethodHead:
 			h.HeadObject(w, r)
+		case http.MethodDelete:
+			h.DeleteObject(w, r)
 		case http.MethodPost:
-			// POST to object path - handle multipart upload
+			// POST to object path - handle multipart upload.
 			h.HandleObjectPost(w, r)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
