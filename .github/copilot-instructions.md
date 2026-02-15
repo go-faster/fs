@@ -70,8 +70,6 @@ func Foo() {
 
 Use uber code style.
 
-Ensure code style by running `golangci-lint run --fix` before committing code.
-
 ### Newlines
 
 Put newlines before and after code blocks, before return statements.
