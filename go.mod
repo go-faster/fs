@@ -1,6 +1,6 @@
 module github.com/go-faster/fs
 
-go 1.25
+go 1.25.0
 
 tool github.com/matryer/moq
 
@@ -14,7 +14,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	go.uber.org/zap v1.27.1
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
