@@ -8,7 +8,7 @@ require (
 	github.com/go-faster/errors v0.7.1
 	github.com/go-faster/sdk v0.33.0
 	github.com/google/uuid v1.6.0
-	github.com/minio/minio-go/v7 v7.0.99
+	github.com/minio/minio-go/v7 v7.0.100
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0
