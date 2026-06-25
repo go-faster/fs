@@ -6,3 +6,14 @@ allow_licenses:
   - 'BSD-2-Clause'
   - 'BSD-3-Clause'
   - 'Apache-2.0'
+# First-party Go packages: BSD-3-Clause plus the standard Go patent grant,
+# which scancode reports as an unrecognized LicenseRef. Exempt from the
+# license allowlist (some, e.g. x/net, also report no detectable license).
+allow_dependencies_licenses:
+  - 'pkg:gomod/golang.org/x/crypto'
+  - 'pkg:gomod/golang.org/x/mod'
+  - 'pkg:gomod/golang.org/x/net'
+  - 'pkg:gomod/golang.org/x/sync'
+  - 'pkg:gomod/golang.org/x/sys'
+  - 'pkg:gomod/golang.org/x/text'
+  - 'pkg:gomod/golang.org/x/tools'
