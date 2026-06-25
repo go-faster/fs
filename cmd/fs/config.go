@@ -9,6 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// StorageTypeFilesystem is the only currently supported storage backend type.
+const StorageTypeFilesystem = "filesystem"
+
 // Config represents the application configuration.
 type Config struct {
 	// Server configuration
@@ -78,7 +81,7 @@ func DefaultConfig() Config {
 		},
 		Storage: StorageConfig{
 			Root: ".s3data",
-			Type: "filesystem",
+			Type: StorageTypeFilesystem,
 		},
 		Observability: ObservabilityConfig{
 			ServiceName:          "go-faster/fs",
@@ -127,7 +130,7 @@ func (c *Config) Validate() error {
 		return errors.New("storage.root is required")
 	}
 
-	if c.Storage.Type != "filesystem" {
+	if c.Storage.Type != StorageTypeFilesystem {
 		return fmt.Errorf("unsupported storage type: %s (only 'filesystem' is supported)", c.Storage.Type)
 	}
 
