@@ -104,6 +104,9 @@ linters:
       - linters:
           - revive
         text: comment on exported const .+ should be of the form
+      - linters:
+          - goconst
+        text: 'string `http://s3\.amazonaws\.com/doc/[0-9-]+/`'
 formatters:
   enable:
     - gofmt
