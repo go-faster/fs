@@ -26,11 +26,11 @@ jobs:
           fetch-depth: 0
       - run: git fetch --force --tags
 
-      - uses: sigstore/cosign-installer@v4.1.1
+      - uses: sigstore/cosign-installer@v4.1.2
       - uses: anchore/sbom-action/download-syft@v0
       - run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Install Go
         uses: actions/setup-go@v6
@@ -57,14 +57,14 @@ jobs:
 
       - name: ghcr-login
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: goreleaser-install
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           install-only: true
 
