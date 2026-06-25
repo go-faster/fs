@@ -10,10 +10,10 @@ allow_licenses:
 # which scancode reports as an unrecognized LicenseRef. Exempt from the
 # license allowlist (some, e.g. x/net, also report no detectable license).
 allow_dependencies_licenses:
-  - 'pkg:gomod/golang.org/x/crypto'
-  - 'pkg:gomod/golang.org/x/mod'
-  - 'pkg:gomod/golang.org/x/net'
-  - 'pkg:gomod/golang.org/x/sync'
-  - 'pkg:gomod/golang.org/x/sys'
-  - 'pkg:gomod/golang.org/x/text'
-  - 'pkg:gomod/golang.org/x/tools'
+  - 'pkg:golang/golang.org/x/crypto'
+  - 'pkg:golang/golang.org/x/mod'
+  - 'pkg:golang/golang.org/x/net'
+  - 'pkg:golang/golang.org/x/sync'
+  - 'pkg:golang/golang.org/x/sys'
+  - 'pkg:golang/golang.org/x/text'
+  - 'pkg:golang/golang.org/x/tools'
