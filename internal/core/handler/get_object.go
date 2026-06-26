@@ -17,12 +17,7 @@ func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	bucket, key, _ := strings.Cut(path, "/")
 
 	resp, err := h.service.GetObject(ctx, bucket, key)
-	if errors.Is(err, fs.ErrObjectNotFound) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	if errors.Is(err, fs.ErrBucketNotFound) {
+	if errors.Is(err, fs.ErrObjectNotFound) || errors.Is(err, fs.ErrBucketNotFound) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -32,9 +27,24 @@ func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer func() {
-		_ = resp.Reader.Close()
-	}()
+	serveObject(w, r, key, resp)
+}
+
+// quoteETag returns the ETag as a quoted string, as required by S3/HTTP.
+func quoteETag(etag string) string {
+	if etag == "" || strings.HasPrefix(etag, `"`) {
+		return etag
+	}
+
+	return `"` + etag + `"`
+}
+
+// serveObject writes an object response, delegating to http.ServeContent when the
+// reader is seekable so that Range requests (206 + Content-Range) and conditional
+// headers (If-Range, If-Modified-Since, If-Match, If-None-Match) are handled. It is
+// safe for HEAD requests. The reader is always closed.
+func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.GetObjectResponse) {
+	defer func() { _ = resp.Reader.Close() }()
 
 	if resp.ContentType != "" {
 		w.Header().Set("Content-Type", resp.ContentType)
@@ -42,12 +52,21 @@ func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 
-	if resp.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(resp.Size, 10))
+	if resp.ETag != "" {
+		w.Header().Set("ETag", quoteETag(resp.ETag))
 	}
 
-	if resp.ETag != "" {
-		w.Header().Set("ETag", resp.ETag)
+	if rs, ok := resp.Reader.(io.ReadSeeker); ok {
+		// ServeContent handles Range, conditional requests, Content-Range,
+		// Last-Modified and the 206/304/412/416 status codes, and writes no body
+		// for HEAD requests.
+		http.ServeContent(w, r, key, resp.LastModified, rs)
+		return
+	}
+
+	// Fallback for non-seekable readers: full body, no range support.
+	if resp.Size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(resp.Size, 10))
 	}
 
 	if !resp.LastModified.IsZero() {
@@ -56,8 +75,7 @@ func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 
-	if _, err := io.Copy(w, resp.Reader); err != nil {
-		// Cannot render error here as headers are already sent
-		return
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, resp.Reader)
 	}
 }

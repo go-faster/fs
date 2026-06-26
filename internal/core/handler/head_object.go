@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-faster/errors"
@@ -27,19 +26,7 @@ func (h *handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer func() { _ = resp.Reader.Close() }()
-
-	// Set headers
-	w.Header().Set("Content-Length", strconv.FormatInt(resp.Size, 10))
-	w.Header().Set("Last-Modified", resp.LastModified.UTC().Format(http.TimeFormat))
-
-	if resp.ETag != "" {
-		w.Header().Set("ETag", `"`+resp.ETag+`"`)
-	}
-
-	if resp.ContentType != "" {
-		w.Header().Set("Content-Type", resp.ContentType)
-	}
-
-	w.WriteHeader(http.StatusOK)
+	// serveObject is HEAD-safe: it sets headers (Content-Type, ETag, Content-Length,
+	// Last-Modified) and honors conditional requests without writing a body.
+	serveObject(w, r, key, resp)
 }
