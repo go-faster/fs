@@ -10,8 +10,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-faster/fs/internal/core/service"
-	"github.com/go-faster/fs/internal/core/storage/storagefs"
+	"github.com/go-faster/fs/storagefs"
 )
 
 func newTestClient(t testing.TB) *minio.Client {
@@ -21,11 +20,8 @@ func newTestClient(t testing.TB) *minio.Client {
 	storage, err := storagefs.New(t.TempDir())
 	require.NoError(t, err)
 
-	// Create service
-	svc := service.New(storage)
-
-	// Create handler and test server (real HTTP server)
-	srv := newTestServer(t, svc)
+	// Create handler and test server (real HTTP server) via the public API
+	srv := newTestServer(t, storage)
 
 	// Create real minio client
 	return NewClient(t, srv)

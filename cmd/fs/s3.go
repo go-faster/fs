@@ -15,12 +15,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 
-	"github.com/go-faster/fs/internal/core/handler"
-	"github.com/go-faster/fs/internal/core/service"
-	"github.com/go-faster/fs/internal/core/storage/storagefs"
+	"github.com/go-faster/fs/server"
+	"github.com/go-faster/fs/storagefs"
 )
 
 func S3() *cobra.Command {
@@ -119,85 +117,50 @@ Command-line flags override YAML configuration values.`,
 					return fmt.Errorf("failed to create storage: %w", err)
 				}
 
-				// Pre-create buckets if configured
-				if len(cfg.Storage.Buckets) > 0 {
-					lg.Info("Pre-creating buckets", zap.Strings("buckets", cfg.Storage.Buckets))
-
-					for _, bucketName := range cfg.Storage.Buckets {
-						if err := storage.CreateBucket(ctx, bucketName); err != nil {
-							return fmt.Errorf("failed to create bucket %q: %w", bucketName, err)
-						}
-
-						lg.Info("Ensured bucket exists", zap.String("bucket", bucketName))
+				// wrap injects OpenTelemetry instrumentation and optional request
+				// logging into the embeddable server's handler.
+				wrap := func(h http.Handler) http.Handler {
+					if cfg.Observability.EnableRequestLogging {
+						h = loggingMiddleware(h)
 					}
-				}
 
-				svc := service.New(storage)
-				h := handler.New(svc)
-
-				// Create HTTP server
-				mux := http.NewServeMux()
-				mux.Handle("/", h)
-
-				// Add health check endpoint
-				mux.HandleFunc(cfg.Server.HealthPath, func(w http.ResponseWriter, r *http.Request) {
-					w.WriteHeader(http.StatusOK)
-
-					if _, err := fmt.Fprintf(w, "OK"); err != nil {
-						// Log error but don't fail since headers already sent
-						fmt.Fprintf(os.Stderr, "Health check write error: %v\n", err)
-					}
-				})
-
-				// Build handler with optional request logging
-				var finalHandler http.Handler = mux
-				if cfg.Observability.EnableRequestLogging {
-					finalHandler = loggingMiddleware(mux)
-				}
-
-				server := &http.Server{
-					Addr: cfg.Server.Addr,
-					Handler: otelhttp.NewHandler(finalHandler, "Operation",
+					return otelhttp.NewHandler(h, "Operation",
 						otelhttp.WithPropagators(t.TextMapPropagator()),
 						otelhttp.WithMeterProvider(t.MeterProvider()),
 						otelhttp.WithTracerProvider(t.TracerProvider()),
-					),
+					)
+				}
+
+				srv, err := server.New(server.Config{
+					Storage:      storage,
+					Addr:         cfg.Server.Addr,
 					ReadTimeout:  cfg.Server.ReadTimeout,
 					WriteTimeout: cfg.Server.WriteTimeout,
 					IdleTimeout:  cfg.Server.IdleTimeout,
-					ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-						return t.BaseContext()
-					},
+					HealthPath:   cfg.Server.HealthPath,
+					Buckets:      cfg.Storage.Buckets,
+					WrapHandler:  wrap,
+				})
+				if err != nil {
+					return errors.Wrap(err, "create server")
 				}
 
-				g, gCtx := errgroup.WithContext(ctx)
-				g.Go(func() error {
-					lg.Info("Starting server", zap.String("addr", server.Addr))
+				// NB: Explicitly using t.BaseContext() for new connections so that
+				// telemetry is properly tied to the application lifecycle.
+				srv.HTTPServer().ConnContext = func(context.Context, net.Conn) context.Context {
+					return t.BaseContext()
+				}
 
-					if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						return errors.Wrap(err, "listen and serve")
-					}
+				lg.Info("Starting server", zap.String("addr", cfg.Server.Addr))
 
-					return nil
-				})
-				g.Go(func() error {
-					// NB: Using ShutdownContext is important to properly execute graceful shutdown.
-					shutdownContext := t.ShutdownContext()
-					select {
-					case <-gCtx.Done():
-						// Non-graceful shutdown.
-						lg.Warn("Context done before shutdown")
-					case <-shutdownContext.Done():
-						lg.Info("Shutting down server")
-					}
-					// NB: Explicitly using t.BaseContext() to ensure that server
-					// is properly shut down before application exits.
-					//
-					// This context is canceled when shutdown is completed.
-					return server.Shutdown(t.BaseContext())
-				})
+				// NB: Using ShutdownContext is important to properly execute graceful
+				// shutdown: ListenAndServe serves until it is canceled, then drains
+				// in-flight requests using a detached context.
+				if err := srv.ListenAndServe(t.ShutdownContext()); err != nil {
+					return errors.Wrap(err, "listen and serve")
+				}
 
-				return g.Wait()
+				return nil
 			},
 				app.WithServiceName(cfg.Observability.ServiceName),
 			)

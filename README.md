@@ -108,6 +108,44 @@ observability:
   enable_tracing: true
 ```
 
+## Use as a library
+
+The S3 server is embeddable. Pick a storage backend (`storagefs` for filesystem,
+`storagemem` for in-memory, or your own implementation of [`fs.Storage`](storage.go))
+and either mount the bare `http.Handler` or run the turnkey `server.Server`. The
+library core pulls in no observability stack — wrap the handler yourself (e.g. with
+`otelhttp`) via `Config.WrapHandler`.
+
+```go
+import (
+	"net/http"
+
+	"github.com/go-faster/fs/server"
+	"github.com/go-faster/fs/storagefs"
+)
+
+func main() {
+	store, err := storagefs.New("/data")
+	if err != nil {
+		panic(err)
+	}
+
+	// Low-level: mount into your own mux.
+	h := server.NewHandler(store)
+	http.ListenAndServe(":8080", h)
+
+	// High-level: turnkey server with health, timeouts and graceful shutdown.
+	srv, err := server.New(server.Config{Storage: store, Addr: ":9000"})
+	if err != nil {
+		panic(err)
+	}
+	srv.ListenAndServe(ctx) // serves until ctx is canceled, then drains
+}
+```
+
+See the [`server` package reference](https://pkg.go.dev/github.com/go-faster/fs/server)
+for the full API and runnable examples.
+
 ## Development
 
 ```bash

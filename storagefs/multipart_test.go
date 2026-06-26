@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
-	"github.com/go-faster/fs/internal/core/storage/storagefs"
+	"github.com/go-faster/fs/storagefs"
 )
 
 func TestStorage_CreateMultipartUpload(t *testing.T) {

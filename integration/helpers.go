@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
-	"github.com/go-faster/fs/internal/core/handler"
+	"github.com/go-faster/fs/server"
 )
 
 func NewClient(t testing.TB, srv *TestServer) *minio.Client {
@@ -29,10 +29,10 @@ type TestServer struct {
 	Endpoint string
 }
 
-func newTestServer(t testing.TB, svc fs.Service) *TestServer {
+func newTestServer(t testing.TB, store fs.Storage) *TestServer {
 	t.Helper()
 
-	srv := httptest.NewServer(handler.New(svc))
+	srv := httptest.NewServer(server.NewHandler(store))
 	t.Cleanup(srv.Close)
 
 	u, err := url.Parse(srv.URL)

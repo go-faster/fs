@@ -3,7 +3,7 @@ package storagemem_test
 import (
 	"testing"
 
-	"github.com/go-faster/fs/internal/core/storage/storagemem"
+	"github.com/go-faster/fs/storagemem"
 )
 
 func newStorage(t testing.TB) *storagemem.Storage {
