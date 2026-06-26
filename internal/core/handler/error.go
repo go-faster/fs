@@ -52,6 +52,8 @@ func httpStatusFromError(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, fs.ErrUnsupportedOperation):
 		return http.StatusNotImplemented
+	case errors.Is(err, fs.ErrPreconditionFailed):
+		return http.StatusPreconditionFailed
 	default:
 		return http.StatusInternalServerError
 	}

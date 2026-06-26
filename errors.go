@@ -8,4 +8,5 @@ var (
 	ErrUploadNotFound       = errors.New("upload not found")
 	ErrInvalidBucketName    = errors.New("invalid bucket name")
 	ErrUnsupportedOperation = errors.New("unsupported operation")
+	ErrPreconditionFailed   = errors.New("precondition failed")
 )

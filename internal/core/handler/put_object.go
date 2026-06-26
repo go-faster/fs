@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
 )
@@ -48,6 +51,21 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Conditional create: "If-None-Match: *" requires the object to not already
+	// exist, otherwise the write fails with 412 Precondition Failed.
+	if strings.TrimSpace(r.Header.Get("If-None-Match")) == "*" {
+		exists, err := h.objectExists(ctx, bucket, key)
+		if err != nil {
+			renderError(ctx, w, err)
+			return
+		}
+
+		if exists {
+			renderError(ctx, w, fs.ErrPreconditionFailed)
+			return
+		}
+	}
+
 	// Handle AWS chunked encoding.
 	reader := getBodyReader(r)
 	size := getDecodedContentLength(r)
@@ -65,4 +83,21 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// objectExists reports whether an object currently exists. A missing bucket or
+// object is reported as not existing rather than an error.
+func (h *handler) objectExists(ctx context.Context, bucket, key string) (bool, error) {
+	resp, err := h.service.GetObject(ctx, bucket, key)
+	if errors.Is(err, fs.ErrObjectNotFound) || errors.Is(err, fs.ErrBucketNotFound) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	_ = resp.Reader.Close()
+
+	return true, nil
 }
