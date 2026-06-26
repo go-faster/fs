@@ -48,10 +48,16 @@ func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.
 		key := filepath.ToSlash(relPath)
 
 		if prefix == "" || strings.HasPrefix(key, prefix) {
+			etag, err := s.etagFor(path, info)
+			if err != nil {
+				return errors.Wrap(err, "etag")
+			}
+
 			objects = append(objects, fs.Object{
 				Key:          key,
 				Size:         info.Size(),
 				LastModified: info.ModTime(),
+				ETag:         etag,
 			})
 		}
 

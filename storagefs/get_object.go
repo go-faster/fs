@@ -35,9 +35,16 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		return nil, errors.Wrap(err, "stat object")
 	}
 
+	etag, err := s.etagFor(objectPath, info)
+	if err != nil {
+		_ = f.Close()
+		return nil, errors.Wrap(err, "etag")
+	}
+
 	return &fs.GetObjectResponse{
 		Reader:       f,
 		Size:         info.Size(),
 		LastModified: info.ModTime(),
+		ETag:         etag,
 	}, nil
 }
