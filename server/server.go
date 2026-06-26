@@ -86,15 +86,19 @@ func (c *Config) setDefaults() {
 	if c.Addr == "" {
 		c.Addr = DefaultAddr
 	}
+
 	if c.ReadTimeout == 0 {
 		c.ReadTimeout = DefaultReadTimeout
 	}
+
 	if c.WriteTimeout == 0 {
 		c.WriteTimeout = DefaultWriteTimeout
 	}
+
 	if c.IdleTimeout == 0 {
 		c.IdleTimeout = DefaultIdleTimeout
 	}
+
 	if c.HealthPath == "" {
 		c.HealthPath = DefaultHealthPath
 	}
@@ -173,6 +177,7 @@ func (s *Server) ensureBuckets(ctx context.Context) error {
 		if err != nil {
 			return errors.Wrapf(err, "check bucket %q", bucket)
 		}
+
 		if exists {
 			continue
 		}

@@ -105,6 +105,7 @@ func TestPutObject_IfNoneMatch_Created(t *testing.T) {
 	}
 	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) error {
 		putCalled = true
+
 		require.Equal(t, bucketName, req.Bucket)
 		require.Equal(t, objectKey, req.Key)
 

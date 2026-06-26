@@ -27,11 +27,13 @@ func ExampleNewHandler() {
 	defer ts.Close()
 
 	// Create a bucket via the embedded S3 API.
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/s3/example-bucket", nil)
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/s3/example-bucket", http.NoBody)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	fmt.Println(resp.StatusCode)
@@ -64,6 +66,7 @@ func ExampleServer() {
 	time.Sleep(10 * time.Millisecond)
 
 	cancel() // trigger graceful shutdown
+
 	if err := <-done; err != nil {
 		log.Fatal(err)
 	}
