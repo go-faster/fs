@@ -192,12 +192,20 @@ func (s *Storage) GetObject(ctx context.Context, bucketName, key string) (*fs.Ge
 	copy(dataCopy, obj.data)
 
 	return &fs.GetObjectResponse{
-		Reader:       io.NopCloser(bytes.NewReader(dataCopy)),
+		Reader:       readSeekNopCloser{bytes.NewReader(dataCopy)},
 		Size:         int64(len(dataCopy)),
 		LastModified: obj.lastModified,
 		ETag:         obj.etag,
 	}, nil
 }
+
+// readSeekNopCloser adapts a *bytes.Reader into an io.ReadSeekCloser so the
+// handler can serve byte ranges via http.ServeContent.
+type readSeekNopCloser struct {
+	*bytes.Reader
+}
+
+func (readSeekNopCloser) Close() error { return nil }
 
 func (s *Storage) DeleteObject(ctx context.Context, bucketName, key string) error {
 	s.mu.Lock()
