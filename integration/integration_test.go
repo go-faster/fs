@@ -166,10 +166,10 @@ func TestIntegration_ListObjects(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// List all objects
+	// List all objects recursively (flat keyspace).
 	var foundObjects []string
 
-	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{}) {
+	for obj := range client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{Recursive: true}) {
 		require.NoError(t, obj.Err)
 		foundObjects = append(foundObjects, obj.Key)
 	}
