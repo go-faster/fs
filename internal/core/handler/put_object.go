@@ -51,19 +51,14 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Conditional create: "If-None-Match: *" requires the object to not already
-	// exist, otherwise the write fails with 412 Precondition Failed.
-	if strings.TrimSpace(r.Header.Get("If-None-Match")) == "*" {
-		exists, err := h.objectExists(ctx, bucket, key)
-		if err != nil {
-			renderError(ctx, w, err)
-			return
-		}
-
-		if exists {
-			renderError(ctx, w, fs.ErrPreconditionFailed)
-			return
-		}
+	// Evaluate If-Match / If-None-Match preconditions; on failure respond with
+	// 412 Precondition Failed.
+	if failed, err := h.checkPutPreconditions(ctx, bucket, key, r.Header); err != nil {
+		renderError(ctx, w, err)
+		return
+	} else if failed {
+		renderError(ctx, w, fs.ErrPreconditionFailed)
+		return
 	}
 
 	// Handle AWS chunked encoding.
@@ -85,19 +80,77 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// objectExists reports whether an object currently exists. A missing bucket or
-// object is reported as not existing rather than an error.
-func (h *handler) objectExists(ctx context.Context, bucket, key string) (bool, error) {
+// statObject reports whether an object currently exists and its (unquoted) ETag.
+// A missing bucket or object is reported as not existing rather than an error.
+func (h *handler) statObject(ctx context.Context, bucket, key string) (exists bool, etag string, err error) {
 	resp, err := h.service.GetObject(ctx, bucket, key)
 	if errors.Is(err, fs.ErrObjectNotFound) || errors.Is(err, fs.ErrBucketNotFound) {
-		return false, nil
+		return false, "", nil
 	}
 
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	_ = resp.Reader.Close()
 
-	return true, nil
+	return true, resp.ETag, nil
+}
+
+// checkPutPreconditions evaluates the If-Match / If-None-Match request headers
+// against the current state of the target object. It returns true when the
+// precondition fails (the caller should respond with 412).
+//
+//   - If-None-Match: *          fail if the object exists.
+//   - If-None-Match: "<etag>"   fail if it exists and the ETag matches.
+//   - If-Match: *               fail if the object does not exist.
+//   - If-Match: "<etag>"        fail if it is missing or the ETag differs.
+func (h *handler) checkPutPreconditions(ctx context.Context, bucket, key string, header http.Header) (bool, error) {
+	ifNoneMatch := strings.TrimSpace(header.Get("If-None-Match"))
+	ifMatch := strings.TrimSpace(header.Get("If-Match"))
+
+	if ifNoneMatch == "" && ifMatch == "" {
+		return false, nil
+	}
+
+	exists, etag, err := h.statObject(ctx, bucket, key)
+	if err != nil {
+		return false, err
+	}
+
+	if ifNoneMatch == "*" && exists {
+		return true, nil
+	}
+
+	if ifNoneMatch != "" && ifNoneMatch != "*" && exists && etagMatches(ifNoneMatch, etag) {
+		return true, nil
+	}
+
+	if ifMatch == "*" && !exists {
+		return true, nil
+	}
+
+	if ifMatch != "" && ifMatch != "*" && (!exists || !etagMatches(ifMatch, etag)) {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// etagMatches reports whether the raw ETag matches any entity-tag in an If-Match
+// or If-None-Match header value (a comma-separated list, each optionally quoted
+// or weak-prefixed with W/).
+func etagMatches(header, raw string) bool {
+	raw = strings.Trim(raw, `"`)
+
+	for tok := range strings.SplitSeq(header, ",") {
+		tok = strings.TrimSpace(tok)
+		tok = strings.TrimPrefix(tok, "W/")
+
+		if strings.Trim(tok, `"`) == raw {
+			return true
+		}
+	}
+
+	return false
 }

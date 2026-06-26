@@ -120,3 +120,25 @@ func TestPutObject_IfNoneMatch_Created(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.True(t, putCalled, "object must be written when it does not exist")
 }
+
+func TestPutObject_ConditionalIfMatch(t *testing.T) {
+	h := newStorageHandler(t)
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/bucket-a", "", nil).Code)
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/bucket-a/obj", "v1", nil).Code)
+
+	etag := do(t, h, http.MethodGet, "/bucket-a/obj", "", nil).Header().Get("ETag")
+
+	// Wrong ETag -> 412, object unchanged.
+	require.Equal(t, http.StatusPreconditionFailed,
+		do(t, h, http.MethodPut, "/bucket-a/obj", "v2", map[string]string{"If-Match": `"nope"`}).Code)
+	require.Equal(t, "v1", do(t, h, http.MethodGet, "/bucket-a/obj", "", nil).Body.String())
+
+	// Correct ETag -> 200, object updated.
+	require.Equal(t, http.StatusOK,
+		do(t, h, http.MethodPut, "/bucket-a/obj", "v2", map[string]string{"If-Match": etag}).Code)
+	require.Equal(t, "v2", do(t, h, http.MethodGet, "/bucket-a/obj", "", nil).Body.String())
+
+	// If-Match: * on a missing object -> 412.
+	require.Equal(t, http.StatusPreconditionFailed,
+		do(t, h, http.MethodPut, "/bucket-a/missing", "x", map[string]string{"If-Match": "*"}).Code)
+}
