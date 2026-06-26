@@ -1,0 +1,40 @@
+package integration
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"testing"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/stretchr/testify/require"
+)
+
+func TestIntegration_CopyObject(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	const bucket = "copy-bucket"
+	require.NoError(t, client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}))
+
+	content := []byte("payload")
+	_, err := client.PutObject(ctx, bucket, "src", bytes.NewReader(content), int64(len(content)), minio.PutObjectOptions{})
+	require.NoError(t, err)
+
+	_, err = client.CopyObject(ctx,
+		minio.CopyDestOptions{Bucket: bucket, Object: "dst"},
+		minio.CopySrcOptions{Bucket: bucket, Object: "src"},
+	)
+	require.NoError(t, err)
+
+	obj, err := client.GetObject(ctx, bucket, "dst", minio.GetObjectOptions{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = obj.Close() })
+
+	got, err := io.ReadAll(obj)
+	require.NoError(t, err)
+	require.Equal(t, "payload", string(got))
+}
