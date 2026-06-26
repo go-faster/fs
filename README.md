@@ -110,13 +110,26 @@ observability:
 
 ## Use as a library
 
-The S3 server is embeddable. Pick a storage backend (`storagefs` for filesystem,
-`storagemem` for in-memory, or your own implementation of [`fs.Storage`](storage.go))
-and either mount the bare `http.Handler` or run the turnkey `server.Server`. The
-library core pulls in no observability stack — wrap the handler yourself (e.g. with
-`otelhttp`) via `Config.WrapHandler`.
+The S3 server is embeddable. Install the module and pick a storage backend —
+[`storagefs`](storagefs) for the filesystem, [`storagemem`](storagemem) for
+in-memory, or your own implementation of the [`fs.Storage`](storage.go)
+interface:
+
+```bash
+go get github.com/go-faster/fs
+```
+
+The library core pulls in **no observability stack** — wrap the handler yourself
+(e.g. with `otelhttp`) via `server.NewHandler` or `Config.WrapHandler`.
+
+### Mount the handler into your own server
+
+Use `server.NewHandler` when you already run an `http.Server` or mux and just
+want to expose the S3 API (optionally under a path prefix):
 
 ```go
+package main
+
 import (
 	"net/http"
 
@@ -130,18 +143,60 @@ func main() {
 		panic(err)
 	}
 
-	// Low-level: mount into your own mux.
-	h := server.NewHandler(store)
-	http.ListenAndServe(":8080", h)
+	mux := http.NewServeMux()
+	mux.Handle("/s3/", http.StripPrefix("/s3", server.NewHandler(store)))
 
-	// High-level: turnkey server with health, timeouts and graceful shutdown.
-	srv, err := server.New(server.Config{Storage: store, Addr: ":9000"})
+	http.ListenAndServe(":8080", mux)
+}
+```
+
+### Run the turnkey server
+
+Use `server.New` for a managed server with a health endpoint, request timeouts,
+optional bucket pre-creation and graceful shutdown driven by a `context`:
+
+```go
+package main
+
+import (
+	"context"
+	"os/signal"
+	"syscall"
+
+	"github.com/go-faster/fs/server"
+	"github.com/go-faster/fs/storagemem"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	srv, err := server.New(server.Config{
+		Storage: storagemem.New(),
+		Addr:    ":9000",
+		Buckets: []string{"uploads"}, // pre-created if absent
+	})
 	if err != nil {
 		panic(err)
 	}
-	srv.ListenAndServe(ctx) // serves until ctx is canceled, then drains
+
+	// Serves until ctx is canceled, then drains in-flight requests.
+	if err := srv.ListenAndServe(ctx); err != nil {
+		panic(err)
+	}
 }
 ```
+
+### `server.Config`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `Storage` | — (required) | Backend serving S3 operations (`fs.Storage`). |
+| `Addr` | `:8080` | TCP address to listen on. |
+| `ReadTimeout` / `WriteTimeout` / `IdleTimeout` | `30s` / `30s` / `120s` | Underlying `http.Server` timeouts. |
+| `HealthPath` | `/health` | Plaintext health endpoint; `"-"` disables it. |
+| `Buckets` | — | Buckets created (idempotently) before serving. |
+| `WrapHandler` | — | Wrap the handler with middleware/observability (e.g. `otelhttp.NewHandler`). |
 
 See the [`server` package reference](https://pkg.go.dev/github.com/go-faster/fs/server)
 for the full API and runnable examples.
