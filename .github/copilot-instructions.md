@@ -4,6 +4,10 @@
 
 ## Project architecture
 
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full design and
+[AGENTS.md](../AGENTS.md) for the working checklist; keep both current when the
+structure changes.
+
 Project uses MVC architecture.
 
 Models are defined in root package, e.g. in fs.go.
