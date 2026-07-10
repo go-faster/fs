@@ -74,10 +74,10 @@ func TestHandler_UnsupportedOperations(t *testing.T) {
 				tt.expectedStatus, http.StatusText(tt.expectedStatus),
 				w.Code, tt.method, url)
 
-			// Verify response contains error message.
+			// Verify response is the S3 NotImplemented XML error.
 			body := w.Body.String()
-			require.Contains(t, strings.ToLower(body), "unsupported",
-				"Response should contain 'unsupported' in error message")
+			require.Contains(t, body, "<Code>NotImplemented</Code>",
+				"Response should be an S3 NotImplemented error")
 		})
 	}
 }
