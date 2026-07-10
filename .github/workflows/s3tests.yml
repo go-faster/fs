@@ -1,0 +1,117 @@
+name: s3tests
+
+# Runs the ceph/s3-tests conformance suite (https://github.com/ceph/s3-tests)
+# against a freshly built server.
+#
+# Two modes:
+#   * On pull requests and pushes to main we run only the allow-listed tests
+#     (.github/s3tests/allow.txt) and GATE on them staying green. This is the
+#     curated set of behaviour the server is expected to implement correctly.
+#   * On a weekly schedule (and manual dispatch) we additionally run the FULL
+#     suite for information only, uploading the JUnit report so newly passing
+#     tests can be promoted into the allow-list. That run never fails the job.
+#
+# See .github/s3tests/README.md for how to grow the allow-list.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1' # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned for reproducibility; bump deliberately and re-baseline the allow-list.
+  S3TESTS_REF: 5522d1c351f75bc00ae0f64f742f3f095f5939d9
+  S3_PORT: '8077'
+
+jobs:
+  s3tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fs
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build server
+        run: go build -o fs ./cmd/fs
+
+      - name: Start server
+        run: |
+          mkdir -p .s3data-ci
+          ./fs s3 --addr ":${S3_PORT}" --root ./.s3data-ci > fs-server.log 2>&1 &
+          echo "$!" > fs.pid
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://localhost:${S3_PORT}/health"; then
+              echo "server up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become healthy"; cat fs-server.log; exit 1
+
+      - name: Checkout s3-tests
+        uses: actions/checkout@v5
+        with:
+          repository: ceph/s3-tests
+          ref: ${{ env.S3TESTS_REF }}
+          path: s3-tests
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: s3-tests/requirements.txt
+
+      - name: Install s3-tests dependencies
+        working-directory: s3-tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run allow-listed tests (gating)
+        env:
+          S3TEST_CONF: ${{ github.workspace }}/.github/s3tests/s3tests.conf
+          AWS_MAX_ATTEMPTS: '2'
+        working-directory: s3-tests
+        run: |
+          mapfile -t tests < <(sed 's/#.*//' "${GITHUB_WORKSPACE}/.github/s3tests/allow.txt" \
+            | sed '/^[[:space:]]*$/d')
+          echo "Running ${#tests[@]} allow-listed tests"
+          python -m pytest -p no:cacheprovider -q --no-header \
+            --junit-xml="${GITHUB_WORKSPACE}/s3tests-allow.xml" "${tests[@]}"
+
+      - name: Run full suite (informational)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          S3TEST_CONF: ${{ github.workspace }}/.github/s3tests/s3tests.conf
+          AWS_MAX_ATTEMPTS: '2'
+        working-directory: s3-tests
+        run: |
+          python -m pytest -p no:cacheprovider -q --no-header --tb=no \
+            --junit-xml="${GITHUB_WORKSPACE}/s3tests-full.xml" \
+            s3tests/functional/test_s3.py || true
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3tests-reports
+          path: |
+            s3tests-*.xml
+            fs-server.log
+          if-no-files-found: ignore
+
+      - name: Stop server
+        if: always()
+        run: kill "$(cat fs.pid)" 2>/dev/null || true
