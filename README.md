@@ -40,8 +40,6 @@ curl -X PUT -d "Hello!" http://localhost:8080/mybucket/hello.txt
 curl http://localhost:8080/mybucket/hello.txt
 ```
 
-See [S3_README.md](S3_README.md) for detailed documentation.
-
 ## Installation
 
 ```bash
@@ -85,7 +83,7 @@ fs s3 --config config.yaml --addr :9000
 fs s3 --generate-config > my-config.yaml
 ```
 
-See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration documentation.
+Run `fs s3 --generate-config` to produce a fully commented configuration template, and `fs s3 --help` for the list of flags.
 
 ### Example Configuration
 
@@ -121,6 +119,17 @@ go get github.com/go-faster/fs
 
 The library core pulls in **no observability stack** — wrap the handler yourself
 (e.g. with `otelhttp`) via `server.NewHandler` or `Config.WrapHandler`.
+
+Custom backends can verify themselves against the storage contract with the
+[`storagetest`](storagetest) conformance suite:
+
+```go
+func TestStorage(t *testing.T) {
+	storagetest.Run(t, func(t testing.TB) fs.Storage {
+		return mybackend.New(t.TempDir())
+	})
+}
+```
 
 ### Mount the handler into your own server
 
@@ -211,7 +220,7 @@ go test ./...
 go build ./cmd/fs
 
 # Run with coverage
-./go.coverage.sh
+make coverage
 ```
 
 ## License

@@ -244,8 +244,7 @@ If you want to manage the ConfigMap separately (not recommended):
 
 ## See Also
 
-- [Main README](../../README.md) - Project overview
-- [Configuration Guide](../../CONFIGURATION.md) - Application configuration reference
+- [Main README](../../README.md) - Project overview and application configuration
 - [values.yaml](values.yaml) - Default values
 - [values-production.yaml](values-production.yaml) - Production example
 
