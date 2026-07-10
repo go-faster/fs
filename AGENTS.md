@@ -49,8 +49,8 @@ about HTTP or S3; don't import upward.
 - **Errors:** use `github.com/go-faster/errors`. `errors.Wrap(err, "msg")` with
   no `failed:` prefix; compare with `errors.Is`/`errors.As`, never `==`.
   `errors.Wrap(nil, ...)` returns non-nil — wrap only inside `if err != nil`.
-  Cross-layer errors travel as `fs.Err*` sentinels; the handler maps them to
-  HTTP status in `internal/core/handler/error.go`.
+  Cross-layer errors travel as `fs.Err*` sentinels; `internal/s3err` maps them
+  to S3 error codes and HTTP status and renders the XML `<Error>` body.
 - **Comments** are full sentences ending with a period.
 - **Style:** Uber Go style; blank lines around blocks and before `return`.
 - **Logging:** `zctx.From(ctx)` (zap). Library packages stay quiet; logging

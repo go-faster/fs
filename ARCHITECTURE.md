@@ -65,7 +65,7 @@ The shared vocabulary every layer speaks:
   `ErrUploadNotFound`, `ErrBucketAlreadyExists`, `ErrBucketNotEmpty`,
   `ErrInvalidBucketName`, `ErrUnsupportedOperation`, `ErrPreconditionFailed`).
   These are the contract for cross-layer error signalling: backends return
-  them, and the handler maps them to HTTP status codes.
+  them, and `internal/s3err` maps them to S3 error codes and HTTP status.
 
 ### `internal/core/handler` — S3 wire layer
 
@@ -83,10 +83,19 @@ matters, query parameters):
   and conditional PUT), `DELETE`, `POST` (multipart part/complete/abort).
 
 Successful responses are marshalled to S3 XML (`writeXML`). Errors go through
-`renderError`, which maps the sentinel via `httpStatusFromError` to an HTTP
-status. Note: the error **body** is currently JSON, which is the known
-divergence from real S3 clients slated to move to the standard `<Error>` XML
-document — when that changes, update this paragraph.
+`renderError`/`renderAPIError`, which delegate to the `internal/s3err` package:
+it holds the S3 error-code table (`APIError` = wire code + HTTP status +
+message), maps the `fs.Err*` sentinels to codes, and writes the standard
+`<Error><Code><Message><Resource><RequestId></Error>` XML document (no body for
+HEAD; non-panicking fallback if encoding fails). Every response carries an
+`x-amz-request-id` header, stamped by middleware in `handler.New`.
+
+### `internal/s3err` — S3 error rendering
+
+The S3 error-code table and XML `<Error>` writer. `APIError` bundles a stable
+wire code, HTTP status, and default message; `FromError` resolves the `fs.Err*`
+sentinels; `Write`/`WriteAPI` emit the response (skipping the body for HEAD).
+This is the single place that owns the error wire format.
 
 ### `internal/core/service` — validation layer
 
