@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/go-faster/errors"
+
+	"github.com/go-faster/fs"
 )
 
 // DeleteBucket deletes the specified bucket.
@@ -16,7 +18,7 @@ func (s *Storage) DeleteBucket(ctx context.Context, bucket string) error {
 
 	if err := os.Remove(bucketPath); err != nil {
 		if os.IsNotExist(err) {
-			return errors.New("bucket not found")
+			return fs.ErrBucketNotFound
 		}
 
 		return errors.Wrap(err, "delete bucket")

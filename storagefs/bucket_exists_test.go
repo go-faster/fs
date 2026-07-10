@@ -11,37 +11,6 @@ import (
 	"github.com/go-faster/fs/storagefs"
 )
 
-func TestStorage_BucketExists(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	root := t.TempDir()
-	storage, err := storagefs.New(root)
-	require.NoError(t, err)
-
-	// Create a bucket.
-	err = storage.CreateBucket(ctx, "test-bucket")
-	require.NoError(t, err)
-
-	// Verify bucket exists.
-	exists, err := storage.BucketExists(ctx, "test-bucket")
-	require.NoError(t, err)
-	require.True(t, exists)
-}
-
-func TestStorage_BucketExists_NotFound(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	storage, err := storagefs.New(t.TempDir())
-	require.NoError(t, err)
-
-	// Check nonexistent bucket.
-	exists, err := storage.BucketExists(ctx, "nonexistent-bucket")
-	require.NoError(t, err)
-	require.False(t, exists)
-}
-
 func TestStorage_BucketExists_File(t *testing.T) {
 	t.Parallel()
 

@@ -82,7 +82,7 @@ func (s *Storage) CreateBucket(ctx context.Context, bucketName string) error {
 	defer s.mu.Unlock()
 
 	if _, exists := s.buckets[bucketName]; exists {
-		return errors.Errorf("bucket already exists: %s", bucketName)
+		return errors.Wrapf(fs.ErrBucketAlreadyExists, "bucket %q", bucketName)
 	}
 
 	s.buckets[bucketName] = &bucket{
