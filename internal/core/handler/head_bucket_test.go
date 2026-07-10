@@ -15,7 +15,7 @@ func TestHandler_HeadBucket(t *testing.T) {
 
 	const bucketName = "test-bucket"
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 			require.Equal(t, bucketName, bucket)
 			return true, nil
@@ -41,7 +41,7 @@ func TestHandler_HeadBucket_NotFound(t *testing.T) {
 
 	const bucketName = "nonexistent-bucket"
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 			return false, nil
 		},
@@ -64,7 +64,7 @@ func TestHandler_HeadBucket_NotFound(t *testing.T) {
 func TestHandler_HeadBucket_InvalidBucketName(t *testing.T) {
 	t.Parallel()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 			return false, fs.ErrInvalidBucketName
 		},

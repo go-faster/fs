@@ -25,7 +25,7 @@ func TestListObjects(t *testing.T) {
 		{Key: "dir/file3.txt", Size: 12, LastModified: time.Now()},
 	}
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -106,7 +106,7 @@ func TestListObjects(t *testing.T) {
 func TestListObjects_EmptyBucket(t *testing.T) {
 	const bucketName = "empty-bucket"
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},

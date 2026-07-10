@@ -11,7 +11,7 @@ import (
 )
 
 func TestHandler_ListBuckets(t *testing.T) {
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{
 				{Name: "bucket1"},
@@ -31,7 +31,7 @@ func TestHandler_ListBuckets(t *testing.T) {
 func BenchmarkHandler_ListBuckets(b *testing.B) {
 	b.ReportAllocs()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{
 				{Name: "bucket1"},

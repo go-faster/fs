@@ -23,7 +23,7 @@ func TestGetObject(t *testing.T) {
 	expectedContent := []byte("Hello, World!")
 	expectedTime := time.Now().Truncate(time.Second)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -66,7 +66,7 @@ func TestGetObject_NotFound(t *testing.T) {
 		objectKey  = "nonexistent.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -100,7 +100,7 @@ func TestGetObject_BucketNotFound(t *testing.T) {
 		objectKey  = "hello.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -134,7 +134,7 @@ func TestGetObject_NotFound_NestedKey(t *testing.T) {
 		objectKey  = "path/to/nonexistent/file.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -165,7 +165,7 @@ func TestGetObject_NotFound_AttemptRead(t *testing.T) {
 		objectKey  = "nonexistent.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -197,7 +197,7 @@ func TestGetObject_BucketNotFound_AttemptRead(t *testing.T) {
 		objectKey  = "file.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -229,7 +229,7 @@ func TestGetObject_NestedKey(t *testing.T) {
 
 	expectedContent := []byte("Nested content")
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
@@ -267,7 +267,7 @@ func TestGetObject_NotFound_HTTPStatus(t *testing.T) {
 		objectKey  = "nonexistent.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			require.Equal(t, bucketName, bucket)
 			require.Equal(t, objectKey, key)
@@ -293,7 +293,7 @@ func TestGetObject_BucketNotFound_HTTPStatus(t *testing.T) {
 		objectKey  = "file.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			require.Equal(t, bucketName, bucket)
 			require.Equal(t, objectKey, key)
@@ -319,7 +319,7 @@ func TestGetObject_NotFound_WithPrefix(t *testing.T) {
 		objectKey  = "prefix/path/to/nonexistent.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			require.Equal(t, objectKey, key)
 			return nil, fs.ErrObjectNotFound
@@ -340,7 +340,7 @@ func TestGetObject_BucketNotFound_EmptyKey(t *testing.T) {
 
 	const bucketName = "nonexistent-bucket"
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrBucketNotFound
 		},

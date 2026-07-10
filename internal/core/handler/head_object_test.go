@@ -24,7 +24,7 @@ func TestHandler_HeadObject(t *testing.T) {
 
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			require.Equal(t, bucketName, bucket)
 			require.Equal(t, objectKey, key)
@@ -58,7 +58,7 @@ func TestHandler_HeadObject(t *testing.T) {
 func TestHandler_HeadObject_NotFound(t *testing.T) {
 	t.Parallel()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrObjectNotFound
 		},
@@ -80,7 +80,7 @@ func TestHandler_HeadObject_NotFound(t *testing.T) {
 func TestHandler_HeadObject_BucketNotFound(t *testing.T) {
 	t.Parallel()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrBucketNotFound
 		},
@@ -104,7 +104,7 @@ func TestHandler_HeadObject_NoETag(t *testing.T) {
 
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return &fs.GetObjectResponse{
 				Reader:       io.NopCloser(bytes.NewReader([]byte("content"))),
@@ -135,7 +135,7 @@ func TestHandler_HeadObject_NoContentType(t *testing.T) {
 
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return &fs.GetObjectResponse{
 				Reader:       io.NopCloser(bytes.NewReader([]byte("content"))),
@@ -169,7 +169,7 @@ func TestHandler_HeadObject_NestedKey(t *testing.T) {
 
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			require.Equal(t, objectKey, key)
 
@@ -205,7 +205,7 @@ func TestHandler_HeadObject_LargeFile(t *testing.T) {
 
 	lastModified := time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return &fs.GetObjectResponse{
 				Reader:       io.NopCloser(bytes.NewReader(nil)),
@@ -234,7 +234,7 @@ func TestHandler_HeadObject_LargeFile(t *testing.T) {
 func TestHandler_HeadObject_InvalidBucketName(t *testing.T) {
 	t.Parallel()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrInvalidBucketName
 		},

@@ -15,7 +15,7 @@ func TestHandler_DeleteBucket(t *testing.T) {
 
 	const bucketName = "test-bucket"
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		DeleteBucketFunc: func(ctx context.Context, bucket string) error {
 			require.Equal(t, bucketName, bucket)
 			return nil
@@ -38,7 +38,7 @@ func TestHandler_DeleteBucket(t *testing.T) {
 func TestHandler_DeleteBucket_NotFound(t *testing.T) {
 	t.Parallel()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		DeleteBucketFunc: func(ctx context.Context, bucket string) error {
 			return fs.ErrBucketNotFound
 		},

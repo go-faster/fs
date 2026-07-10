@@ -2,7 +2,6 @@
 package fs
 
 import (
-	"context"
 	"io"
 	"time"
 )
@@ -82,23 +81,4 @@ type CompleteMultipartUploadResponse struct {
 	Bucket   string
 	Key      string
 	ETag     string
-}
-
-// Service defines the interface for S3-compatible storage operations.
-//
-//go:generate go tool moq -fmt goimports -out ./internal/mock/service.go -pkg mock . Service
-type Service interface {
-	ListBuckets(ctx context.Context) ([]Bucket, error)
-	CreateBucket(ctx context.Context, bucket string) error
-	DeleteBucket(ctx context.Context, bucket string) error
-	BucketExists(ctx context.Context, bucket string) (bool, error)
-	ListObjects(ctx context.Context, bucket, prefix string) ([]Object, error)
-	PutObject(ctx context.Context, req *PutObjectRequest) error
-	GetObject(ctx context.Context, bucket, key string) (*GetObjectResponse, error)
-	DeleteObject(ctx context.Context, bucket, key string) error
-
-	CreateMultipartUpload(ctx context.Context, bucket, key string) (*MultipartUpload, error)
-	UploadPart(ctx context.Context, req *UploadPartRequest) (*Part, error)
-	CompleteMultipartUpload(ctx context.Context, req *CompleteMultipartUploadRequest) (*CompleteMultipartUploadResponse, error)
-	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }

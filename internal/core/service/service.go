@@ -9,7 +9,7 @@ import (
 	"github.com/go-faster/fs/internal/validate"
 )
 
-var _ fs.Service = (*Service)(nil)
+var _ fs.Storage = (*Service)(nil)
 
 func New(storage fs.Storage) *Service {
 	return &Service{storage: storage}

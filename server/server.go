@@ -34,24 +34,11 @@ const (
 	DefaultHealthPath   = "/health"
 )
 
-// NewService wraps a storage backend with the request-validation layer,
-// returning the fs.Service used by the S3 handler.
-func NewService(store fs.Storage) fs.Service {
-	return service.New(store)
-}
-
 // NewHandler returns the S3-compatible http.Handler for a storage backend,
-// wiring the validation service and the request router. Mount it into your own
+// wiring the validation layer and the request router. Mount it into your own
 // http.Server or mux to embed the S3 API.
 func NewHandler(store fs.Storage) http.Handler {
 	return handler.New(service.New(store))
-}
-
-// HandlerFromService returns the S3-compatible http.Handler for an
-// already-constructed service. Use this to wrap or replace the default
-// validation layer.
-func HandlerFromService(svc fs.Service) http.Handler {
-	return handler.New(svc)
 }
 
 // Config configures a Server.

@@ -14,7 +14,7 @@ import (
 func TestHandler_CreateBucket(t *testing.T) {
 	const expectedBucketName = "bucket1"
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			// ListBucket is called by client.
 			// Ignoring.

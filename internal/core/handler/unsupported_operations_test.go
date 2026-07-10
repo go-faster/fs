@@ -91,7 +91,7 @@ func TestHandler_SupportedOperations(t *testing.T) {
 		path           string
 		query          string
 		expectedStatus int
-		setupMock      func(svc *fs.Service)
+		setupMock      func(svc *fs.Storage)
 	}{
 		{
 			name:           "POST to bucket with delete query",

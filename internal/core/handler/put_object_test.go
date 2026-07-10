@@ -24,7 +24,7 @@ func TestPutObject(t *testing.T) {
 
 	expectedContent := []byte("Hello, World!")
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},

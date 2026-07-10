@@ -19,7 +19,7 @@ func TestHandler_DeleteObject(t *testing.T) {
 		objectKey  = "test-object.txt"
 	)
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		DeleteObjectFunc: func(ctx context.Context, bucket, key string) error {
 			require.Equal(t, bucketName, bucket)
 			require.Equal(t, objectKey, key)
@@ -42,7 +42,7 @@ func TestHandler_DeleteObject(t *testing.T) {
 func TestHandler_DeleteObject_NotFound(t *testing.T) {
 	t.Parallel()
 
-	svc := &mock.ServiceMock{
+	svc := &mock.StorageMock{
 		DeleteObjectFunc: func(ctx context.Context, bucket, key string) error {
 			return fs.ErrObjectNotFound
 		},

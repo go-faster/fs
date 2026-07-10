@@ -15,9 +15,9 @@ import (
 	"github.com/go-faster/fs/internal/mock"
 )
 
-// baseMock returns a ServiceMock with common stub methods that minio client requires.
-func baseMock() *mock.ServiceMock {
-	return &mock.ServiceMock{
+// baseMock returns a StorageMock with common stub methods that minio client requires.
+func baseMock() *mock.StorageMock {
+	return &mock.StorageMock{
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
 			return []fs.Object{}, nil
 		},
@@ -40,7 +40,7 @@ type TestServer struct {
 	Endpoint string
 }
 
-func newTestServer(t testing.TB, svc fs.Service) *TestServer {
+func newTestServer(t testing.TB, svc fs.Storage) *TestServer {
 	t.Helper()
 
 	srv := httptest.NewServer(handler.New(svc))
@@ -54,7 +54,7 @@ func newTestServer(t testing.TB, svc fs.Service) *TestServer {
 	}
 }
 
-func newTestClient(t testing.TB, svc fs.Service) *minio.Client {
+func newTestClient(t testing.TB, svc fs.Storage) *minio.Client {
 	t.Helper()
 
 	srv := newTestServer(t, svc)
@@ -63,7 +63,7 @@ func newTestClient(t testing.TB, svc fs.Service) *minio.Client {
 }
 
 // newTestHandler creates an HTTP handler for direct testing without starting a server.
-func newTestHandler(svc fs.Service) http.Handler {
+func newTestHandler(svc fs.Storage) http.Handler {
 	return handler.New(svc)
 }
 
