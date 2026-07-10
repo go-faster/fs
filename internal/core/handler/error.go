@@ -50,6 +50,8 @@ func httpStatusFromError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, fs.ErrBucketAlreadyExists):
 		return http.StatusConflict
+	case errors.Is(err, fs.ErrBucketNotEmpty):
+		return http.StatusConflict
 	case errors.Is(err, fs.ErrInvalidBucketName):
 		return http.StatusBadRequest
 	case errors.Is(err, fs.ErrUnsupportedOperation):

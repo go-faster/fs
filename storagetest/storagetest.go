@@ -54,6 +54,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"DeleteBucket":                    testDeleteBucket,
 	"DeleteBucket/NotFound":           testDeleteBucketNotFound,
 	"DeleteBucket/NotEmpty":           testDeleteBucketNotEmpty,
+	"DeleteBucket/EmptyAfterNested":   testDeleteBucketEmptyAfterNestedDelete,
 	"PutObject":                       testPutObject,
 	"PutObject/NestedKey":             testPutObjectNestedKey,
 	"PutObject/Overwrite":             testPutObjectOverwrite,
@@ -177,11 +178,30 @@ func testDeleteBucketNotEmpty(t *testing.T, storage fs.Storage) {
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 	putObject(t, storage, "test.txt", []byte("content"))
 
-	require.Error(t, storage.DeleteBucket(ctx, testBucket))
+	require.ErrorIs(t, storage.DeleteBucket(ctx, testBucket), fs.ErrBucketNotEmpty)
 
 	// Bucket and object must survive the failed delete.
 	data := readObject(t, storage, "test.txt")
 	require.Equal(t, []byte("content"), data)
+}
+
+// testDeleteBucketEmptyAfterNestedDelete guards the contract that deleting the
+// last object under a "directory" prefix leaves the bucket genuinely empty, so
+// it can then be removed. Backends that materialize nested keys as directories
+// must not leave empty parents behind.
+func testDeleteBucketEmptyAfterNestedDelete(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	putObject(t, storage, "a/b/c/deep.txt", []byte("content"))
+	require.NoError(t, storage.DeleteObject(ctx, testBucket, "a/b/c/deep.txt"))
+
+	objects, err := storage.ListObjects(ctx, testBucket, "")
+	require.NoError(t, err)
+	require.Empty(t, objects)
+
+	// The bucket has no remaining objects, so it must delete cleanly.
+	require.NoError(t, storage.DeleteBucket(ctx, testBucket))
 }
 
 func testPutObject(t *testing.T, storage fs.Storage) {

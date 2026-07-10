@@ -113,7 +113,7 @@ func (s *Storage) DeleteBucket(ctx context.Context, bucketName string) error {
 	}
 
 	if len(b.objects) > 0 {
-		return errors.New("bucket not empty")
+		return fs.ErrBucketNotEmpty
 	}
 
 	delete(s.buckets, bucketName)
