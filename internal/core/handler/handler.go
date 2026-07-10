@@ -53,7 +53,11 @@ func New(s fs.Storage) http.Handler {
 			// Bucket operation only.
 			switch r.Method {
 			case http.MethodGet:
-				h.ListObjects(w, r)
+				if r.URL.Query().Has("versions") {
+					h.ListObjectVersions(w, r)
+				} else {
+					h.ListObjects(w, r)
+				}
 			case http.MethodPut:
 				h.CreateBucket(w, r)
 			case http.MethodHead:

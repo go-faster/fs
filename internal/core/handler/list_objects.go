@@ -18,6 +18,10 @@ import (
 // defaultMaxKeys is the S3 default and maximum number of keys returned per page.
 const defaultMaxKeys = 1000
 
+// encodingTypeURL is the only supported value of the encoding-type parameter;
+// when requested, echoed key fields are URL-encoded.
+const encodingTypeURL = "url"
+
 // listEntry is a single item in the ordered listing keyspace: either an object or
 // a delimiter-derived common prefix.
 type listEntry struct {
@@ -34,7 +38,7 @@ func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	prefix := q.Get("prefix")
 	delimiter := q.Get("delimiter")
-	encodeURL := q.Get("encoding-type") == "url"
+	encodeURL := q.Get("encoding-type") == encodingTypeURL
 	isV2 := q.Get("list-type") == "2"
 
 	maxKeys := defaultMaxKeys
@@ -121,7 +125,7 @@ func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if encodeURL {
-		resp.EncodingType = "url"
+		resp.EncodingType = encodingTypeURL
 	}
 
 	if isV2 {
