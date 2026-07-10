@@ -7,10 +7,16 @@ import (
 
 	"github.com/go-faster/errors"
 	"gopkg.in/yaml.v3"
+
+	"github.com/go-faster/fs/internal/validate"
+	"github.com/go-faster/fs/server"
 )
 
 // StorageTypeFilesystem is the only currently supported storage backend type.
 const StorageTypeFilesystem = "filesystem"
+
+// DefaultStorageRoot is the default directory for filesystem storage.
+const DefaultStorageRoot = ".s3data"
 
 // Config represents the application configuration.
 type Config struct {
@@ -73,14 +79,14 @@ type ObservabilityConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
-			Addr:         ":8080",
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  120 * time.Second,
-			HealthPath:   "/health",
+			Addr:         server.DefaultAddr,
+			ReadTimeout:  server.DefaultReadTimeout,
+			WriteTimeout: server.DefaultWriteTimeout,
+			IdleTimeout:  server.DefaultIdleTimeout,
+			HealthPath:   server.DefaultHealthPath,
 		},
 		Storage: StorageConfig{
-			Root: ".s3data",
+			Root: DefaultStorageRoot,
 			Type: StorageTypeFilesystem,
 		},
 		Observability: ObservabilityConfig{
@@ -150,14 +156,10 @@ func (c *Config) Validate() error {
 		return errors.New("observability.service_name is required")
 	}
 
-	// Validate bucket names if provided
+	// Validate bucket names with the same rules the server enforces at runtime.
 	for _, bucket := range c.Storage.Buckets {
-		if bucket == "" {
-			return errors.New("storage.buckets cannot contain empty bucket names")
-		}
-
-		if len(bucket) < 3 || len(bucket) > 63 {
-			return fmt.Errorf("invalid bucket name %q: must be between 3 and 63 characters", bucket)
+		if err := validate.BucketName(bucket); err != nil {
+			return errors.Wrapf(err, "invalid bucket name %q", bucket)
 		}
 	}
 

@@ -238,7 +238,7 @@ func TestValidate_BucketNames(t *testing.T) {
 			name:     "empty bucket name",
 			buckets:  []string{"valid-bucket", "", "another-bucket"},
 			wantErr:  true,
-			errorMsg: "cannot contain empty bucket names",
+			errorMsg: "cannot be empty",
 		},
 		{
 			name:     "bucket name too short",

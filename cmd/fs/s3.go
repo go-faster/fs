@@ -168,8 +168,8 @@ Command-line flags override YAML configuration values.`,
 	}
 
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to YAML configuration file")
-	cmd.Flags().StringVar(&addr, "addr", ":8080", "Address to listen on (overrides config file)")
-	cmd.Flags().StringVar(&root, "root", ".s3data", "Root directory for S3 storage (overrides config file)")
+	cmd.Flags().StringVar(&addr, "addr", server.DefaultAddr, "Address to listen on (overrides config file)")
+	cmd.Flags().StringVar(&root, "root", DefaultStorageRoot, "Root directory for S3 storage (overrides config file)")
 	cmd.Flags().Bool("generate-config", false, "Generate example configuration file and print to stdout")
 
 	return cmd
