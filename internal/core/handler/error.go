@@ -2,88 +2,32 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
-	"github.com/go-faster/errors"
 	"github.com/go-faster/sdk/zctx"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
-	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
-type Error struct {
-	TraceID string `json:"trace_id"`
-	SpanID  string `json:"span_id"`
-	Message string `json:"message"`
-}
-
-func newError(ctx context.Context, err error) Error {
-	if err == nil {
-		err = errors.New("internal error")
-	}
-
-	e := Error{
-		Message: err.Error(),
-	}
-	if span := trace.SpanFromContext(ctx).SpanContext(); span.HasTraceID() {
-		// Extract trace/span IDs from context if available.
-		e.TraceID = span.TraceID().String()
-		e.SpanID = span.SpanID().String()
-	}
-
-	zctx.From(ctx).Error("Operation failed",
+// renderError logs err and writes the corresponding S3 XML error response,
+// mapping the fs.Err* sentinels to their S3 codes.
+func renderError(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	zctx.From(ctx).Error("Request failed",
+		zap.String("code", s3err.FromError(err).Code),
 		zap.Error(err),
 	)
 
-	return e
+	s3err.Write(w, r, err)
 }
 
-func httpStatusFromError(err error) int {
-	switch {
-	case errors.Is(err, fs.ErrBucketNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, fs.ErrObjectNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, fs.ErrUploadNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, fs.ErrBucketAlreadyExists):
-		return http.StatusConflict
-	case errors.Is(err, fs.ErrBucketNotEmpty):
-		return http.StatusConflict
-	case errors.Is(err, fs.ErrInvalidBucketName):
-		return http.StatusBadRequest
-	case errors.Is(err, fs.ErrUnsupportedOperation):
-		return http.StatusNotImplemented
-	case errors.Is(err, fs.ErrPreconditionFailed):
-		return http.StatusPreconditionFailed
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
-func renderError(ctx context.Context, w http.ResponseWriter, err error) {
-	zctx.From(ctx).Error("Failed",
+// renderAPIError logs and writes a specific S3 error (used where the handler
+// knows the exact code, e.g. MalformedXML or InvalidPartOrder).
+func renderAPIError(ctx context.Context, w http.ResponseWriter, r *http.Request, api s3err.APIError, err error) {
+	zctx.From(ctx).Error("Request failed",
+		zap.String("code", api.Code),
 		zap.Error(err),
 	)
 
-	data, marshalErr := json.Marshal(newError(ctx, err))
-	if marshalErr != nil {
-		zctx.From(ctx).Error("Failed to marshal error response",
-			zap.Error(marshalErr),
-		)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(httpStatusFromError(err))
-
-	if _, writeErr := w.Write(data); writeErr != nil {
-		zctx.From(ctx).Error("Failed to write error response",
-			zap.Error(writeErr),
-		)
-	}
+	s3err.WriteAPI(w, r, api)
 }
