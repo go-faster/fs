@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-faster/errors"
-
 	"github.com/go-faster/fs"
 )
 
@@ -17,13 +15,8 @@ func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	bucket, key, _ := strings.Cut(path, "/")
 
 	resp, err := h.service.GetObject(ctx, bucket, key)
-	if errors.Is(err, fs.ErrObjectNotFound) || errors.Is(err, fs.ErrBucketNotFound) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -55,6 +48,8 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 	if resp.ETag != "" {
 		w.Header().Set("ETag", quoteETag(resp.ETag))
 	}
+
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	if rs, ok := resp.Reader.(io.ReadSeeker); ok {
 		// ServeContent handles Range, conditional requests, Content-Range,

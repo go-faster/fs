@@ -37,7 +37,7 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	// Parse the XML body.
 	var xmlReq CompleteMultipartUploadXML
 	if err := xml.NewDecoder(r.Body).Decode(&xmlReq); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -66,7 +66,7 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 
 	resp, err := h.service.CompleteMultipartUpload(ctx, req)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 

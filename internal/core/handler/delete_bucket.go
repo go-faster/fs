@@ -12,7 +12,7 @@ func (h *handler) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 
 	err := h.service.DeleteBucket(ctx, name)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 

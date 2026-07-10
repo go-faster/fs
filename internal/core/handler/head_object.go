@@ -3,10 +3,6 @@ package handler
 import (
 	"net/http"
 	"strings"
-
-	"github.com/go-faster/errors"
-
-	"github.com/go-faster/fs"
 )
 
 func (h *handler) HeadObject(w http.ResponseWriter, r *http.Request) {
@@ -16,13 +12,7 @@ func (h *handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetObject(ctx, bucket, key)
 	if err != nil {
-		if errors.Is(err, fs.ErrBucketNotFound) || errors.Is(err, fs.ErrObjectNotFound) {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		renderError(ctx, w, err)
-
+		renderError(ctx, w, r, err)
 		return
 	}
 

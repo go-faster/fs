@@ -3,6 +3,8 @@ package handler
 import (
 	"net/http"
 	"strings"
+
+	"github.com/go-faster/fs"
 )
 
 func (h *handler) HeadBucket(w http.ResponseWriter, r *http.Request) {
@@ -12,12 +14,12 @@ func (h *handler) HeadBucket(w http.ResponseWriter, r *http.Request) {
 
 	exists, err := h.service.BucketExists(ctx, bucket)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
 	if !exists {
-		w.WriteHeader(http.StatusNotFound)
+		renderError(ctx, w, r, fs.ErrBucketNotFound)
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 // CopyObjectResult is the XML response for a CopyObject operation.
@@ -29,18 +30,13 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 
 	srcBucket, srcKey, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
 	if !ok {
-		renderError(ctx, w, errors.Wrap(fs.ErrUnsupportedOperation, "invalid x-amz-copy-source"))
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-copy-source"))
 		return
 	}
 
 	src, err := h.service.GetObject(ctx, srcBucket, srcKey)
-	if errors.Is(err, fs.ErrObjectNotFound) || errors.Is(err, fs.ErrBucketNotFound) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -53,7 +49,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		Size:   src.Size,
 	}
 	if err := h.service.PutObject(ctx, put); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -64,7 +60,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		_ = dst.Reader.Close()
 	}
 
-	writeXML(ctx, w, CopyObjectResult{
+	writeXML(ctx, w, r, CopyObjectResult{
 		LastModified: lastModified.UTC(),
 		ETag:         quoteETag(etag),
 	})

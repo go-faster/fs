@@ -7,10 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/go-faster/errors"
-
-	"github.com/go-faster/fs"
 )
 
 // VersionEntry is a single object version in a ListObjectVersions response.
@@ -77,13 +73,8 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	objects, err := h.service.ListObjects(ctx, bucket, prefix)
-	if errors.Is(err, fs.ErrBucketNotFound) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -151,5 +142,5 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 		resp.NextKeyMarker = maybeEncode(nextKeyMarker)
 	}
 
-	writeXML(ctx, w, resp)
+	writeXML(ctx, w, r, resp)
 }

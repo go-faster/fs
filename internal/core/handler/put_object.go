@@ -60,10 +60,10 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	// Evaluate If-Match / If-None-Match preconditions; on failure respond with
 	// 412 Precondition Failed.
 	if failed, err := h.checkPutPreconditions(ctx, bucket, key, r.Header); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	} else if failed {
-		renderError(ctx, w, fs.ErrPreconditionFailed)
+		renderError(ctx, w, r, fs.ErrPreconditionFailed)
 		return
 	}
 
@@ -79,10 +79,14 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.PutObject(ctx, req); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
+	// NB: S3 returns the stored object's ETag header on PUT. That requires the
+	// storage layer to surface the ETag from PutObject (an interface change
+	// scheduled with the Phase 3 metadata work); until then no ETag is sent,
+	// which clients tolerate.
 	w.WriteHeader(http.StatusOK)
 }
 

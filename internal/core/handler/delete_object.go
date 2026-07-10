@@ -15,7 +15,7 @@ func (h *handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	if uploadID := query.Get("uploadId"); uploadID != "" {
 		err := h.service.AbortMultipartUpload(ctx, bucket, key, uploadID)
 		if err != nil {
-			renderError(ctx, w, err)
+			renderError(ctx, w, r, err)
 			return
 		}
 
@@ -27,7 +27,7 @@ func (h *handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	// Regular delete object.
 	err := h.service.DeleteObject(ctx, bucket, key)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 

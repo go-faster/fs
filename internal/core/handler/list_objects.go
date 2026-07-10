@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-faster/errors"
-
 	"github.com/go-faster/fs"
 )
 
@@ -61,13 +59,8 @@ func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	objects, err := h.service.ListObjects(ctx, bucket, prefix)
-	if errors.Is(err, fs.ErrBucketNotFound) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -144,7 +137,7 @@ func (h *handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeXML(ctx, w, resp)
+	writeXML(ctx, w, r, resp)
 }
 
 // buildListEntries folds objects into the ordered listing keyspace, rolling keys
@@ -193,17 +186,17 @@ func decodeContinuationToken(token string) string {
 }
 
 // writeXML writes an S3 XML response with the standard header.
-func writeXML(ctx context.Context, w http.ResponseWriter, v any) {
+func writeXML(ctx context.Context, w http.ResponseWriter, r *http.Request, v any) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 
 	if _, err := w.Write([]byte(xml.Header)); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
 	if err := xml.NewEncoder(w).Encode(v); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 }

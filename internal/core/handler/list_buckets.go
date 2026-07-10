@@ -63,7 +63,7 @@ func (h *handler) ListBuckets(w http.ResponseWriter, r *http.Request) {
 
 	buckets, err := h.service.ListBuckets(ctx)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -82,12 +82,12 @@ func (h *handler) ListBuckets(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	if _, err := w.Write([]byte(xml.Header)); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
 	if err := xml.NewEncoder(w).Encode(response); err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 }

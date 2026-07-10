@@ -36,7 +36,7 @@ func (h *handler) HandleObjectPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Unknown POST operation.
-	renderError(ctx, w, fs.ErrUnsupportedOperation)
+	renderError(ctx, w, r, fs.ErrUnsupportedOperation)
 }
 
 func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -44,7 +44,7 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 
 	upload, err := h.service.CreateMultipartUpload(ctx, bucket, key)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 

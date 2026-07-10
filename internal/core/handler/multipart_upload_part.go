@@ -19,7 +19,7 @@ func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
 
 	partNumber, err := strconv.Atoi(partNumberStr)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
@@ -37,7 +37,7 @@ func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
 
 	part, err := h.service.UploadPart(ctx, req)
 	if err != nil {
-		renderError(ctx, w, err)
+		renderError(ctx, w, r, err)
 		return
 	}
 
