@@ -509,12 +509,15 @@ func testMultipartCompleteETag(t *testing.T, storage fs.Storage) {
 
 	object, err := storage.GetObject(ctx, testBucket, testKey)
 	require.NoError(t, err)
+
 	defer func() { _ = object.Reader.Close() }()
+
 	require.Equal(t, expected, object.ETag)
 }
 
 func expectedMultipartETag(parts ...[]byte) string {
 	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+
 	for _, part := range parts {
 		partHash := md5.Sum(part) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 		_, _ = hash.Write(partHash[:])
