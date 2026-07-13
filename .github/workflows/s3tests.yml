@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fs
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -59,7 +59,7 @@ jobs:
           echo "server did not become healthy"; cat fs-server.log; exit 1
 
       - name: Checkout s3-tests
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ceph/s3-tests
           ref: ${{ env.S3TESTS_REF }}
