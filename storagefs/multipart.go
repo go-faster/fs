@@ -209,12 +209,10 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	if err != nil {
 		return nil, errors.Wrap(err, "create final file")
 	}
-
 	defer func() { _ = finalFile.Close() }()
 
 	// Concatenate all parts.
 	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-	writer := io.MultiWriter(finalFile, hash)
 
 	uploadPath := s.multipart.uploadPath(req.UploadID)
 	for _, part := range parts {
@@ -225,12 +223,19 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 			return nil, errors.Wrapf(err, "open part %d", part.PartNumber)
 		}
 
-		_, err = io.Copy(writer, partFile)
+		partHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+		_, err = io.Copy(io.MultiWriter(finalFile, partHash), partFile)
 		_ = partFile.Close()
 
 		if err != nil {
 			return nil, errors.Wrapf(err, "copy part %d", part.PartNumber)
 		}
+
+		_, _ = hash.Write(partHash.Sum(nil))
+	}
+
+	if err := finalFile.Close(); err != nil {
+		return nil, errors.Wrap(err, "close final file")
 	}
 
 	// Clean up upload directory.
@@ -238,7 +243,17 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		return nil, errors.Wrap(err, "cleanup upload")
 	}
 
-	etag := hex.EncodeToString(hash.Sum(nil))
+	etag := hex.EncodeToString(hash.Sum(nil)) + "-" + strconv.Itoa(len(parts))
+
+	if info, err := os.Stat(objectPath); err == nil {
+		s.etagMu.Lock()
+		if s.etagCache == nil {
+			s.etagCache = make(map[string]etagEntry)
+		}
+
+		s.etagCache[objectPath] = etagEntry{size: info.Size(), modNano: info.ModTime().UnixNano(), etag: etag}
+		s.etagMu.Unlock()
+	}
 
 	return &fs.CompleteMultipartUploadResponse{
 		Location: "/" + meta.Bucket + "/" + meta.Key,

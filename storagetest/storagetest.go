@@ -14,6 +14,8 @@ package storagetest
 
 import (
 	"bytes"
+	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -73,6 +75,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Multipart/UploadPart":            testMultipartUploadPart,
 	"Multipart/UploadPart/NotFound":   testMultipartUploadPartNotFound,
 	"Multipart/Complete":              testMultipartComplete,
+	"Multipart/Complete/ETag":         testMultipartCompleteETag,
 	"Multipart/Complete/OutOfOrder":   testMultipartCompleteOutOfOrder,
 	"Multipart/Complete/NotFound":     testMultipartCompleteNotFound,
 	"Multipart/Abort":                 testMultipartAbort,
@@ -475,6 +478,49 @@ func testMultipartComplete(t *testing.T, storage fs.Storage) {
 
 	data := readObject(t, storage, testKey)
 	require.Equal(t, []byte("hello, world!"), data)
+}
+
+func testMultipartCompleteETag(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	require.NoError(t, err)
+
+	part1Data := []byte("hello, ")
+	part2Data := []byte("world!")
+	part1 := uploadPart(t, storage, upload.UploadID, 1, part1Data)
+	part2 := uploadPart(t, storage, upload.UploadID, 2, part2Data)
+
+	resp, err := storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket:   testBucket,
+		Key:      testKey,
+		UploadID: upload.UploadID,
+		Parts: []fs.CompletedPart{
+			{PartNumber: 1, ETag: part1.ETag},
+			{PartNumber: 2, ETag: part2.ETag},
+		},
+	})
+	require.NoError(t, err)
+
+	expected := expectedMultipartETag(part1Data, part2Data)
+	require.Equal(t, expected, resp.ETag)
+
+	object, err := storage.GetObject(ctx, testBucket, testKey)
+	require.NoError(t, err)
+	defer func() { _ = object.Reader.Close() }()
+	require.Equal(t, expected, object.ETag)
+}
+
+func expectedMultipartETag(parts ...[]byte) string {
+	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	for _, part := range parts {
+		partHash := md5.Sum(part) //nolint:gosec // MD5 is required for S3 ETag compatibility.
+		_, _ = hash.Write(partHash[:])
+	}
+
+	return fmt.Sprintf("%x-%d", hash.Sum(nil), len(parts))
 }
 
 func testMultipartCompleteOutOfOrder(t *testing.T, storage fs.Storage) {

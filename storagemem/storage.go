@@ -282,6 +282,23 @@ func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*f
 	}, nil
 }
 
+// multipartETag returns the S3 ETag for a completed multipart upload.
+func multipartETag(parts []fs.CompletedPart, uploaded map[int]*uploadPart) string {
+	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+
+	for _, part := range parts {
+		p, ok := uploaded[part.PartNumber]
+		if !ok {
+			continue
+		}
+
+		partHash := md5.Sum(p.data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
+		_, _ = hash.Write(partHash[:])
+	}
+
+	return fmt.Sprintf("%x-%d", hash.Sum(nil), len(parts))
+}
+
 func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -321,8 +338,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		}
 	}
 
-	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
-	etag := hex.EncodeToString(hash[:])
+	etag := multipartETag(parts, upload.parts)
 
 	b.objects[upload.key] = &object{
 		data:         data,
