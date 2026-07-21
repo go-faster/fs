@@ -19,6 +19,12 @@ type Storage interface {
 
 	CreateMultipartUpload(ctx context.Context, bucket, key string) (*MultipartUpload, error)
 	UploadPart(ctx context.Context, req *UploadPartRequest) (*Part, error)
+	// ListParts returns the parts uploaded so far for an in-progress multipart
+	// upload, sorted by ascending part number.
+	ListParts(ctx context.Context, bucket, key, uploadID string) ([]Part, error)
+	// ListMultipartUploads returns the in-progress multipart uploads for a
+	// bucket, sorted by object key (then upload ID for equal keys).
+	ListMultipartUploads(ctx context.Context, bucket string) ([]MultipartUpload, error)
 	CompleteMultipartUpload(ctx context.Context, req *CompleteMultipartUploadRequest) (*CompleteMultipartUploadResponse, error)
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }

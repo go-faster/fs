@@ -94,10 +94,14 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.GetBucketLocation(w, r)
 		case q.Has("versions"):
 			h.ListObjectVersions(w, r)
+		case q.Has("uploads"):
+			h.ListMultipartUploads(w, r)
 		case hasUnsupportedBucketSubresource(q):
 			s3err.WriteAPI(w, r, s3err.NotImplemented)
+		case q.Get("list-type") == "2":
+			h.ListObjectsV2(w, r)
 		default:
-			h.ListObjects(w, r)
+			h.ListObjectsV1(w, r)
 		}
 	case http.MethodPut:
 		if hasUnsupportedBucketSubresource(q) {
@@ -127,6 +131,11 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Has("uploadId") {
+			h.ListParts(w, r)
+			return
+		}
+
 		h.GetObject(w, r)
 	case http.MethodPut:
 		h.PutObject(w, r)

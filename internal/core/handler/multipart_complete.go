@@ -3,10 +3,12 @@ package handler
 import (
 	"encoding/xml"
 	"net/http"
-	"sort"
 	"strings"
 
+	"github.com/go-faster/errors"
+
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 // CompleteMultipartUploadResult represents the response for completing multipart upload.
@@ -37,11 +39,17 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	// Parse the XML body.
 	var xmlReq CompleteMultipartUploadXML
 	if err := xml.NewDecoder(r.Body).Decode(&xmlReq); err != nil {
-		renderError(ctx, w, r, err)
+		renderAPIError(ctx, w, r, s3err.MalformedXML, err)
 		return
 	}
 
-	// Convert to internal format.
+	if len(xmlReq.Parts) == 0 {
+		renderAPIError(ctx, w, r, s3err.MalformedXML, errors.New("empty part list"))
+		return
+	}
+
+	// Convert to internal format. S3 does not sort for the client: the list
+	// must already be in strictly ascending part-number order.
 	parts := make([]fs.CompletedPart, len(xmlReq.Parts))
 	for i, p := range xmlReq.Parts {
 		// Remove quotes from ETag if present.
@@ -50,12 +58,14 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 			PartNumber: p.PartNumber,
 			ETag:       etag,
 		}
-	}
 
-	// Sort parts by part number.
-	sort.Slice(parts, func(i, j int) bool {
-		return parts[i].PartNumber < parts[j].PartNumber
-	})
+		if i > 0 && parts[i].PartNumber <= parts[i-1].PartNumber {
+			renderAPIError(ctx, w, r, s3err.InvalidPartOrder,
+				errors.Errorf("part %d after part %d", parts[i].PartNumber, parts[i-1].PartNumber))
+
+			return
+		}
+	}
 
 	req := &fs.CompleteMultipartUploadRequest{
 		Bucket:   bucket,

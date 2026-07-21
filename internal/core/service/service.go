@@ -107,6 +107,16 @@ func (s Service) CreateMultipartUpload(ctx context.Context, bucket, key string) 
 	return s.storage.CreateMultipartUpload(ctx, bucket, key)
 }
 
+const (
+	// MinPartNumber and MaxPartNumber bound valid S3 part numbers.
+	MinPartNumber = 1
+	MaxPartNumber = 10000
+
+	// MinPartSize is the S3 minimum size for every multipart part except the
+	// last one listed in CompleteMultipartUpload.
+	MinPartSize = 5 * 1024 * 1024
+)
+
 func (s Service) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 	if err := validate.BucketName(req.Bucket); err != nil {
 		return nil, errors.Wrap(err, "validate bucket name")
@@ -116,7 +126,31 @@ func (s Service) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		return nil, errors.Wrap(err, "validate object key")
 	}
 
+	if req.PartNumber < MinPartNumber || req.PartNumber > MaxPartNumber {
+		return nil, errors.Wrapf(fs.ErrInvalidPartNumber, "part number %d", req.PartNumber)
+	}
+
 	return s.storage.UploadPart(ctx, req)
+}
+
+func (s Service) ListParts(ctx context.Context, bucket, key, uploadID string) ([]fs.Part, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.ListParts(ctx, bucket, key, uploadID)
+}
+
+func (s Service) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.MultipartUpload, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	return s.storage.ListMultipartUploads(ctx, bucket)
 }
 
 func (s Service) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
@@ -126,6 +160,45 @@ func (s Service) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMu
 
 	if err := validate.Key(req.Key); err != nil {
 		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	if len(req.Parts) == 0 {
+		return nil, errors.Wrap(fs.ErrInvalidPart, "no parts specified")
+	}
+
+	// Part numbers must be strictly ascending (duplicates included).
+	for i := 1; i < len(req.Parts); i++ {
+		if req.Parts[i].PartNumber <= req.Parts[i-1].PartNumber {
+			return nil, errors.Wrapf(fs.ErrInvalidPartOrder,
+				"part %d after part %d", req.Parts[i].PartNumber, req.Parts[i-1].PartNumber)
+		}
+	}
+
+	uploaded, err := s.storage.ListParts(ctx, req.Bucket, req.Key, req.UploadID)
+	if err != nil {
+		return nil, errors.Wrap(err, "list parts")
+	}
+
+	byNumber := make(map[int]fs.Part, len(uploaded))
+	for _, p := range uploaded {
+		byNumber[p.PartNumber] = p
+	}
+
+	// Every referenced part must exist with a matching ETag; only then are
+	// sizes validated (matching S3's error precedence).
+	for _, part := range req.Parts {
+		stored, ok := byNumber[part.PartNumber]
+		if !ok || stored.ETag != part.ETag {
+			return nil, errors.Wrapf(fs.ErrInvalidPart, "part %d", part.PartNumber)
+		}
+	}
+
+	// Every part except the last listed one must meet the size floor.
+	for _, part := range req.Parts[:len(req.Parts)-1] {
+		if stored := byNumber[part.PartNumber]; stored.Size < MinPartSize {
+			return nil, errors.Wrapf(fs.ErrEntityTooSmall,
+				"part %d is %d bytes", part.PartNumber, stored.Size)
+		}
 	}
 
 	return s.storage.CompleteMultipartUpload(ctx, req)

@@ -42,9 +42,10 @@ type bucket struct {
 }
 
 type uploadPart struct {
-	partNumber int
-	data       []byte
-	etag       string
+	partNumber   int
+	data         []byte
+	etag         string
+	lastModified time.Time
 }
 
 type multipartUpload struct {
@@ -269,17 +270,80 @@ func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*f
 	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	etag := hex.EncodeToString(hash[:])
 
-	upload.parts[req.PartNumber] = &uploadPart{
-		partNumber: req.PartNumber,
-		data:       data,
-		etag:       etag,
+	part := &uploadPart{
+		partNumber:   req.PartNumber,
+		data:         data,
+		etag:         etag,
+		lastModified: time.Now(),
 	}
+	upload.parts[req.PartNumber] = part
 
 	return &fs.Part{
-		PartNumber: req.PartNumber,
-		ETag:       etag,
-		Size:       int64(len(data)),
+		PartNumber:   req.PartNumber,
+		ETag:         etag,
+		Size:         int64(len(data)),
+		LastModified: part.lastModified,
 	}, nil
+}
+
+func (s *Storage) ListParts(_ context.Context, bucket, key, uploadID string) ([]fs.Part, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	upload, exists := s.uploads[uploadID]
+	if !exists || upload.bucket != bucket || upload.key != key {
+		return nil, fs.ErrUploadNotFound
+	}
+
+	parts := make([]fs.Part, 0, len(upload.parts))
+	for _, p := range upload.parts {
+		parts = append(parts, fs.Part{
+			PartNumber:   p.partNumber,
+			ETag:         p.etag,
+			Size:         int64(len(p.data)),
+			LastModified: p.lastModified,
+		})
+	}
+
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+
+	return parts, nil
+}
+
+func (s *Storage) ListMultipartUploads(_ context.Context, bucketName string) ([]fs.MultipartUpload, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if _, exists := s.buckets[bucketName]; !exists {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	uploads := make([]fs.MultipartUpload, 0)
+
+	for _, u := range s.uploads {
+		if u.bucket != bucketName {
+			continue
+		}
+
+		uploads = append(uploads, fs.MultipartUpload{
+			UploadID:  u.id,
+			Bucket:    u.bucket,
+			Key:       u.key,
+			Initiated: u.initiated,
+		})
+	}
+
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+
+		return uploads[i].UploadID < uploads[j].UploadID
+	})
+
+	return uploads, nil
 }
 
 // multipartETag returns the S3 ETag for a completed multipart upload.

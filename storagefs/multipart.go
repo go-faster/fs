@@ -173,11 +173,145 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 
 	etag := hex.EncodeToString(hash.Sum(nil))
 
-	return &fs.Part{
+	part := &fs.Part{
 		PartNumber: req.PartNumber,
 		ETag:       etag,
 		Size:       size,
+	}
+
+	if info, err := os.Stat(partPath); err == nil {
+		part.LastModified = info.ModTime()
+	}
+
+	return part, nil
+}
+
+func (s *Storage) ListParts(_ context.Context, bucket, key, uploadID string) ([]fs.Part, error) {
+	s.multipart.mu.RLock()
+	defer s.multipart.mu.RUnlock()
+
+	meta, err := s.multipart.loadMetadata(uploadID)
+	if err != nil {
+		return nil, err
+	}
+
+	if meta.Bucket != bucket || meta.Key != key {
+		return nil, fs.ErrUploadNotFound
+	}
+
+	uploadPath := s.multipart.uploadPath(uploadID)
+
+	entries, err := os.ReadDir(uploadPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "read upload directory")
+	}
+
+	parts := make([]fs.Part, 0, len(entries))
+
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == metadataFileName {
+			continue
+		}
+
+		partNumber, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+
+		part, err := statPart(filepath.Join(uploadPath, entry.Name()), partNumber)
+		if err != nil {
+			return nil, err
+		}
+
+		parts = append(parts, part)
+	}
+
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+
+	return parts, nil
+}
+
+// statPart reads a stored part file's size, modification time, and MD5 ETag.
+func statPart(path string, partNumber int) (fs.Part, error) {
+	f, err := os.Open(path) //nolint:gosec // Path is constructed internally from validated uploadID and partNumber.
+	if err != nil {
+		return fs.Part{}, errors.Wrapf(err, "open part %d", partNumber)
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return fs.Part{}, errors.Wrapf(err, "stat part %d", partNumber)
+	}
+
+	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	if _, err := io.Copy(hash, f); err != nil {
+		return fs.Part{}, errors.Wrapf(err, "hash part %d", partNumber)
+	}
+
+	return fs.Part{
+		PartNumber:   partNumber,
+		ETag:         hex.EncodeToString(hash.Sum(nil)),
+		Size:         info.Size(),
+		LastModified: info.ModTime(),
 	}, nil
+}
+
+func (s *Storage) ListMultipartUploads(_ context.Context, bucket string) ([]fs.MultipartUpload, error) {
+	bucketPath := filepath.Join(s.root, bucket)
+	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	s.multipart.mu.RLock()
+	defer s.multipart.mu.RUnlock()
+
+	entries, err := os.ReadDir(s.multipart.multipartPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []fs.MultipartUpload{}, nil
+		}
+
+		return nil, errors.Wrap(err, "read multipart directory")
+	}
+
+	uploads := make([]fs.MultipartUpload, 0, len(entries))
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		meta, err := s.multipart.loadMetadata(entry.Name())
+		if err != nil {
+			// Skip uploads with missing or unreadable metadata (e.g. an upload
+			// being created or aborted concurrently).
+			continue
+		}
+
+		if meta.Bucket != bucket {
+			continue
+		}
+
+		uploads = append(uploads, fs.MultipartUpload{
+			UploadID:  meta.ID,
+			Bucket:    meta.Bucket,
+			Key:       meta.Key,
+			Initiated: meta.Initiated,
+		})
+	}
+
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+
+		return uploads[i].UploadID < uploads[j].UploadID
+	})
+
+	return uploads, nil
 }
 
 func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {

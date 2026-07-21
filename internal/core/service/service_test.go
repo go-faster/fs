@@ -435,6 +435,9 @@ func TestService_CompleteMultipartUpload(t *testing.T) {
 		}
 
 		storage := &mock.StorageMock{
+			ListPartsFunc: func(ctx context.Context, bucket, key, uploadID string) ([]fs.Part, error) {
+				return []fs.Part{{PartNumber: 1, ETag: "etag1", Size: 42}}, nil
+			},
 			CompleteMultipartUploadFunc: func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
 				require.Equal(t, "valid-bucket", req.Bucket)
 				require.Equal(t, "valid-key.txt", req.Key)

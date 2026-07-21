@@ -30,7 +30,8 @@ type ListBucketResult struct {
 	ContinuationToken     string `xml:"ContinuationToken,omitempty"`
 	NextContinuationToken string `xml:"NextContinuationToken,omitempty"`
 	StartAfter            string `xml:"StartAfter,omitempty"`
-	KeyCount              int    `xml:"KeyCount,omitempty"`
+	// KeyCount is set on every V2 response (including zero) and never on V1.
+	KeyCount *int `xml:"KeyCount,omitempty"`
 
 	// V1 pagination.
 	Marker     string `xml:"Marker,omitempty"`

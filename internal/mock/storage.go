@@ -47,8 +47,14 @@ var _ fs.Storage = &StorageMock{}
 //			ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 //				panic("mock out the ListBuckets method")
 //			},
+//			ListMultipartUploadsFunc: func(ctx context.Context, bucket string) ([]fs.MultipartUpload, error) {
+//				panic("mock out the ListMultipartUploads method")
+//			},
 //			ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
 //				panic("mock out the ListObjects method")
+//			},
+//			ListPartsFunc: func(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error) {
+//				panic("mock out the ListParts method")
 //			},
 //			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) error {
 //				panic("mock out the PutObject method")
@@ -90,8 +96,14 @@ type StorageMock struct {
 	// ListBucketsFunc mocks the ListBuckets method.
 	ListBucketsFunc func(ctx context.Context) ([]fs.Bucket, error)
 
+	// ListMultipartUploadsFunc mocks the ListMultipartUploads method.
+	ListMultipartUploadsFunc func(ctx context.Context, bucket string) ([]fs.MultipartUpload, error)
+
 	// ListObjectsFunc mocks the ListObjects method.
 	ListObjectsFunc func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error)
+
+	// ListPartsFunc mocks the ListParts method.
+	ListPartsFunc func(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error)
 
 	// PutObjectFunc mocks the PutObject method.
 	PutObjectFunc func(ctx context.Context, req *fs.PutObjectRequest) error
@@ -172,6 +184,13 @@ type StorageMock struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 		}
+		// ListMultipartUploads holds details about calls to the ListMultipartUploads method.
+		ListMultipartUploads []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+		}
 		// ListObjects holds details about calls to the ListObjects method.
 		ListObjects []struct {
 			// Ctx is the ctx argument value.
@@ -180,6 +199,17 @@ type StorageMock struct {
 			Bucket string
 			// Prefix is the prefix argument value.
 			Prefix string
+		}
+		// ListParts holds details about calls to the ListParts method.
+		ListParts []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
+			// UploadID is the uploadID argument value.
+			UploadID string
 		}
 		// PutObject holds details about calls to the PutObject method.
 		PutObject []struct {
@@ -205,7 +235,9 @@ type StorageMock struct {
 	lockDeleteObject            sync.RWMutex
 	lockGetObject               sync.RWMutex
 	lockListBuckets             sync.RWMutex
+	lockListMultipartUploads    sync.RWMutex
 	lockListObjects             sync.RWMutex
+	lockListParts               sync.RWMutex
 	lockPutObject               sync.RWMutex
 	lockUploadPart              sync.RWMutex
 }
@@ -550,6 +582,42 @@ func (mock *StorageMock) ListBucketsCalls() []struct {
 	return calls
 }
 
+// ListMultipartUploads calls ListMultipartUploadsFunc.
+func (mock *StorageMock) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.MultipartUpload, error) {
+	if mock.ListMultipartUploadsFunc == nil {
+		panic("StorageMock.ListMultipartUploadsFunc: method is nil but Storage.ListMultipartUploads was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+	}
+	mock.lockListMultipartUploads.Lock()
+	mock.calls.ListMultipartUploads = append(mock.calls.ListMultipartUploads, callInfo)
+	mock.lockListMultipartUploads.Unlock()
+	return mock.ListMultipartUploadsFunc(ctx, bucket)
+}
+
+// ListMultipartUploadsCalls gets all the calls that were made to ListMultipartUploads.
+// Check the length with:
+//
+//	len(mockedStorage.ListMultipartUploadsCalls())
+func (mock *StorageMock) ListMultipartUploadsCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+	}
+	mock.lockListMultipartUploads.RLock()
+	calls = mock.calls.ListMultipartUploads
+	mock.lockListMultipartUploads.RUnlock()
+	return calls
+}
+
 // ListObjects calls ListObjectsFunc.
 func (mock *StorageMock) ListObjects(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
 	if mock.ListObjectsFunc == nil {
@@ -587,6 +655,50 @@ func (mock *StorageMock) ListObjectsCalls() []struct {
 	mock.lockListObjects.RLock()
 	calls = mock.calls.ListObjects
 	mock.lockListObjects.RUnlock()
+	return calls
+}
+
+// ListParts calls ListPartsFunc.
+func (mock *StorageMock) ListParts(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error) {
+	if mock.ListPartsFunc == nil {
+		panic("StorageMock.ListPartsFunc: method is nil but Storage.ListParts was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		Bucket   string
+		Key      string
+		UploadID string
+	}{
+		Ctx:      ctx,
+		Bucket:   bucket,
+		Key:      key,
+		UploadID: uploadID,
+	}
+	mock.lockListParts.Lock()
+	mock.calls.ListParts = append(mock.calls.ListParts, callInfo)
+	mock.lockListParts.Unlock()
+	return mock.ListPartsFunc(ctx, bucket, key, uploadID)
+}
+
+// ListPartsCalls gets all the calls that were made to ListParts.
+// Check the length with:
+//
+//	len(mockedStorage.ListPartsCalls())
+func (mock *StorageMock) ListPartsCalls() []struct {
+	Ctx      context.Context
+	Bucket   string
+	Key      string
+	UploadID string
+} {
+	var calls []struct {
+		Ctx      context.Context
+		Bucket   string
+		Key      string
+		UploadID string
+	}
+	mock.lockListParts.RLock()
+	calls = mock.calls.ListParts
+	mock.lockListParts.RUnlock()
 	return calls
 }
 
