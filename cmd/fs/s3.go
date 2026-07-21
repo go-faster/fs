@@ -175,6 +175,11 @@ Command-line flags override YAML configuration values.`,
 					Buckets:      cfg.Storage.Buckets,
 					Auth:         authStore,
 					WrapHandler:  wrap,
+					// Readiness probes storage reachability (health is liveness only).
+					Ready: func(ctx context.Context) error {
+						_, err := storage.ListBuckets(ctx)
+						return err
+					},
 				}
 
 				if cfg.Server.TLS.CertFile != "" && cfg.Server.TLS.KeyFile != "" {
@@ -199,6 +204,9 @@ Command-line flags override YAML configuration values.`,
 				srv.HTTPServer().ConnContext = func(context.Context, net.Conn) context.Context {
 					return t.BaseContext()
 				}
+
+				// Hot-reload credentials and TLS certificate on SIGHUP.
+				go handleReload(ctx, lg, configPath, insecureNoAuth, authStore, srv)
 
 				lg.Info("Starting server", zap.String("addr", cfg.Server.Addr))
 

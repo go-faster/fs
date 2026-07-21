@@ -65,6 +65,20 @@ verified; TLS certificates hot-reload without dropping connections. As a
 library, enable it with `server.WithAuth(store)` / `server.WithCORS(cfg)` — the
 bare handler stays anonymous unless you opt in.
 
+## Operations
+
+- **Durability** — `storage.fsync` (`none` / `file` / `file+dir`, default
+  `file`) controls fsync aggressiveness; writes are always crash-atomic (no torn
+  object). A background scrubber (`integrity.scrub_interval`) detects bit-rot and
+  can quarantine corrupt objects; `integrity.verify_on_read` checks each object
+  before serving.
+- **Health & readiness** — `/health` (liveness: the process is up) and `/ready`
+  (readiness: storage is reachable, 503 otherwise). Prometheus `/metrics` and
+  pprof are served on a separate listener (default `localhost:9464`,
+  `METRICS_ADDR` to change).
+- **Hot reload** — send **`SIGHUP`** to reload credentials and the TLS
+  certificate from disk without a restart.
+
 ## Installation
 
 ```bash
@@ -228,8 +242,10 @@ func main() {
 | `Storage` | — (required) | Backend serving S3 operations (`fs.Storage`). |
 | `Addr` | `:8080` | TCP address to listen on. |
 | `ReadTimeout` / `WriteTimeout` / `IdleTimeout` | `30s` / `30s` / `120s` | Underlying `http.Server` timeouts. |
-| `HealthPath` | `/health` | Plaintext health endpoint; `"-"` disables it. |
+| `HealthPath` | `/health` | Plaintext liveness endpoint; `"-"` disables it. |
+| `ReadyPath` / `Ready` | `/ready` / — | Readiness endpoint and its probe; a non-nil probe error returns 503. |
 | `Buckets` | — | Buckets created (idempotently) before serving. |
+| `Auth` / `CORS` / `TLS` | — | SigV4 auth store, per-bucket CORS, and hot-reloadable TLS. |
 | `WrapHandler` | — | Wrap the handler with middleware/observability (e.g. `otelhttp.NewHandler`). |
 
 See the [`server` package reference](https://pkg.go.dev/github.com/go-faster/fs/server)
