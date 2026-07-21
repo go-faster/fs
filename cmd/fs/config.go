@@ -29,6 +29,9 @@ type Config struct {
 	// Auth configuration
 	Auth AuthConfig `yaml:"auth"`
 
+	// Admin configuration
+	Admin AdminConfig `yaml:"admin,omitempty"`
+
 	// Integrity configuration
 	Integrity IntegrityConfig `yaml:"integrity"`
 
@@ -64,6 +67,33 @@ type AuthConfig struct {
 
 	// PublicReadBuckets may be read anonymously.
 	PublicReadBuckets []string `yaml:"public_read_buckets,omitempty"`
+}
+
+// DefaultAdminAddr is the default admin listener address.
+const DefaultAdminAddr = "localhost:8090"
+
+// DefaultAdminKeysFile is the default filename (under the storage root) for
+// persisted runtime-created access keys.
+const DefaultAdminKeysFile = ".access-keys.json"
+
+// AdminConfig configures the admin API and its embedded web dashboard, served
+// on a separate listener protected by a bearer token.
+type AdminConfig struct {
+	// Enabled turns on the admin listener. Off by default.
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// Addr is the admin listener address. Defaults to localhost:8090; keep it
+	// bound to localhost or behind a proxy — it manages credentials.
+	Addr string `yaml:"addr,omitempty"`
+
+	// Token is the bearer token required on every admin API request. It may also
+	// be supplied via the FS_ADMIN_TOKEN environment variable, which takes
+	// precedence. Required when Enabled.
+	Token string `yaml:"token,omitempty"`
+
+	// KeysFile persists runtime-created access keys. Defaults to
+	// <storage.root>/.access-keys.json.
+	KeysFile string `yaml:"keys_file,omitempty"`
 }
 
 // KeyConfig is one credential and its grants.

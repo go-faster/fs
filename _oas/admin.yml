@@ -1,0 +1,222 @@
+openapi: 3.0.3
+info:
+  title: go-faster/fs admin API
+  description: >
+    Administrative API for a go-faster/fs S3 server: instance info and runtime
+    management of access keys (create, list and delete credentials without a
+    restart). Intended to be served on a separate, authenticated admin listener.
+  version: 0.1.0
+servers:
+  - url: "http://localhost:8090"
+paths:
+  /api/v1/info:
+    get:
+      operationId: "getInfo"
+      summary: "Instance info"
+      description: "Build information, uptime and whether authentication is enabled."
+      responses:
+        200:
+          description: Instance info.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InstanceInfo"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/access-keys:
+    get:
+      operationId: "listAccessKeys"
+      summary: "List access keys"
+      description: "Every credential the server accepts, secrets omitted."
+      responses:
+        200:
+          description: Access keys.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/AccessKeyList"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: "createAccessKey"
+      summary: "Create an access key"
+      description: >
+        Create a runtime credential. The access key and secret are generated
+        when not supplied. The secret is returned only in this response and
+        cannot be retrieved later.
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/CreateAccessKeyRequest"
+      responses:
+        201:
+          description: Created credential (includes the secret).
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/CreatedAccessKey"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/access-keys/{accessKey}:
+    delete:
+      operationId: "deleteAccessKey"
+      summary: "Delete an access key"
+      description: "Remove a runtime credential. Config-defined credentials cannot be deleted."
+      parameters:
+        - name: accessKey
+          in: path
+          required: true
+          description: "The access key ID to delete."
+          schema:
+            type: string
+      responses:
+        204:
+          description: Deleted.
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  schemas:
+    InstanceInfo:
+      type: object
+      required:
+        - version
+        - commit
+        - go_version
+        - os
+        - arch
+        - start_time
+        - uptime_seconds
+        - auth_enabled
+      properties:
+        version:
+          type: string
+          example: "v0.1.0"
+        commit:
+          type: string
+          example: "abcdef0"
+        go_version:
+          type: string
+          example: "go1.25.0"
+        os:
+          type: string
+          example: "linux"
+        arch:
+          type: string
+          example: "amd64"
+        start_time:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: number
+          format: double
+        auth_enabled:
+          type: boolean
+          description: "Whether SigV4 authentication is enabled."
+    Permission:
+      type: string
+      description: "Access level; Admin includes Write includes Read."
+      enum:
+        - read
+        - write
+        - admin
+    Grant:
+      type: object
+      required:
+        - bucket
+        - permission
+      properties:
+        bucket:
+          type: string
+          description: "Bucket glob pattern; \"*\" matches all buckets."
+          example: "uploads-*"
+        permission:
+          $ref: "#/components/schemas/Permission"
+    Source:
+      type: string
+      description: "Where the credential is defined."
+      enum:
+        - config
+        - managed
+    AccessKey:
+      type: object
+      required:
+        - access_key
+        - grants
+        - source
+      properties:
+        access_key:
+          type: string
+          example: "AKIAIOSFODNN7EXAMPLE"
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Grant"
+        source:
+          $ref: "#/components/schemas/Source"
+        created_at:
+          type: string
+          format: date-time
+          description: "Creation time, for runtime-managed credentials."
+    AccessKeyList:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessKey"
+    CreateAccessKeyRequest:
+      type: object
+      required:
+        - grants
+      properties:
+        access_key:
+          type: string
+          description: "Access key ID; generated when omitted."
+        secret_key:
+          type: string
+          description: "Secret access key; generated when omitted."
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Grant"
+    CreatedAccessKey:
+      type: object
+      required:
+        - access_key
+        - secret_key
+        - grants
+        - created_at
+      properties:
+        access_key:
+          type: string
+        secret_key:
+          type: string
+          description: "Secret access key — shown once, not retrievable later."
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Grant"
+        created_at:
+          type: string
+          format: date-time
+    Error:
+      title: Structured error
+      description: Error occurred while processing request
+      type: object
+      required:
+        - error_message
+      properties:
+        error_message:
+          type: string
+          example: "Something went wrong"
+  responses:
+    Error:
+      description: Structured error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

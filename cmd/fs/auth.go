@@ -12,6 +12,7 @@ import (
 const (
 	envRootAccessKey = "FS_ROOT_ACCESS_KEY"
 	envRootSecretKey = "FS_ROOT_SECRET_KEY" //nolint:gosec // Env var name, not a credential.
+	envAdminToken    = "FS_ADMIN_TOKEN"     //nolint:gosec // Env var name, not a credential.
 )
 
 // Permission names accepted in grant configuration.
@@ -84,6 +85,28 @@ func buildAuthStore(cfg Config, insecureNoAuth bool) (*auth.Store, error) {
 	}
 
 	return store, nil
+}
+
+// buildAuthManager builds a mutable, persistent auth manager from configuration
+// and environment, returning (nil, nil) when authentication is disabled. keysPath
+// is where runtime-created credentials are persisted (empty to keep them in
+// memory only).
+func buildAuthManager(cfg Config, insecureNoAuth bool, keysPath string) (*auth.Manager, error) {
+	ac, enabled, err := buildAuthConfig(cfg, insecureNoAuth)
+	if err != nil {
+		return nil, err
+	}
+
+	if !enabled {
+		return nil, nil
+	}
+
+	mgr, err := auth.NewManager(ac, keysPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "build auth manager")
+	}
+
+	return mgr, nil
 }
 
 // parseGrants converts config grants to auth grants, defaulting an unset

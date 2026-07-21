@@ -15,8 +15,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 
+	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/server"
 	"github.com/go-faster/fs/storagefs"
 )
@@ -108,11 +110,7 @@ Command-line flags override YAML configuration values.`,
 
 			insecureNoAuth, _ := cmd.Flags().GetBool("insecure-no-auth")
 
-			authStore, err := buildAuthStore(cfg, insecureNoAuth)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error configuring auth: %v\n", err)
-				os.Exit(1)
-			}
+			startTime := time.Now()
 
 			app.Run(func(ctx context.Context, lg *zap.Logger, t *app.Telemetry) error {
 				// Log configuration
@@ -128,6 +126,19 @@ Command-line flags override YAML configuration values.`,
 				absRoot, err := filepath.Abs(cfg.Storage.Root)
 				if err != nil {
 					return fmt.Errorf("failed to resolve root path: %w", err)
+				}
+
+				// The auth manager owns the credential store and adds runtime
+				// access-key management (used by the admin API); it persists
+				// runtime-created keys under the storage root.
+				authManager, err := buildAuthManager(cfg, insecureNoAuth, resolveAdminKeysFile(cfg, absRoot))
+				if err != nil {
+					return errors.Wrap(err, "configure auth")
+				}
+
+				var authStore *auth.Store
+				if authManager != nil {
+					authStore = authManager.Store()
 				}
 
 				syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
@@ -206,18 +217,36 @@ Command-line flags override YAML configuration values.`,
 				}
 
 				// Hot-reload credentials and TLS certificate on SIGHUP.
-				go handleReload(ctx, lg, configPath, insecureNoAuth, authStore, srv)
+				go handleReload(ctx, lg, configPath, insecureNoAuth, authManager, srv)
 
 				lg.Info("Starting server", zap.String("addr", cfg.Server.Addr))
 
-				// NB: Using ShutdownContext is important to properly execute graceful
-				// shutdown: ListenAndServe serves until it is canceled, then drains
-				// in-flight requests using a detached context.
-				if err := srv.ListenAndServe(t.ShutdownContext()); err != nil {
-					return errors.Wrap(err, "listen and serve")
+				// Run the S3 server and, when enabled, the admin API + dashboard
+				// on its own listener. A failure in either cancels the group.
+				grp, grpCtx := errgroup.WithContext(t.ShutdownContext())
+
+				grp.Go(func() error {
+					// NB: Using the group context (from ShutdownContext) is important
+					// to properly execute graceful shutdown: ListenAndServe serves
+					// until it is canceled, then drains in-flight requests.
+					if err := srv.ListenAndServe(grpCtx); err != nil {
+						return errors.Wrap(err, "listen and serve")
+					}
+
+					return nil
+				})
+
+				if cfg.Admin.Enabled {
+					if authManager == nil {
+						return errors.New("admin API requires authentication; remove --insecure-no-auth / auth.disabled or disable admin")
+					}
+
+					grp.Go(func() error {
+						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime)
+					})
 				}
 
-				return nil
+				return grp.Wait()
 			},
 				app.WithServiceName(cfg.Observability.ServiceName),
 			)

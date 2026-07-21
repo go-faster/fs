@@ -68,6 +68,58 @@ verified; TLS certificates hot-reload without dropping connections. As a
 library, enable it with `server.WithAuth(store)` / `server.WithCORS(cfg)` — the
 bare handler stays anonymous unless you opt in.
 
+### Admin API & access-key dashboard
+
+Multiple access-key/secret credentials can be managed **at runtime** — without a
+restart — through a separate admin listener that also serves a small web
+dashboard. Config-defined keys stay read-only; keys created through the admin API
+are persisted (`<root>/.access-keys.json`, mode `0600`) and survive restarts and
+`SIGHUP` reloads.
+
+```yaml
+admin:
+  enabled: true
+  addr: "localhost:8090"   # keep bound to localhost or behind a proxy
+  token: "change-me"       # or set FS_ADMIN_TOKEN
+```
+
+The dashboard (open `http://localhost:8090/`, paste the token) lists credentials
+and their grants, creates keys (generating the access key and secret, shown
+once), and deletes runtime keys. The same operations are available as a JSON API
+under `/api/v1` (bearer-token protected), generated from
+[`_oas/admin.yml`](_oas/admin.yml) with [ogen](https://github.com/ogen-go/ogen);
+the dashboard is a TypeScript/React SPA whose typed client is generated from the
+same spec with [Orval](https://orval.dev):
+
+```bash
+# List credentials
+curl -H "Authorization: Bearer $FS_ADMIN_TOKEN" localhost:8090/api/v1/access-keys
+
+# Create a credential scoped to buckets matching "uploads-*"
+curl -H "Authorization: Bearer $FS_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"grants":[{"bucket":"uploads-*","permission":"write"}]}' \
+  localhost:8090/api/v1/access-keys
+```
+
+### Run as a systemd service
+
+Generate a unit for `fs s3` — a per-user service by default, or a hardened
+system service with `--user=false`:
+
+```bash
+# Install and enable a per-user service
+fs systemd --install --config ~/fs.yaml
+systemctl --user daemon-reload
+systemctl --user enable --now fs
+loginctl enable-linger "$USER"   # keep it running after logout
+
+# Or emit a system unit
+fs systemd --user=false --config /etc/fs/config.yaml | sudo tee /etc/systemd/system/fs.service
+```
+
+The unit wires `ExecReload` to `SIGHUP`, so `systemctl --user reload fs` performs
+the hot credential/TLS reload.
+
 ## Operations
 
 - **Durability** — `storage.fsync` (`none` / `file` / `file+dir`, default
