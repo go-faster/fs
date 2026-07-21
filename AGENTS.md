@@ -41,8 +41,13 @@ about HTTP or S3; don't import upward.
 - `make test_fast` — quick `go test ./...`.
 - `go build ./...` — build everything.
 - `golangci-lint run ./...` — must be clean (config in `.golangci.yml`).
-- `make generate` — regenerate mocks after changing the `fs.Storage`
-  interface (`go:generate` on `storage.go` runs moq).
+- `make generate` — regenerate mocks (moq) and `docs/CONFORMANCE.md`
+  (`go:generate` on `storage.go`); run after changing the `fs.Storage`
+  interface or the s3-tests allow-list.
+- `make compat` — regenerate `docs/CONFORMANCE.md` from the allow-list alone
+  (CI drift-checks it).
+- `make cli-smoke` — drive a live binary with aws-cli/mc/s3cmd/rclone over
+  edge-case keys (installed clients only; CI runs all four).
 
 ## Conventions
 
@@ -80,6 +85,12 @@ allow-list is the project's compatibility statement — a feature that
 doesn't grow it either needs no new tests (rare; say so in the PR) or
 isn't finished. The reverse also gates: never shrink or skip entries to
 get CI green; a regression means the change is wrong.
+
+After editing `allow.txt`, run `make compat` to regenerate
+`docs/CONFORMANCE.md` and commit both — CI fails if the doc is stale. New
+wire behavior should also be covered by an SDK integration test
+(`integration/`, both minio-go and aws-sdk-go-v2) and, where a client
+exercises it distinctly, the CLI smoke matrix (`scripts/cli-smoke.sh`).
 
 ## Keeping documentation current
 

@@ -160,9 +160,10 @@ the `server` package constants so the two cannot drift.
 
 ### `integration` and `internal/mock`
 
-`integration` drives a running server through the real `minio-go` client
-end-to-end. `internal/mock` holds the moq-generated `fs.Storage` mock used by
-handler tests; regenerate with `make generate` after changing the interface.
+`integration` drives an in-process server through the real `minio-go` and
+`aws-sdk-go-v2` clients end-to-end. `internal/mock` holds the moq-generated
+`fs.Storage` mock used by handler tests; regenerate with `make generate` after
+changing the interface.
 
 ## Request lifecycle (example: `PUT /bucket/a/b.txt`)
 
@@ -193,12 +194,17 @@ never listed as buckets.
 - **Conformance** (`storagetest`) — one suite, run by every backend.
 - **Handler tests** (`internal/core/handler`) — table-driven wire behaviour
   against the mock and both backends, via `httptest`.
-- **Integration** (`integration`) — real `minio-go` client against a live
-  server.
+- **Integration** (`integration`) — real SDK clients (`minio-go` and
+  `aws-sdk-go-v2`) against an in-process server, exercising each SDK's own
+  request encoding (path-style addressing, checksum trailers, error typing).
 - **S3 conformance CI** (`.github/workflows/s3tests.yml`) — the upstream
   ceph/s3-tests suite, gated on a curated allow-list
   (`.github/s3tests/allow.txt`). This is the objective measure of real-client
   compatibility; grow the allow-list as features land.
+  `docs/CONFORMANCE.md` is generated from it (`make compat`, drift-checked).
+- **CLI smoke matrix** (`.github/workflows/cli-smoke.yml`,
+  `scripts/cli-smoke.sh`) — a live binary driven by aws-cli, MinIO `mc`,
+  `s3cmd`, and `rclone` through a round-trip over edge-case object keys.
 
 ## Extending the system
 
