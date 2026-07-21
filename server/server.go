@@ -13,14 +13,18 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/cors"
 	"github.com/go-faster/fs/internal/core/handler"
 	"github.com/go-faster/fs/internal/core/service"
 )
@@ -34,11 +38,39 @@ const (
 	DefaultHealthPath   = "/health"
 )
 
+// HandlerOption configures the handler built by NewHandler.
+type HandlerOption func(*handlerOptions)
+
+type handlerOptions struct {
+	opts []handler.Option
+}
+
+// WithAuth enables SigV4 authentication and grant-based authorization on the
+// handler. Without it the handler serves anonymously (the library default).
+func WithAuth(store *auth.Store) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithAuthenticator(store))
+	}
+}
+
+// WithCORS enables per-bucket CORS (OPTIONS preflight + response headers).
+func WithCORS(cfg cors.Config) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithCORS(cfg))
+	}
+}
+
 // NewHandler returns the S3-compatible http.Handler for a storage backend,
 // wiring the validation layer and the request router. Mount it into your own
-// http.Server or mux to embed the S3 API.
-func NewHandler(store fs.Storage) http.Handler {
-	return handler.New(service.New(store))
+// http.Server or mux to embed the S3 API. Options enable authentication and
+// CORS.
+func NewHandler(store fs.Storage, opts ...HandlerOption) http.Handler {
+	var o handlerOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	return handler.New(service.New(store), o.opts...)
 }
 
 // Config configures a Server.
@@ -63,10 +95,28 @@ type Config struct {
 	// ListenAndServe / Serve.
 	Buckets []string
 
+	// Auth, if set, enables SigV4 authentication and grant-based authorization.
+	// Its snapshot can be hot-reloaded via (*auth.Store).Set. Nil serves
+	// anonymously.
+	Auth *auth.Store
+
+	// CORS, if non-empty, enables per-bucket CORS (preflight + headers).
+	CORS cors.Config
+
+	// TLS, if set, serves HTTPS with hot-reloadable certificates.
+	TLS *TLSConfig
+
 	// WrapHandler, if set, wraps the composed handler (health endpoint + S3
 	// router) before it is served. This is the injection point for
 	// observability or middleware, e.g. otelhttp.NewHandler or request logging.
 	WrapHandler func(http.Handler) http.Handler
+}
+
+// TLSConfig configures TLS termination with certificates reloaded from disk.
+type TLSConfig struct {
+	// CertFile and KeyFile are the PEM certificate and private key paths.
+	CertFile string
+	KeyFile  string
 }
 
 func (c *Config) setDefaults() {
@@ -97,6 +147,41 @@ type Server struct {
 	cfg     Config
 	handler http.Handler
 	http    *http.Server
+	certs   *certReloader
+}
+
+// certReloader loads a TLS keypair from disk and caches it behind an atomic
+// pointer, so ReloadCertificate swaps the certificate for new connections
+// without dropping the listener.
+type certReloader struct {
+	certFile string
+	keyFile  string
+	cert     atomic.Pointer[tls.Certificate]
+}
+
+func newCertReloader(certFile, keyFile string) (*certReloader, error) {
+	c := &certReloader{certFile: certFile, keyFile: keyFile}
+	if err := c.Reload(); err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
+// Reload re-reads the certificate and key from disk.
+func (c *certReloader) Reload() error {
+	cert, err := tls.LoadX509KeyPair(c.certFile, c.keyFile)
+	if err != nil {
+		return errors.Wrap(err, "load tls keypair")
+	}
+
+	c.cert.Store(&cert)
+
+	return nil
+}
+
+func (c *certReloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return c.cert.Load(), nil
 }
 
 // New builds a Server from cfg. Storage is required. Configuration defaults are
@@ -118,12 +203,34 @@ func New(cfg Config) (*Server, error) {
 		IdleTimeout:  cfg.IdleTimeout,
 	}
 
+	if cfg.TLS != nil {
+		certs, err := newCertReloader(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+
+		s.certs = certs
+		s.http.TLSConfig = &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: certs.getCertificate,
+		}
+	}
+
 	return s, nil
 }
 
 func (s *Server) buildHandler() http.Handler {
+	var opts []HandlerOption
+	if s.cfg.Auth != nil {
+		opts = append(opts, WithAuth(s.cfg.Auth))
+	}
+
+	if len(s.cfg.CORS.Buckets) > 0 || len(s.cfg.CORS.Default) > 0 {
+		opts = append(opts, WithCORS(s.cfg.CORS))
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/", NewHandler(s.cfg.Storage))
+	mux.Handle("/", NewHandler(s.cfg.Storage, opts...))
 
 	if s.cfg.HealthPath != "" && s.cfg.HealthPath != "-" {
 		mux.HandleFunc(s.cfg.HealthPath, func(w http.ResponseWriter, _ *http.Request) {
@@ -198,7 +305,13 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		serve := s.http.Serve
+		if s.certs != nil {
+			// Certificates come from the reloader's GetCertificate callback.
+			serve = func(l net.Listener) error { return s.http.ServeTLS(l, "", "") }
+		}
+
+		if err := serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return errors.Wrap(err, "serve")
 		}
 
@@ -218,4 +331,15 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 // Shutdown gracefully shuts down the underlying HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
+}
+
+// ReloadCertificate re-reads the TLS certificate and key from disk, applying
+// them to new connections without interrupting the listener. It is a no-op when
+// TLS is not configured.
+func (s *Server) ReloadCertificate() error {
+	if s.certs == nil {
+		return nil
+	}
+
+	return s.certs.Reload()
 }

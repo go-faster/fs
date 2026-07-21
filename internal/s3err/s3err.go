@@ -49,6 +49,10 @@ var (
 	AccessDenied            = APIError{"AccessDenied", http.StatusForbidden, "Access Denied."}
 	SignatureDoesNotMatch   = APIError{"SignatureDoesNotMatch", http.StatusForbidden, "The request signature we calculated does not match the signature you provided."}
 	InvalidAccessKeyID      = APIError{"InvalidAccessKeyId", http.StatusForbidden, "The AWS access key Id you provided does not exist in our records."}
+	RequestTimeTooSkewed    = APIError{"RequestTimeTooSkewed", http.StatusForbidden, "The difference between the request time and the current time is too large."}
+	AuthHeaderMalformed     = APIError{"AuthorizationHeaderMalformed", http.StatusBadRequest, "The authorization header that you provided is not valid."}
+	MissingSecurityHeader   = APIError{"MissingSecurityHeader", http.StatusBadRequest, "Your request is missing a required header."}
+	ExpiredPresignedRequest = APIError{"AccessDenied", http.StatusForbidden, "Request has expired."}
 	MethodNotAllowed        = APIError{"MethodNotAllowed", http.StatusMethodNotAllowed, "The specified method is not allowed against this resource."}
 	NotImplemented          = APIError{"NotImplemented", http.StatusNotImplemented, "A header or operation you provided implies functionality that is not implemented."}
 	MissingRequestBody      = APIError{"MissingRequestBodyError", http.StatusBadRequest, "Request body is empty."}

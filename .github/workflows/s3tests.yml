@@ -56,7 +56,9 @@ jobs:
       - name: Start server
         run: |
           mkdir -p .s3data-ci
-          ./fs s3 --addr ":${S3_PORT}" --root ./.s3data-ci > fs-server.log 2>&1 &
+          # The allow-list includes anonymous-access tests, so run without
+          # authentication (auth is ON by default in the binary).
+          ./fs s3 --addr ":${S3_PORT}" --root ./.s3data-ci --insecure-no-auth > fs-server.log 2>&1 &
           echo "$!" > fs.pid
           for i in $(seq 1 30); do
             if curl -fsS -o /dev/null "http://localhost:${S3_PORT}/health"; then

@@ -74,7 +74,9 @@ start_server() {
   (cd "${ROOT}" && go build -o "${WORK}/fs" ./cmd/fs)
 
   log "starting server on ${ENDPOINT}"
-  "${WORK}/fs" s3 --addr ":${PORT}" --root "${DATA}" > "${WORK}/server.log" 2>&1 &
+  # The smoke matrix drives the clients with arbitrary credentials the server
+  # ignores, so run without authentication (auth is ON by default).
+  "${WORK}/fs" s3 --addr ":${PORT}" --root "${DATA}" --insecure-no-auth > "${WORK}/server.log" 2>&1 &
   SERVER_PID=$!
 
   for _ in $(seq 1 30); do

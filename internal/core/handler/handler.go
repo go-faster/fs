@@ -17,16 +17,54 @@ type handler struct {
 	service fs.Storage
 }
 
+// Option configures the handler built by New.
+type Option func(*options)
+
+type options struct {
+	authenticator Authenticator
+	cors          CORSResolver
+}
+
+// WithAuthenticator enables SigV4 authentication and grant-based authorization
+// using a. Without it (the library default) the handler serves anonymously.
+func WithAuthenticator(a Authenticator) Option {
+	return func(o *options) { o.authenticator = a }
+}
+
+// WithCORS enables per-bucket CORS: OPTIONS preflight handling and CORS
+// response headers on cross-origin requests, resolved through c.
+func WithCORS(c CORSResolver) Option {
+	return func(o *options) { o.cors = c }
+}
+
 // New returns the S3-compatible http.Handler for a storage service. Every
 // response carries an x-amz-request-id header; request routing is delegated to
-// route.
-func New(s fs.Storage) http.Handler {
+// route. Options enable authentication and CORS.
+//
+// Middleware order (outermost first): request-id → CORS → auth → router, so
+// error responses carry a request id, CORS preflight is answered before auth,
+// and only authenticated (or public-read) requests reach the router.
+func New(s fs.Storage, opts ...Option) http.Handler {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	h := handler{service: s}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.route)
 
-	return withRequestID(mux)
+	var inner http.Handler = mux
+	if o.authenticator != nil {
+		inner = authMiddleware(o.authenticator, inner)
+	}
+
+	if o.cors != nil {
+		inner = corsMiddleware(o.cors, inner)
+	}
+
+	return withRequestID(inner)
 }
 
 // withRequestID stamps every response with a unique x-amz-request-id (echoed

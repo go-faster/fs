@@ -99,8 +99,40 @@ Successful responses are marshalled to S3 XML (`writeXML`). Errors go through
 it holds the S3 error-code table (`APIError` = wire code + HTTP status +
 message), maps the `fs.Err*` sentinels to codes, and writes the standard
 `<Error><Code><Message><Resource><RequestId></Error>` XML document (no body for
-HEAD; non-panicking fallback if encoding fails). Every response carries an
-`x-amz-request-id` header, stamped by middleware in `handler.New`.
+HEAD; non-panicking fallback if encoding fails).
+
+`handler.New(store, opts...)` composes middleware around the router, outermost
+first: **request-id → CORS → auth → router**. So every response (including
+errors) carries an `x-amz-request-id`, CORS preflight is answered before auth
+can reject it, and only authenticated (or public-read) requests reach the
+router. Auth and CORS are opt-in via `WithAuthenticator` / `WithCORS`; without
+them the handler serves anonymously (the library default).
+
+### `internal/sigv4` — SigV4 verification
+
+Verifies AWS Signature Version 4 on incoming requests: Authorization-header
+auth, presigned-URL (query) auth, and the seed + per-chunk signatures for
+streaming (aws-chunked) uploads. It recomputes the signature from a looked-up
+secret and compares in constant time — it never signs. The canonical URI is the
+request's `EscapedPath()` (S3 signs with `DisableURIPathEscaping`, so no
+re-encode). `ChunkVerifyingReader` decodes and verifies signed streaming chunks
+as the body is read, so a tampered payload surfaces as a read error before it
+reaches storage. Verified against the real aws-sdk-go-v2 signer in unit tests.
+
+### `auth` (public) — credentials & authorization
+
+A table, not a policy engine: `Config` → `Store` maps each access key to a
+secret and a set of (bucket-glob → permission) grants (Read ⊆ Write ⊆ Admin),
+with optional public-read buckets. The snapshot sits behind an atomic pointer,
+so `Set` hot-reloads credentials without locking readers. `Store` satisfies the
+handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`).
+
+### `cors` (public) — per-bucket CORS
+
+`Config` holds per-bucket (and default) `Rule`s; the handler's CORS middleware
+answers OPTIONS preflight and adds CORS response headers to matching
+cross-origin requests. Configured at construction, not via the S3 PutBucketCors
+subresource.
 
 ### `internal/s3err` — S3 error rendering
 

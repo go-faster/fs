@@ -45,6 +45,26 @@ curl -X PUT -d "Hello!" http://localhost:8080/mybucket/hello.txt
 curl http://localhost:8080/mybucket/hello.txt
 ```
 
+## Authentication & TLS
+
+The binary authenticates requests with **AWS Signature V4 by default**. Provide
+a root credential and (optionally) TLS:
+
+```bash
+export FS_ROOT_ACCESS_KEY=AKIAEXAMPLE
+export FS_ROOT_SECRET_KEY=exampleSecretKey
+fs s3 --tls-cert cert.pem --tls-key key.pem
+```
+
+Additional keys, per-bucket grants (`read`/`write`/`admin`), and public-read
+buckets are configured under `auth:` in the config file. To run without any
+authentication (development only), pass `--insecure-no-auth`.
+
+SigV4 header auth, presigned URLs (≤7-day expiry) and streaming uploads are all
+verified; TLS certificates hot-reload without dropping connections. As a
+library, enable it with `server.WithAuth(store)` / `server.WithCORS(cfg)` — the
+bare handler stays anonymous unless you opt in.
+
 ## Installation
 
 ```bash

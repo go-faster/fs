@@ -19,9 +19,14 @@ is the working checklist; ARCHITECTURE.md is the reference.
 - `fs.go`, `storage.go`, `errors.go` — root package: domain types
   (`Bucket`, `Object`, `*Request`/`*Response`), the `fs.Storage` interface, and
   the `Err*` sentinels. This is the API every layer speaks.
-- `internal/core/handler` — HTTP/S3 wire layer (routing, XML, error mapping).
+- `internal/core/handler` — HTTP/S3 wire layer (routing, XML, error mapping,
+  auth/CORS middleware).
 - `internal/core/service` — validation layer wrapping a backend; implements
   `fs.Storage`.
+- `internal/sigv4` — SigV4 verification (header, presigned, streaming chunk
+  signatures). Verified against the real aws-sdk-go-v2 signer.
+- `auth`, `cors` (public) — credential/grant store and per-bucket CORS config,
+  wired via `server.WithAuth` / `server.WithCORS`.
 - `storagefs`, `storagemem` — filesystem and in-memory `fs.Storage` backends.
 - `storagetest` — exported conformance suite; both backends and any
   third-party backend run `storagetest.Run(t, factory)`.
