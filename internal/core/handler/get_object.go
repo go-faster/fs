@@ -39,11 +39,10 @@ func quoteETag(etag string) string {
 func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.GetObjectResponse) {
 	defer func() { _ = resp.Reader.Close() }()
 
-	if resp.ContentType != "" {
-		w.Header().Set("Content-Type", resp.ContentType)
-	} else {
-		w.Header().Set("Content-Type", "application/octet-stream")
-	}
+	// Stored representation headers and x-amz-meta-* pairs; without a stored
+	// Content-Type the S3 default applies.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	writeObjectMetadata(w.Header(), resp.Metadata)
 
 	if resp.ETag != "" {
 		w.Header().Set("ETag", quoteETag(resp.ETag))

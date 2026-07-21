@@ -43,6 +43,7 @@ var (
 	EntityTooSmall          = APIError{"EntityTooSmall", http.StatusBadRequest, "Your proposed upload is smaller than the minimum allowed object size."}
 	EntityTooLarge          = APIError{"EntityTooLarge", http.StatusBadRequest, "Your proposed upload exceeds the maximum allowed object size."}
 	InvalidRange            = APIError{"InvalidRange", http.StatusRequestedRangeNotSatisfiable, "The requested range is not satisfiable."}
+	InvalidTag              = APIError{"InvalidTag", http.StatusBadRequest, "The tag provided was not a valid tag."}
 	PreconditionFailed      = APIError{"PreconditionFailed", http.StatusPreconditionFailed, "At least one of the preconditions you specified did not hold."}
 	NotModified             = APIError{"NotModified", http.StatusNotModified, ""}
 	AccessDenied            = APIError{"AccessDenied", http.StatusForbidden, "Access Denied."}
@@ -93,6 +94,8 @@ func FromError(err error) APIError {
 		return InvalidArgument
 	case errors.Is(err, fs.ErrEntityTooSmall):
 		return EntityTooSmall
+	case errors.Is(err, fs.ErrInvalidTag):
+		return InvalidTag
 	case errors.Is(err, fs.ErrUnsupportedOperation):
 		return NotImplemented
 	default:

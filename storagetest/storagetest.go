@@ -29,6 +29,11 @@ import (
 const (
 	testBucket = "bucket"
 	testKey    = "big.bin"
+
+	// Names and values reused by the metadata/tagging subtests.
+	metaKey = "meta.txt"
+	tagEnv  = "env"
+	tagProd = "prod"
 )
 
 // Factory returns a fresh, empty fs.Storage for a single (sub)test. Cleanup
@@ -87,12 +92,19 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Multipart/ListUploads":           testMultipartListUploads,
 	"Multipart/ListUploads/NotFound":  testMultipartListUploadsBucketNotFound,
 	"Multipart/ListUploads/Lifecycle": testMultipartListUploadsLifecycle,
+	"Metadata/PutETag":                testPutObjectETag,
+	"Metadata/RoundTrip":              testMetadataRoundTrip,
+	"Metadata/OverwriteReplaces":      testMetadataOverwriteReplaces,
+	"Metadata/Multipart":              testMetadataMultipart,
+	"Tagging/RoundTrip":               testTaggingRoundTrip,
+	"Tagging/PutObjectTags":           testTaggingOnPut,
+	"Tagging/NotFound":                testTaggingNotFound,
 }
 
 func putObject(t *testing.T, storage fs.Storage, key string, content []byte) {
 	t.Helper()
 
-	err := storage.PutObject(t.Context(), &fs.PutObjectRequest{
+	_, err := storage.PutObject(t.Context(), &fs.PutObjectRequest{
 		Bucket: testBucket,
 		Key:    key,
 		Reader: bytes.NewReader(content),
@@ -262,7 +274,7 @@ func testPutObjectOverwrite(t *testing.T, storage fs.Storage) {
 }
 
 func testPutObjectBucketNotFound(t *testing.T, storage fs.Storage) {
-	err := storage.PutObject(t.Context(), &fs.PutObjectRequest{
+	_, err := storage.PutObject(t.Context(), &fs.PutObjectRequest{
 		Bucket: "nonexistent",
 		Key:    "test.txt",
 		Reader: strings.NewReader("content"),
@@ -400,7 +412,7 @@ func testMultipartCreate(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 	require.NotEmpty(t, upload.UploadID)
 	require.Equal(t, testBucket, upload.Bucket)
@@ -408,7 +420,7 @@ func testMultipartCreate(t *testing.T, storage fs.Storage) {
 }
 
 func testMultipartCreateBucketNotFound(t *testing.T, storage fs.Storage) {
-	_, err := storage.CreateMultipartUpload(t.Context(), "nonexistent", testKey)
+	_, err := storage.CreateMultipartUpload(t.Context(), &fs.CreateMultipartUploadRequest{Bucket: "nonexistent", Key: testKey})
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
@@ -435,7 +447,7 @@ func testMultipartUploadPart(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	part := uploadPart(t, storage, upload.UploadID, 1, []byte("part data"))
@@ -463,7 +475,7 @@ func testMultipartComplete(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	part1 := uploadPart(t, storage, upload.UploadID, 1, []byte("hello, "))
@@ -492,7 +504,7 @@ func testMultipartCompleteETag(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	part1Data := []byte("hello, ")
@@ -538,7 +550,7 @@ func testMultipartCompleteOutOfOrder(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	// Upload parts in reverse order; completion must assemble by part number.
@@ -579,7 +591,7 @@ func testMultipartAbort(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	uploadPart(t, storage, upload.UploadID, 1, []byte("data"))
@@ -615,7 +627,7 @@ func testMultipartListParts(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	// Upload out of order; the listing must come back sorted by part number.
@@ -640,7 +652,7 @@ func testMultipartListPartsOverwrite(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	uploadPart(t, storage, upload.UploadID, 1, []byte("first attempt"))
@@ -667,7 +679,7 @@ func testMultipartListPartsWrongKey(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
 	// The upload ID is scoped to (bucket, key): a different key must not see it.
@@ -685,11 +697,11 @@ func testMultipartListUploads(t *testing.T, storage fs.Storage) {
 	require.Empty(t, uploads)
 
 	// Two uploads on different keys plus a second upload on the same key.
-	uploadB, err := storage.CreateMultipartUpload(ctx, testBucket, "b.bin")
+	uploadB, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: "b.bin"})
 	require.NoError(t, err)
-	uploadA1, err := storage.CreateMultipartUpload(ctx, testBucket, "a.bin")
+	uploadA1, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: "a.bin"})
 	require.NoError(t, err)
-	uploadA2, err := storage.CreateMultipartUpload(ctx, testBucket, "a.bin")
+	uploadA2, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: "a.bin"})
 	require.NoError(t, err)
 
 	uploads, err = storage.ListMultipartUploads(ctx, testBucket)
@@ -724,9 +736,9 @@ func testMultipartListUploadsLifecycle(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	completed, err := storage.CreateMultipartUpload(ctx, testBucket, "done.bin")
+	completed, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: "done.bin"})
 	require.NoError(t, err)
-	aborted, err := storage.CreateMultipartUpload(ctx, testBucket, "gone.bin")
+	aborted, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: "gone.bin"})
 	require.NoError(t, err)
 
 	part := uploadPart(t, storage, completed.UploadID, 1, []byte("data"))
@@ -747,4 +759,217 @@ func testMultipartListUploadsLifecycle(t *testing.T, storage fs.Storage) {
 
 	_, err = storage.ListParts(ctx, testBucket, "done.bin", completed.UploadID)
 	require.ErrorIs(t, err, fs.ErrUploadNotFound)
+}
+
+// testPutObjectETag guards that PutObject reports the MD5 ETag of the content
+// and that reads agree with it.
+func testPutObjectETag(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	content := []byte("hello, world!")
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	resp, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket: testBucket,
+		Key:    "test.txt",
+		Reader: bytes.NewReader(content),
+		Size:   int64(len(content)),
+	})
+	require.NoError(t, err)
+
+	expected := fmt.Sprintf("%x", md5.Sum(content)) //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	require.Equal(t, expected, resp.ETag)
+
+	obj, err := storage.GetObject(ctx, testBucket, "test.txt")
+	require.NoError(t, err)
+
+	defer func() { _ = obj.Reader.Close() }()
+
+	require.Equal(t, expected, obj.ETag)
+}
+
+func testMetadata() fs.ObjectMetadata {
+	return fs.ObjectMetadata{
+		ContentType:        "text/plain; charset=utf-8",
+		CacheControl:       "max-age=3600",
+		ContentDisposition: `attachment; filename="report.txt"`,
+		ContentEncoding:    "gzip",
+		UserMetadata:       map[string]string{"color": "blue", "owner": "storagetest"},
+	}
+}
+
+// testMetadataRoundTrip guards that all metadata fields survive a put/get cycle.
+func testMetadataRoundTrip(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket:   testBucket,
+		Key:      metaKey,
+		Reader:   strings.NewReader("content"),
+		Size:     7,
+		Metadata: testMetadata(),
+	})
+	require.NoError(t, err)
+
+	obj, err := storage.GetObject(ctx, testBucket, metaKey)
+	require.NoError(t, err)
+
+	defer func() { _ = obj.Reader.Close() }()
+
+	require.Equal(t, testMetadata(), obj.Metadata)
+}
+
+// testMetadataOverwriteReplaces guards that overwriting an object replaces its
+// metadata and tags entirely instead of merging.
+func testMetadataOverwriteReplaces(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket:   testBucket,
+		Key:      metaKey,
+		Reader:   strings.NewReader("v1"),
+		Size:     2,
+		Metadata: testMetadata(),
+		Tags:     []fs.Tag{{Key: tagEnv, Value: "dev"}},
+	})
+	require.NoError(t, err)
+
+	_, err = storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket:   testBucket,
+		Key:      metaKey,
+		Reader:   strings.NewReader("v2"),
+		Size:     2,
+		Metadata: fs.ObjectMetadata{ContentType: "application/json"},
+	})
+	require.NoError(t, err)
+
+	obj, err := storage.GetObject(ctx, testBucket, metaKey)
+	require.NoError(t, err)
+
+	defer func() { _ = obj.Reader.Close() }()
+
+	require.Equal(t, fs.ObjectMetadata{ContentType: "application/json"}, obj.Metadata)
+
+	tags, err := storage.GetObjectTagging(ctx, testBucket, metaKey)
+	require.NoError(t, err)
+	require.Empty(t, tags)
+}
+
+// testMetadataMultipart guards that metadata and tags captured at initiation
+// are applied to the completed object.
+func testMetadataMultipart(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+		Bucket:   testBucket,
+		Key:      testKey,
+		Metadata: testMetadata(),
+		Tags:     []fs.Tag{{Key: tagEnv, Value: tagProd}},
+	})
+	require.NoError(t, err)
+
+	part := uploadPart(t, storage, upload.UploadID, 1, []byte("data"))
+
+	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket:   testBucket,
+		Key:      testKey,
+		UploadID: upload.UploadID,
+		Parts:    []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+	})
+	require.NoError(t, err)
+
+	obj, err := storage.GetObject(ctx, testBucket, testKey)
+	require.NoError(t, err)
+
+	defer func() { _ = obj.Reader.Close() }()
+
+	require.Equal(t, testMetadata(), obj.Metadata)
+
+	tags, err := storage.GetObjectTagging(ctx, testBucket, testKey)
+	require.NoError(t, err)
+	require.Equal(t, []fs.Tag{{Key: tagEnv, Value: tagProd}}, tags)
+}
+
+// testTaggingRoundTrip guards the tagging CRUD cycle.
+func testTaggingRoundTrip(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	putObject(t, storage, "tagged.txt", []byte("content"))
+
+	// Untagged objects report an empty set.
+	tags, err := storage.GetObjectTagging(ctx, testBucket, "tagged.txt")
+	require.NoError(t, err)
+	require.Empty(t, tags)
+
+	want := []fs.Tag{{Key: tagEnv, Value: tagProd}, {Key: "team", Value: "storage"}}
+	require.NoError(t, storage.PutObjectTagging(ctx, testBucket, "tagged.txt", want))
+
+	tags, err = storage.GetObjectTagging(ctx, testBucket, "tagged.txt")
+	require.NoError(t, err)
+	require.Equal(t, want, tags)
+
+	// Replacing the set does not merge.
+	want = []fs.Tag{{Key: "only", Value: "one"}}
+	require.NoError(t, storage.PutObjectTagging(ctx, testBucket, "tagged.txt", want))
+
+	tags, err = storage.GetObjectTagging(ctx, testBucket, "tagged.txt")
+	require.NoError(t, err)
+	require.Equal(t, want, tags)
+
+	require.NoError(t, storage.DeleteObjectTagging(ctx, testBucket, "tagged.txt"))
+
+	tags, err = storage.GetObjectTagging(ctx, testBucket, "tagged.txt")
+	require.NoError(t, err)
+	require.Empty(t, tags)
+
+	// Tagging must not have altered the content or its readability.
+	require.Equal(t, []byte("content"), readObject(t, storage, "tagged.txt"))
+}
+
+// testTaggingOnPut guards tags supplied at PutObject time.
+func testTaggingOnPut(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	want := []fs.Tag{{Key: "k1", Value: "v1"}, {Key: "k2", Value: "v2"}}
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket: testBucket,
+		Key:    "tagged.txt",
+		Reader: strings.NewReader("content"),
+		Size:   7,
+		Tags:   want,
+	})
+	require.NoError(t, err)
+
+	tags, err := storage.GetObjectTagging(ctx, testBucket, "tagged.txt")
+	require.NoError(t, err)
+	require.Equal(t, want, tags)
+}
+
+// testTaggingNotFound guards tagging error mapping for missing buckets/objects.
+func testTaggingNotFound(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	_, err := storage.GetObjectTagging(ctx, "nonexistent", "key")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err = storage.GetObjectTagging(ctx, testBucket, "missing.txt")
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	err = storage.PutObjectTagging(ctx, testBucket, "missing.txt", []fs.Tag{{Key: "k", Value: "v"}})
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	err = storage.DeleteObjectTagging(ctx, testBucket, "missing.txt")
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 }

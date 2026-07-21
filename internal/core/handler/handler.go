@@ -129,19 +129,33 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 
 // routeObject handles requests addressed at an object key.
 func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Has("uploadId") {
+		switch {
+		case q.Has("uploadId"):
 			h.ListParts(w, r)
+		case q.Has("tagging"):
+			h.GetObjectTagging(w, r)
+		default:
+			h.GetObject(w, r)
+		}
+	case http.MethodPut:
+		if q.Has("tagging") {
+			h.PutObjectTagging(w, r)
 			return
 		}
 
-		h.GetObject(w, r)
-	case http.MethodPut:
 		h.PutObject(w, r)
 	case http.MethodHead:
 		h.HeadObject(w, r)
 	case http.MethodDelete:
+		if q.Has("tagging") {
+			h.DeleteObjectTagging(w, r)
+			return
+		}
+
 		h.DeleteObject(w, r)
 	case http.MethodPost:
 		// POST to an object path drives multipart upload initiation/completion.

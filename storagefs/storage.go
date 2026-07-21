@@ -33,6 +33,9 @@ type Storage struct {
 
 	etagMu    sync.Mutex
 	etagCache map[string]etagEntry
+
+	// metaMu serializes sidecar read-modify-write cycles (tagging updates).
+	metaMu sync.Mutex
 }
 
 // etagEntry is a cached ETag valid as long as size and modtime are unchanged.

@@ -22,12 +22,14 @@ func TestStorage_ETag(t *testing.T) {
 
 	put := func(content string) {
 		t.Helper()
-		require.NoError(t, s.PutObject(ctx, &fs.PutObjectRequest{
+
+		_, err := s.PutObject(ctx, &fs.PutObjectRequest{
 			Reader: bytes.NewReader([]byte(content)),
 			Bucket: "bucket-a",
 			Key:    "obj",
 			Size:   int64(len(content)),
-		}))
+		})
+		require.NoError(t, err)
 	}
 
 	etag := func() string {

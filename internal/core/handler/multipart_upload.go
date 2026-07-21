@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 // InitiateMultipartUploadResult represents the response for initiating multipart upload.
@@ -42,7 +43,18 @@ func (h *handler) HandleObjectPost(w http.ResponseWriter, r *http.Request) {
 func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
-	upload, err := h.service.CreateMultipartUpload(ctx, bucket, key)
+	tags, err := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if err != nil {
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, err)
+		return
+	}
+
+	upload, err := h.service.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+		Bucket:   bucket,
+		Key:      key,
+		Metadata: extractObjectMetadata(r.Header),
+		Tags:     tags,
+	})
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return

@@ -22,7 +22,10 @@ type CopyObjectResult struct {
 
 // CopyObject implements server-side copy, signaled by the x-amz-copy-source
 // header on a PUT. It composes a read of the source and a write to the
-// destination. Conditional-copy headers (x-amz-copy-source-if-*) are ignored.
+// destination. Metadata follows x-amz-metadata-directive (COPY by default,
+// REPLACE takes it from the request headers), tags follow
+// x-amz-tagging-directive the same way. Conditional-copy headers
+// (x-amz-copy-source-if-*) are ignored.
 func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	path := strings.TrimPrefix(r.URL.Path, "/")
@@ -34,6 +37,27 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metadataDirective, ok := parseDirective(r.Header.Get("X-Amz-Metadata-Directive"))
+	if !ok {
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-metadata-directive"))
+		return
+	}
+
+	taggingDirective, ok := parseDirective(r.Header.Get("X-Amz-Tagging-Directive"))
+	if !ok {
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-tagging-directive"))
+		return
+	}
+
+	// Copying an object onto itself is only allowed when it changes something
+	// (metadata REPLACE), matching S3.
+	if srcBucket == destBucket && srcKey == destKey && metadataDirective != directiveReplace {
+		renderAPIError(ctx, w, r, s3err.InvalidRequest,
+			errors.New("copy to itself without metadata directive REPLACE"))
+
+		return
+	}
+
 	src, err := h.service.GetObject(ctx, srcBucket, srcKey)
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -42,28 +66,67 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 
 	defer func() { _ = src.Reader.Close() }()
 
-	put := &fs.PutObjectRequest{
-		Reader: src.Reader,
-		Bucket: destBucket,
-		Key:    destKey,
-		Size:   src.Size,
+	metadata := src.Metadata
+	if metadataDirective == directiveReplace {
+		metadata = extractObjectMetadata(r.Header)
 	}
-	if err := h.service.PutObject(ctx, put); err != nil {
+
+	var tags []fs.Tag
+
+	if taggingDirective == directiveReplace {
+		if tags, err = parseTaggingHeader(r.Header.Get("X-Amz-Tagging")); err != nil {
+			renderAPIError(ctx, w, r, s3err.InvalidArgument, err)
+			return
+		}
+	} else if tags, err = h.service.GetObjectTagging(ctx, srcBucket, srcKey); err != nil {
 		renderError(ctx, w, r, err)
 		return
 	}
 
-	// Read back the destination metadata for the response.
-	etag, lastModified := src.ETag, time.Now().UTC()
+	put := &fs.PutObjectRequest{
+		Reader:   src.Reader,
+		Bucket:   destBucket,
+		Key:      destKey,
+		Size:     src.Size,
+		Metadata: metadata,
+		Tags:     tags,
+	}
+
+	resp, err := h.service.PutObject(ctx, put)
+	if err != nil {
+		renderError(ctx, w, r, err)
+		return
+	}
+
+	// Read back the destination for the response timestamp.
+	lastModified := time.Now().UTC()
 	if dst, err := h.service.GetObject(ctx, destBucket, destKey); err == nil {
-		etag, lastModified = dst.ETag, dst.LastModified
+		lastModified = dst.LastModified
 		_ = dst.Reader.Close()
 	}
 
 	writeXML(ctx, w, r, CopyObjectResult{
 		LastModified: lastModified.UTC(),
-		ETag:         quoteETag(etag),
+		ETag:         quoteETag(resp.ETag),
 	})
+}
+
+// Copy directives for metadata and tagging.
+const (
+	directiveCopy    = "COPY"
+	directiveReplace = "REPLACE"
+)
+
+// parseDirective normalizes an x-amz-*-directive header value; empty means COPY.
+func parseDirective(value string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "", directiveCopy:
+		return directiveCopy, true
+	case directiveReplace:
+		return directiveReplace, true
+	default:
+		return "", false
+	}
 }
 
 // parseCopySource parses an x-amz-copy-source value of the form "/bucket/key" or

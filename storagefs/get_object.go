@@ -35,16 +35,34 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		return nil, errors.Wrap(err, "stat object")
 	}
 
-	etag, err := s.etagFor(objectPath, info)
-	if err != nil {
-		_ = f.Close()
-		return nil, errors.Wrap(err, "etag")
-	}
-
-	return &fs.GetObjectResponse{
+	resp := &fs.GetObjectResponse{
 		Reader:       f,
 		Size:         info.Size(),
 		LastModified: info.ModTime(),
-		ETag:         etag,
-	}, nil
+	}
+
+	// The sidecar carries the stored ETag and metadata; files without one
+	// (pre-sidecar data directories) fall back to recompute-on-read.
+	sc, err := s.readSidecar(bucket, key)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+
+	if sc != nil {
+		resp.ETag = sc.ETag
+		resp.Metadata = sc.metadata()
+	}
+
+	if resp.ETag == "" {
+		etag, err := s.etagFor(objectPath, info)
+		if err != nil {
+			_ = f.Close()
+			return nil, errors.Wrap(err, "etag")
+		}
+
+		resp.ETag = etag
+	}
+
+	return resp, nil
 }

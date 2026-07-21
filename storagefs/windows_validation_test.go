@@ -36,7 +36,7 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 	content := []byte("test content")
 
 	// Put object using S3-style key.
-	err = storage.PutObject(ctx, &fs.PutObjectRequest{
+	_, err = storage.PutObject(ctx, &fs.PutObjectRequest{
 		Reader: bytes.NewReader(content),
 		Bucket: "test-bucket",
 		Key:    s3Key,
@@ -197,7 +197,7 @@ func TestPutObject_DeepNestedPath_WindowsFailure(t *testing.T) {
 
 	content := []byte("deep content")
 
-	err = storage.PutObject(ctx, &fs.PutObjectRequest{
+	_, err = storage.PutObject(ctx, &fs.PutObjectRequest{
 		Reader: bytes.NewReader(content),
 		Bucket: "test-bucket",
 		Key:    s3Key,
@@ -251,7 +251,7 @@ func TestPutGetDelete_MultipleSeparators(t *testing.T) {
 
 	content := []byte("multi-slash content")
 
-	err = storage.PutObject(ctx, &fs.PutObjectRequest{
+	_, err = storage.PutObject(ctx, &fs.PutObjectRequest{
 		Reader: bytes.NewReader(content),
 		Bucket: "test-bucket",
 		Key:    s3Key,
@@ -304,7 +304,7 @@ func TestPutObject_TrailingSlash(t *testing.T) {
 
 	content := []byte("dir marker")
 
-	err = storage.PutObject(ctx, &fs.PutObjectRequest{
+	_, err = storage.PutObject(ctx, &fs.PutObjectRequest{
 		Reader: bytes.NewReader(content),
 		Bucket: "test-bucket",
 		Key:    s3Key,
@@ -349,7 +349,7 @@ func TestRoundTrip_ComplexPaths(t *testing.T) {
 			content := []byte("content for " + tc.name)
 
 			// Put.
-			err := storage.PutObject(ctx, &fs.PutObjectRequest{
+			_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
 				Reader: bytes.NewReader(content),
 				Bucket: "test-bucket",
 				Key:    tc.key,

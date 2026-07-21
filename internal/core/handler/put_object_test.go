@@ -31,11 +31,11 @@ func TestPutObject(t *testing.T) {
 		ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
 			return []fs.Object{}, nil
 		},
-		PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) error {
+		PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 			require.Equal(t, bucketName, req.Bucket)
 			require.Equal(t, objectKey, req.Key)
 
-			return nil
+			return &fs.PutObjectResponse{ETag: "etag"}, nil
 		},
 	}
 
@@ -76,9 +76,9 @@ func TestPutObject_IfNoneMatch_Conflict(t *testing.T) {
 		// Object already exists.
 		return &fs.GetObjectResponse{Reader: io.NopCloser(strings.NewReader("existing"))}, nil
 	}
-	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) error {
+	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 		putCalled = true
-		return nil
+		return &fs.PutObjectResponse{ETag: "etag"}, nil
 	}
 
 	rec := httptest.NewRecorder()
@@ -103,13 +103,13 @@ func TestPutObject_IfNoneMatch_Created(t *testing.T) {
 		// Object does not exist yet.
 		return nil, fs.ErrObjectNotFound
 	}
-	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) error {
+	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 		putCalled = true
 
 		require.Equal(t, bucketName, req.Bucket)
 		require.Equal(t, objectKey, req.Key)
 
-		return nil
+		return &fs.PutObjectResponse{ETag: "etag"}, nil
 	}
 
 	rec := httptest.NewRecorder()

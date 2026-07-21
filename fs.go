@@ -20,11 +20,42 @@ type Object struct {
 	ETag         string
 }
 
+// ObjectMetadata holds the user-controlled metadata stored with an object:
+// the standard HTTP representation headers plus x-amz-meta-* pairs.
+type ObjectMetadata struct {
+	ContentType        string
+	CacheControl       string
+	ContentDisposition string
+	ContentEncoding    string
+	// UserMetadata holds x-amz-meta-* pairs, keyed by the lowercase name
+	// without the prefix (e.g. "color" for x-amz-meta-color).
+	UserMetadata map[string]string
+}
+
+// IsZero reports whether no metadata field is set.
+func (m ObjectMetadata) IsZero() bool {
+	return m.ContentType == "" && m.CacheControl == "" && m.ContentDisposition == "" &&
+		m.ContentEncoding == "" && len(m.UserMetadata) == 0
+}
+
+// Tag is a single object tag.
+type Tag struct {
+	Key   string
+	Value string
+}
+
 type PutObjectRequest struct {
-	Reader io.Reader
-	Bucket string
-	Key    string
-	Size   int64
+	Reader   io.Reader
+	Bucket   string
+	Key      string
+	Size     int64
+	Metadata ObjectMetadata
+	Tags     []Tag
+}
+
+// PutObjectResponse reports the stored object's ETag.
+type PutObjectResponse struct {
+	ETag string
 }
 
 // GetObjectResponse represents the response for GetObject operation.
@@ -33,7 +64,7 @@ type GetObjectResponse struct {
 	Size         int64
 	LastModified time.Time
 	ETag         string
-	ContentType  string
+	Metadata     ObjectMetadata
 }
 
 // MultipartUpload represents an in-progress multipart upload.
@@ -42,6 +73,15 @@ type MultipartUpload struct {
 	Bucket    string
 	Key       string
 	Initiated time.Time
+}
+
+// CreateMultipartUploadRequest represents a request to start a multipart
+// upload. Metadata and tags are applied to the object at completion.
+type CreateMultipartUploadRequest struct {
+	Bucket   string
+	Key      string
+	Metadata ObjectMetadata
+	Tags     []Tag
 }
 
 // Part represents a part of a multipart upload.

@@ -57,13 +57,20 @@ backend are all interchangeable.
 
 The shared vocabulary every layer speaks:
 
-- Domain types: `Bucket`, `Object`, `PutObjectRequest`, `GetObjectResponse`,
-  `MultipartUpload`, `Part`, and the multipart request/response structs.
-- The `fs.Storage` interface: bucket CRUD, object put/get/delete/list, and the
-  multipart operations.
+- Domain types: `Bucket`, `Object`, `PutObjectRequest`/`PutObjectResponse`
+  (the response carries the stored ETag), `GetObjectResponse`,
+  `ObjectMetadata` (representation headers + `x-amz-meta-*` pairs), `Tag`,
+  `MultipartUpload`, `Part`, and the multipart request/response structs
+  (`CreateMultipartUploadRequest` carries metadata/tags applied at
+  completion).
+- The `fs.Storage` interface: bucket CRUD, object put/get/delete/list,
+  object tagging (get/put/delete), and the multipart operations (including
+  `ListParts`/`ListMultipartUploads`).
 - Sentinel errors (`ErrBucketNotFound`, `ErrObjectNotFound`,
   `ErrUploadNotFound`, `ErrBucketAlreadyExists`, `ErrBucketNotEmpty`,
-  `ErrInvalidBucketName`, `ErrUnsupportedOperation`, `ErrPreconditionFailed`).
+  `ErrInvalidBucketName`, `ErrUnsupportedOperation`, `ErrPreconditionFailed`,
+  `ErrInvalidPart`, `ErrInvalidPartOrder`, `ErrInvalidPartNumber`,
+  `ErrEntityTooSmall`, `ErrInvalidTag`).
   These are the contract for cross-layer error signalling: backends return
   them, and `internal/s3err` maps them to S3 error codes and HTTP status.
 
@@ -75,12 +82,17 @@ a single `/` catch-all. It trims the leading slash, splits the path into
 matters, query parameters):
 
 - **root `/`** — `GET` → ListBuckets.
-- **bucket** (`/{bucket}`) — `GET` → ListObjects, or ListObjectVersions when
-  `?versions` is present; `PUT` → CreateBucket; `HEAD` → HeadBucket; `DELETE`
-  → DeleteBucket; `POST` → multipart initiate/complete.
-- **object** (`/{bucket}/{key}`) — `GET`/`HEAD` (with byte-range and
-  conditional support), `PUT` (including CopyObject via `x-amz-copy-source`
-  and conditional PUT), `DELETE`, `POST` (multipart part/complete/abort).
+- **bucket** (`/{bucket}`) — `GET` → ListObjectsV1/V2 (split on
+  `list-type=2`), ListObjectVersions on `?versions`, ListMultipartUploads on
+  `?uploads`; `PUT` → CreateBucket; `HEAD` → HeadBucket; `DELETE`
+  → DeleteBucket; `POST` → DeleteObjects (`?delete`).
+- **object** (`/{bucket}/{key}`) — `GET`/`HEAD` (byte-range and conditional
+  support; `?tagging` → GetObjectTagging, `?uploadId` → ListParts),
+  `PUT` (CopyObject via `x-amz-copy-source` with metadata/tagging
+  directives, UploadPart/UploadPartCopy via `?partNumber&uploadId`,
+  `?tagging` → PutObjectTagging, conditional PUT), `DELETE` (`?tagging` →
+  DeleteObjectTagging, `?uploadId` → AbortMultipartUpload), `POST`
+  (multipart initiate/complete).
 
 Successful responses are marshalled to S3 XML (`writeXML`). Errors go through
 `renderError`/`renderAPIError`, which delegate to the `internal/s3err` package:
@@ -159,10 +171,22 @@ handler tests; regenerate with `make generate` after changing the interface.
 2. It builds a `fs.PutObjectRequest` and calls the `fs.Storage` it was given —
    in the default wiring, the `service`.
 3. `service.PutObject` validates the bucket name and key, then delegates.
-4. The backend writes the bytes (storagefs: create parent dirs, stream to the
-   file, compute the ETag; storagemem: store in the map).
+4. The backend writes the bytes (storagefs: create parent dirs, stream to a
+   temp file while hashing, rename into place, then write the metadata
+   sidecar; storagemem: store in the map) and returns the ETag.
 5. On error, the backend returns a sentinel; the handler maps it to a status.
    On success, the handler writes the S3 response (headers, ETag).
+
+### storagefs metadata sidecars
+
+Object metadata (ETag, representation headers, `x-amz-meta-*`, tags) lives in
+JSON sidecars under `<root>/.meta/<bucket>/<sha256(key)>.json`, outside the
+bucket directories so sidecars can never collide with object keys. The
+documents carry a format version stamp. A missing or corrupt sidecar degrades
+gracefully: the object stays readable with default metadata and the ETag is
+recomputed (and cached) on read, which keeps pre-sidecar data directories
+working. Root-level dot-directories (`.meta`, `.multipart`) are internal and
+never listed as buckets.
 
 ## Testing architecture
 

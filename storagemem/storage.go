@@ -33,6 +33,8 @@ type object struct {
 	data         []byte
 	lastModified time.Time
 	etag         string
+	metadata     fs.ObjectMetadata
+	tags         []fs.Tag
 }
 
 type bucket struct {
@@ -54,6 +56,8 @@ type multipartUpload struct {
 	key       string
 	initiated time.Time
 	parts     map[int]*uploadPart
+	metadata  fs.ObjectMetadata
+	tags      []fs.Tag
 }
 
 // Storage implements fs.Storage interface using in-memory storage.
@@ -146,19 +150,19 @@ func (s *Storage) ListObjects(ctx context.Context, bucketName, prefix string) ([
 	return objects, nil
 }
 
-func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) error {
+func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	b, exists := s.buckets[req.Bucket]
 	if !exists {
-		return fs.ErrBucketNotFound
+		return nil, fs.ErrBucketNotFound
 	}
 
 	// Read all data from the reader
 	data, err := io.ReadAll(req.Reader)
 	if err != nil {
-		return errors.Wrap(err, "read data")
+		return nil, errors.Wrap(err, "read data")
 	}
 
 	// Calculate ETag (MD5 hash).
@@ -169,7 +173,64 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) error
 		data:         data,
 		lastModified: time.Now(),
 		etag:         etag,
+		metadata:     req.Metadata,
+		tags:         append([]fs.Tag(nil), req.Tags...),
 	}
+
+	return &fs.PutObjectResponse{ETag: etag}, nil
+}
+
+// getObject returns the live object entry; the caller must hold s.mu.
+func (s *Storage) getObject(bucketName, key string) (*object, error) {
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	obj, exists := b.objects[key]
+	if !exists {
+		return nil, fs.ErrObjectNotFound
+	}
+
+	return obj, nil
+}
+
+func (s *Storage) GetObjectTagging(_ context.Context, bucketName, key string) ([]fs.Tag, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]fs.Tag(nil), obj.tags...), nil
+}
+
+func (s *Storage) PutObjectTagging(_ context.Context, bucketName, key string, tags []fs.Tag) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return err
+	}
+
+	obj.tags = append([]fs.Tag(nil), tags...)
+
+	return nil
+}
+
+func (s *Storage) DeleteObjectTagging(_ context.Context, bucketName, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return err
+	}
+
+	obj.tags = nil
 
 	return nil
 }
@@ -197,6 +258,7 @@ func (s *Storage) GetObject(ctx context.Context, bucketName, key string) (*fs.Ge
 		Size:         int64(len(dataCopy)),
 		LastModified: obj.lastModified,
 		ETag:         obj.etag,
+		Metadata:     obj.metadata,
 	}, nil
 }
 
@@ -226,29 +288,31 @@ func (s *Storage) DeleteObject(ctx context.Context, bucketName, key string) erro
 	return nil
 }
 
-func (s *Storage) CreateMultipartUpload(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.buckets[bucket]; !exists {
+	if _, exists := s.buckets[req.Bucket]; !exists {
 		return nil, fs.ErrBucketNotFound
 	}
 
 	uploadID := uuid.New().String()
 	upload := &multipartUpload{
 		id:        uploadID,
-		bucket:    bucket,
-		key:       key,
+		bucket:    req.Bucket,
+		key:       req.Key,
 		initiated: time.Now(),
 		parts:     make(map[int]*uploadPart),
+		metadata:  req.Metadata,
+		tags:      append([]fs.Tag(nil), req.Tags...),
 	}
 
 	s.uploads[uploadID] = upload
 
 	return &fs.MultipartUpload{
 		UploadID:  uploadID,
-		Bucket:    bucket,
-		Key:       key,
+		Bucket:    req.Bucket,
+		Key:       req.Key,
 		Initiated: upload.initiated,
 	}, nil
 }
@@ -408,6 +472,8 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		data:         data,
 		lastModified: time.Now(),
 		etag:         etag,
+		metadata:     upload.metadata,
+		tags:         upload.tags,
 	}
 
 	delete(s.uploads, req.UploadID)
