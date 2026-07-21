@@ -26,6 +26,8 @@ func S3() *cobra.Command {
 		configPath string
 		addr       string
 		root       string
+		tlsCert    string
+		tlsKey     string
 	)
 
 	cmd := &cobra.Command{
@@ -90,9 +92,25 @@ Command-line flags override YAML configuration values.`,
 				cfg.Storage.Root = root
 			}
 
+			if cmd.Flags().Changed("tls-cert") {
+				cfg.Server.TLS.CertFile = tlsCert
+			}
+
+			if cmd.Flags().Changed("tls-key") {
+				cfg.Server.TLS.KeyFile = tlsKey
+			}
+
 			// Validate configuration
 			if err := cfg.Validate(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error validating config: %v\n", err)
+				os.Exit(1)
+			}
+
+			insecureNoAuth, _ := cmd.Flags().GetBool("insecure-no-auth")
+
+			authStore, err := buildAuthStore(cfg, insecureNoAuth)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring auth: %v\n", err)
 				os.Exit(1)
 			}
 
@@ -131,7 +149,7 @@ Command-line flags override YAML configuration values.`,
 					)
 				}
 
-				srv, err := server.New(server.Config{
+				serverCfg := server.Config{
 					Storage:      storage,
 					Addr:         cfg.Server.Addr,
 					ReadTimeout:  cfg.Server.ReadTimeout,
@@ -139,8 +157,23 @@ Command-line flags override YAML configuration values.`,
 					IdleTimeout:  cfg.Server.IdleTimeout,
 					HealthPath:   cfg.Server.HealthPath,
 					Buckets:      cfg.Storage.Buckets,
+					Auth:         authStore,
 					WrapHandler:  wrap,
-				})
+				}
+
+				if cfg.Server.TLS.CertFile != "" && cfg.Server.TLS.KeyFile != "" {
+					serverCfg.TLS = &server.TLSConfig{
+						CertFile: cfg.Server.TLS.CertFile,
+						KeyFile:  cfg.Server.TLS.KeyFile,
+					}
+				}
+
+				lg.Info("Security",
+					zap.Bool("auth_enabled", authStore != nil),
+					zap.Bool("tls_enabled", serverCfg.TLS != nil),
+				)
+
+				srv, err := server.New(serverCfg)
 				if err != nil {
 					return errors.Wrap(err, "create server")
 				}
@@ -170,6 +203,9 @@ Command-line flags override YAML configuration values.`,
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to YAML configuration file")
 	cmd.Flags().StringVar(&addr, "addr", server.DefaultAddr, "Address to listen on (overrides config file)")
 	cmd.Flags().StringVar(&root, "root", DefaultStorageRoot, "Root directory for S3 storage (overrides config file)")
+	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "Path to the TLS certificate (enables HTTPS with --tls-key)")
+	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "Path to the TLS private key (enables HTTPS with --tls-cert)")
+	cmd.Flags().Bool("insecure-no-auth", false, "Disable authentication and serve anonymously (insecure)")
 	cmd.Flags().Bool("generate-config", false, "Generate example configuration file and print to stdout")
 
 	return cmd

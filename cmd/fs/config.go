@@ -26,8 +26,46 @@ type Config struct {
 	// Storage configuration
 	Storage StorageConfig `yaml:"storage"`
 
+	// Auth configuration
+	Auth AuthConfig `yaml:"auth"`
+
 	// Observability configuration
 	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// AuthConfig configures authentication and authorization.
+type AuthConfig struct {
+	// Disabled turns off authentication entirely (anonymous access). Equivalent
+	// to the --insecure-no-auth flag.
+	Disabled bool `yaml:"disabled,omitempty"`
+
+	// Keys are the credentials the server accepts. A root credential can also be
+	// supplied via the FS_ROOT_ACCESS_KEY / FS_ROOT_SECRET_KEY environment
+	// variables (granted admin on all buckets).
+	Keys []KeyConfig `yaml:"keys,omitempty"`
+
+	// PublicReadBuckets may be read anonymously.
+	PublicReadBuckets []string `yaml:"public_read_buckets,omitempty"`
+}
+
+// KeyConfig is one credential and its grants.
+type KeyConfig struct {
+	AccessKey string        `yaml:"access_key"`
+	SecretKey string        `yaml:"secret_key"`
+	Grants    []GrantConfig `yaml:"grants,omitempty"`
+}
+
+// GrantConfig authorizes an access key for buckets matching Bucket (a glob) up
+// to Permission ("read", "write" or "admin").
+type GrantConfig struct {
+	Bucket     string `yaml:"bucket"`
+	Permission string `yaml:"permission"`
+}
+
+// TLSConfig configures TLS termination.
+type TLSConfig struct {
+	CertFile string `yaml:"cert_file,omitempty"`
+	KeyFile  string `yaml:"key_file,omitempty"`
 }
 
 // ServerConfig contains HTTP server configuration.
@@ -46,6 +84,9 @@ type ServerConfig struct {
 
 	// HealthPath is the path for health check endpoint
 	HealthPath string `yaml:"health_path"`
+
+	// TLS, if both files are set, serves HTTPS with hot-reloadable certificates.
+	TLS TLSConfig `yaml:"tls,omitempty"`
 }
 
 // StorageConfig contains storage backend configuration.
