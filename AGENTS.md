@@ -67,10 +67,19 @@ then `make generate` for the mock, and wire the handler/service.
 ## When changing S3 wire behavior
 
 Behavior is checked against the real ceph/s3-tests suite in CI
-(`.github/workflows/s3tests.yml`, gated on `.github/s3tests/allow.txt`). If you
-implement a feature that makes new tests pass, promote them into the allow-list
-per `.github/s3tests/README.md`. Prefer exact AWS semantics (error codes, ETag
-formulas, listing edges).
+(`.github/workflows/s3tests.yml`, gated on `.github/s3tests/allow.txt`).
+Prefer exact AWS semantics (error codes, ETag formulas, listing edges).
+
+**Expanding the allow-list is part of every behavior change, not a
+follow-up.** Whenever you implement or fix anything an S3 client can
+observe (a new operation, an error code, a validation rule, a listing
+edge), run the full suite locally per `.github/s3tests/README.md`, promote
+every newly passing test into `allow.txt` (verify determinism: run the
+candidates twice), and include the expanded list in the same PR. The
+allow-list is the project's compatibility statement — a feature that
+doesn't grow it either needs no new tests (rare; say so in the PR) or
+isn't finished. The reverse also gates: never shrink or skip entries to
+get CI green; a regression means the change is wrong.
 
 ## Keeping documentation current
 

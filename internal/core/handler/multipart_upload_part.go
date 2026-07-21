@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +20,7 @@ func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
 
 	partNumber, err := strconv.Atoi(partNumberStr)
 	if err != nil {
-		renderError(ctx, w, r, err)
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, err)
 		return
 	}
 

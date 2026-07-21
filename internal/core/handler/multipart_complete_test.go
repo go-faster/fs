@@ -63,40 +63,28 @@ func TestHandler_CompleteMultipartUpload(t *testing.T) {
 func TestHandler_CompleteMultipartUpload_OutOfOrderParts(t *testing.T) {
 	t.Parallel()
 
-	const (
-		bucketName = "test-bucket"
-		objectKey  = "test-object.txt"
-		uploadID   = "test-upload-id"
-	)
-
 	svc := baseMock()
 	svc.CompleteMultipartUploadFunc = func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
-		// Verify parts are sorted by part number regardless of input order.
-		require.Len(t, req.Parts, 3)
-		require.Equal(t, 1, req.Parts[0].PartNumber)
-		require.Equal(t, 2, req.Parts[1].PartNumber)
-		require.Equal(t, 3, req.Parts[2].PartNumber)
-
-		return &fs.CompleteMultipartUploadResponse{
-			Location: "/" + bucketName + "/" + objectKey,
-			Bucket:   bucketName,
-			Key:      objectKey,
-			ETag:     "sorted-etag",
-		}, nil
+		t.Fatal("storage must not be called for an out-of-order part list")
+		return nil, nil
 	}
 
 	ctx := t.Context()
 	core := minio.Core{Client: newTestClient(t, svc)}
 
-	// Submit parts out of order.
+	// Out-of-order part lists are rejected with InvalidPartOrder, like on S3.
 	completeParts := []minio.CompletePart{
 		{PartNumber: 3, ETag: "etag3"},
 		{PartNumber: 1, ETag: "etag1"},
 		{PartNumber: 2, ETag: "etag2"},
 	}
 
-	_, err := core.CompleteMultipartUpload(ctx, bucketName, objectKey, uploadID, completeParts, minio.PutObjectOptions{})
-	require.NoError(t, err)
+	_, err := core.CompleteMultipartUpload(ctx, "test-bucket", "test-object.txt", "test-upload-id", completeParts, minio.PutObjectOptions{})
+	require.Error(t, err)
+
+	var minioErr minio.ErrorResponse
+	require.ErrorAs(t, err, &minioErr)
+	require.Equal(t, "InvalidPartOrder", minioErr.Code)
 }
 
 func TestHandler_CompleteMultipartUpload_UploadNotFound(t *testing.T) {
@@ -241,24 +229,22 @@ func TestHandler_CompleteMultipartUpload_EmptyParts(t *testing.T) {
 
 	svc := baseMock()
 	svc.CompleteMultipartUploadFunc = func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
-		require.Empty(t, req.Parts)
-
-		return &fs.CompleteMultipartUploadResponse{
-			Location: "/" + bucketName + "/" + objectKey,
-			Bucket:   bucketName,
-			Key:      objectKey,
-			ETag:     "empty-etag",
-		}, nil
+		t.Fatal("storage must not be called for an empty part list")
+		return nil, nil
 	}
 
 	ctx := t.Context()
 	core := minio.Core{Client: newTestClient(t, svc)}
 
-	// Empty parts list.
+	// An empty parts list is rejected with MalformedXML, like on S3.
 	completeParts := []minio.CompletePart{}
 
 	_, err := core.CompleteMultipartUpload(ctx, bucketName, objectKey, uploadID, completeParts, minio.PutObjectOptions{})
-	require.NoError(t, err)
+	require.Error(t, err)
+
+	var minioErr minio.ErrorResponse
+	require.ErrorAs(t, err, &minioErr)
+	require.Equal(t, "MalformedXML", minioErr.Code)
 }
 
 func TestHandler_CompleteMultipartUpload_NestedKey(t *testing.T) {
@@ -305,36 +291,26 @@ func TestHandler_CompleteMultipartUpload_DuplicatePartNumbers(t *testing.T) {
 
 	svc := baseMock()
 	svc.CompleteMultipartUploadFunc = func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {
-		// All duplicate parts should be present (handler doesn't deduplicate).
-		require.Len(t, req.Parts, 4)
-
-		// After sorting, duplicates will be adjacent.
-		require.Equal(t, 1, req.Parts[0].PartNumber)
-		require.Equal(t, 1, req.Parts[1].PartNumber)
-		require.Equal(t, 2, req.Parts[2].PartNumber)
-		require.Equal(t, 2, req.Parts[3].PartNumber)
-
-		return &fs.CompleteMultipartUploadResponse{
-			Location: "/" + bucketName + "/" + objectKey,
-			Bucket:   bucketName,
-			Key:      objectKey,
-			ETag:     "duplicate-etag",
-		}, nil
+		t.Fatal("storage must not be called for duplicate part numbers")
+		return nil, nil
 	}
 
 	ctx := t.Context()
 	core := minio.Core{Client: newTestClient(t, svc)}
 
-	// Submit duplicate part numbers.
+	// Duplicate part numbers violate strict ascending order.
 	completeParts := []minio.CompletePart{
 		{PartNumber: 1, ETag: "etag1a"},
-		{PartNumber: 2, ETag: "etag2a"},
 		{PartNumber: 1, ETag: "etag1b"},
-		{PartNumber: 2, ETag: "etag2b"},
+		{PartNumber: 2, ETag: "etag2a"},
 	}
 
 	_, err := core.CompleteMultipartUpload(ctx, bucketName, objectKey, uploadID, completeParts, minio.PutObjectOptions{})
-	require.NoError(t, err)
+	require.Error(t, err)
+
+	var minioErr minio.ErrorResponse
+	require.ErrorAs(t, err, &minioErr)
+	require.Equal(t, "InvalidPartOrder", minioErr.Code)
 }
 
 func TestHandler_CompleteMultipartUpload_LargePartNumbers(t *testing.T) {
@@ -366,11 +342,11 @@ func TestHandler_CompleteMultipartUpload_LargePartNumbers(t *testing.T) {
 	ctx := t.Context()
 	core := minio.Core{Client: newTestClient(t, svc)}
 
-	// Submit parts with large, non-contiguous part numbers.
+	// Submit parts with large, non-contiguous part numbers in ascending order.
 	completeParts := []minio.CompletePart{
-		{PartNumber: 10000, ETag: "etag10000"},
 		{PartNumber: 1000, ETag: "etag1000"},
 		{PartNumber: 5000, ETag: "etag5000"},
+		{PartNumber: 10000, ETag: "etag10000"},
 	}
 
 	_, err := core.CompleteMultipartUpload(ctx, bucketName, objectKey, uploadID, completeParts, minio.PutObjectOptions{})

@@ -83,6 +83,16 @@ func FromError(err error) APIError {
 		return InvalidBucketName
 	case errors.Is(err, fs.ErrPreconditionFailed):
 		return PreconditionFailed
+	case errors.Is(err, fs.ErrInvalidPart):
+		return InvalidPart
+	case errors.Is(err, fs.ErrInvalidPartOrder):
+		return InvalidPartOrder
+	case errors.Is(err, fs.ErrInvalidPartNumber):
+		// AWS rejects out-of-range part numbers on UploadPart with
+		// InvalidArgument (InvalidPartNumber is reserved for GetObject).
+		return InvalidArgument
+	case errors.Is(err, fs.ErrEntityTooSmall):
+		return EntityTooSmall
 	case errors.Is(err, fs.ErrUnsupportedOperation):
 		return NotImplemented
 	default:

@@ -146,8 +146,8 @@ func TestHandler_SupportedOperations(t *testing.T) {
 
 			var body string
 			if strings.Contains(tt.query, "uploadId") {
-				// CompleteMultipartUpload requires XML body.
-				body = `<CompleteMultipartUpload></CompleteMultipartUpload>`
+				// CompleteMultipartUpload requires an XML body with at least one part.
+				body = `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag1"</ETag></Part></CompleteMultipartUpload>`
 			} else if strings.Contains(tt.query, "delete") {
 				// DeleteObjects requires XML body.
 				body = `<Delete></Delete>`

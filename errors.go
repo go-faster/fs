@@ -11,4 +11,16 @@ var (
 	ErrInvalidBucketName    = errors.New("invalid bucket name")
 	ErrUnsupportedOperation = errors.New("unsupported operation")
 	ErrPreconditionFailed   = errors.New("precondition failed")
+
+	// ErrInvalidPart reports that a part referenced by CompleteMultipartUpload
+	// was never uploaded or its ETag does not match.
+	ErrInvalidPart = errors.New("invalid part")
+	// ErrInvalidPartOrder reports that the CompleteMultipartUpload part list is
+	// not in strictly ascending part-number order.
+	ErrInvalidPartOrder = errors.New("invalid part order")
+	// ErrInvalidPartNumber reports a part number outside the valid 1..10000 range.
+	ErrInvalidPartNumber = errors.New("invalid part number")
+	// ErrEntityTooSmall reports a non-last multipart part smaller than the 5 MiB
+	// minimum.
+	ErrEntityTooSmall = errors.New("entity too small")
 )

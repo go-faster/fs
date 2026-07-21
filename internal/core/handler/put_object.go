@@ -44,16 +44,23 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	bucket, key, _ := strings.Cut(path, "/")
 
-	// Server-side copy is signaled by the x-amz-copy-source header.
-	if r.Header.Get("X-Amz-Copy-Source") != "" {
-		h.CopyObject(w, r)
+	// Check if this is an upload part request (with x-amz-copy-source it is an
+	// UploadPartCopy).
+	query := r.URL.Query()
+	if query.Get("uploadId") != "" && query.Get("partNumber") != "" {
+		if r.Header.Get("X-Amz-Copy-Source") != "" {
+			h.UploadPartCopy(w, r)
+			return
+		}
+
+		h.UploadPart(w, r)
+
 		return
 	}
 
-	// Check if this is an upload part request.
-	query := r.URL.Query()
-	if query.Get("uploadId") != "" && query.Get("partNumber") != "" {
-		h.UploadPart(w, r)
+	// Server-side copy is signaled by the x-amz-copy-source header.
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		h.CopyObject(w, r)
 		return
 	}
 

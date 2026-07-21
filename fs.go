@@ -46,9 +46,10 @@ type MultipartUpload struct {
 
 // Part represents a part of a multipart upload.
 type Part struct {
-	PartNumber int
-	ETag       string
-	Size       int64
+	PartNumber   int
+	ETag         string
+	Size         int64
+	LastModified time.Time
 }
 
 // UploadPartRequest represents a request to upload a part.

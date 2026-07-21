@@ -80,6 +80,13 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Multipart/Complete/NotFound":     testMultipartCompleteNotFound,
 	"Multipart/Abort":                 testMultipartAbort,
 	"Multipart/Abort/NotFound":        testMultipartAbortNotFound,
+	"Multipart/ListParts":             testMultipartListParts,
+	"Multipart/ListParts/Overwrite":   testMultipartListPartsOverwrite,
+	"Multipart/ListParts/NotFound":    testMultipartListPartsNotFound,
+	"Multipart/ListParts/WrongKey":    testMultipartListPartsWrongKey,
+	"Multipart/ListUploads":           testMultipartListUploads,
+	"Multipart/ListUploads/NotFound":  testMultipartListUploadsBucketNotFound,
+	"Multipart/ListUploads/Lifecycle": testMultipartListUploadsLifecycle,
 }
 
 func putObject(t *testing.T, storage fs.Storage, key string, content []byte) {
@@ -600,5 +607,144 @@ func testMultipartAbortNotFound(t *testing.T, storage fs.Storage) {
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
 	err := storage.AbortMultipartUpload(ctx, testBucket, testKey, "nonexistent-upload")
+	require.ErrorIs(t, err, fs.ErrUploadNotFound)
+}
+
+func testMultipartListParts(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	require.NoError(t, err)
+
+	// Upload out of order; the listing must come back sorted by part number.
+	part3 := uploadPart(t, storage, upload.UploadID, 3, []byte("ccc"))
+	part1 := uploadPart(t, storage, upload.UploadID, 1, []byte("a"))
+	part2 := uploadPart(t, storage, upload.UploadID, 2, []byte("bb"))
+
+	parts, err := storage.ListParts(ctx, testBucket, testKey, upload.UploadID)
+	require.NoError(t, err)
+	require.Len(t, parts, 3)
+
+	for i, expected := range []*fs.Part{part1, part2, part3} {
+		require.Equal(t, expected.PartNumber, parts[i].PartNumber)
+		require.Equal(t, expected.ETag, parts[i].ETag)
+		require.Equal(t, expected.Size, parts[i].Size)
+		require.False(t, parts[i].LastModified.IsZero())
+	}
+}
+
+func testMultipartListPartsOverwrite(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	require.NoError(t, err)
+
+	uploadPart(t, storage, upload.UploadID, 1, []byte("first attempt"))
+	replaced := uploadPart(t, storage, upload.UploadID, 1, []byte("second"))
+
+	parts, err := storage.ListParts(ctx, testBucket, testKey, upload.UploadID)
+	require.NoError(t, err)
+	require.Len(t, parts, 1)
+	require.Equal(t, replaced.ETag, parts[0].ETag)
+	require.Equal(t, int64(len("second")), parts[0].Size)
+}
+
+func testMultipartListPartsNotFound(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := storage.ListParts(ctx, testBucket, testKey, "nonexistent-upload")
+	require.ErrorIs(t, err, fs.ErrUploadNotFound)
+}
+
+func testMultipartListPartsWrongKey(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	upload, err := storage.CreateMultipartUpload(ctx, testBucket, testKey)
+	require.NoError(t, err)
+
+	// The upload ID is scoped to (bucket, key): a different key must not see it.
+	_, err = storage.ListParts(ctx, testBucket, "other.bin", upload.UploadID)
+	require.ErrorIs(t, err, fs.ErrUploadNotFound)
+}
+
+func testMultipartListUploads(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	uploads, err := storage.ListMultipartUploads(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, uploads)
+
+	// Two uploads on different keys plus a second upload on the same key.
+	uploadB, err := storage.CreateMultipartUpload(ctx, testBucket, "b.bin")
+	require.NoError(t, err)
+	uploadA1, err := storage.CreateMultipartUpload(ctx, testBucket, "a.bin")
+	require.NoError(t, err)
+	uploadA2, err := storage.CreateMultipartUpload(ctx, testBucket, "a.bin")
+	require.NoError(t, err)
+
+	uploads, err = storage.ListMultipartUploads(ctx, testBucket)
+	require.NoError(t, err)
+	require.Len(t, uploads, 3)
+
+	// Sorted by key, then upload ID for equal keys.
+	require.Equal(t, "a.bin", uploads[0].Key)
+	require.Equal(t, "a.bin", uploads[1].Key)
+	require.Equal(t, "b.bin", uploads[2].Key)
+	require.Equal(t, uploadB.UploadID, uploads[2].UploadID)
+	require.LessOrEqual(t, uploads[0].UploadID, uploads[1].UploadID)
+	require.ElementsMatch(t,
+		[]string{uploadA1.UploadID, uploadA2.UploadID},
+		[]string{uploads[0].UploadID, uploads[1].UploadID})
+
+	for _, u := range uploads {
+		require.Equal(t, testBucket, u.Bucket)
+		require.False(t, u.Initiated.IsZero())
+	}
+}
+
+func testMultipartListUploadsBucketNotFound(t *testing.T, storage fs.Storage) {
+	_, err := storage.ListMultipartUploads(t.Context(), "nonexistent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+}
+
+// testMultipartListUploadsLifecycle checks that completed and aborted uploads
+// disappear from the listing.
+func testMultipartListUploadsLifecycle(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	completed, err := storage.CreateMultipartUpload(ctx, testBucket, "done.bin")
+	require.NoError(t, err)
+	aborted, err := storage.CreateMultipartUpload(ctx, testBucket, "gone.bin")
+	require.NoError(t, err)
+
+	part := uploadPart(t, storage, completed.UploadID, 1, []byte("data"))
+
+	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket:   testBucket,
+		Key:      "done.bin",
+		UploadID: completed.UploadID,
+		Parts:    []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, storage.AbortMultipartUpload(ctx, testBucket, "gone.bin", aborted.UploadID))
+
+	uploads, err := storage.ListMultipartUploads(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, uploads)
+
+	_, err = storage.ListParts(ctx, testBucket, "done.bin", completed.UploadID)
 	require.ErrorIs(t, err, fs.ErrUploadNotFound)
 }
