@@ -28,9 +28,12 @@ fs s3 --addr :9000 --root /data/s3
 - Compatible with AWS CLI, MinIO client, and other S3 clients
 - Health check endpoint
 
-Compatibility is measured against the upstream
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the full compatibility statement
+(what's implemented, what returns `NotImplemented`, what's planned, and the
+durability & failure model). Compatibility is measured against the upstream
 [ceph/s3-tests](https://github.com/ceph/s3-tests) suite and real S3 clients —
-see the [S3 conformance report](docs/CONFORMANCE.md).
+the machine-generated breakdown is in the
+[S3 conformance report](docs/CONFORMANCE.md).
 
 **Example Usage:**
 ```bash
