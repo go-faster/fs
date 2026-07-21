@@ -36,6 +36,7 @@ const (
 	DefaultWriteTimeout = 30 * time.Second
 	DefaultIdleTimeout  = 120 * time.Second
 	DefaultHealthPath   = "/health"
+	DefaultReadyPath    = "/ready"
 )
 
 // HandlerOption configures the handler built by NewHandler.
@@ -87,9 +88,20 @@ type Config struct {
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
 
-	// HealthPath is the path serving a plaintext "OK" health check. Defaults to
+	// HealthPath is the path serving a plaintext "OK" liveness check. Defaults to
 	// DefaultHealthPath ("/health"). Set to "-" to disable the health endpoint.
 	HealthPath string
+
+	// ReadyPath is the path serving a readiness check. Defaults to
+	// DefaultReadyPath ("/ready"). Set to "-" to disable it. Unlike health
+	// (liveness: the process is up), readiness reports whether the server can
+	// actually serve — see Ready.
+	ReadyPath string
+
+	// Ready is the readiness probe. When nil, the server is ready as soon as it
+	// is serving. When set, /ready runs it per request: a nil result is 200, a
+	// non-nil result is 503 with the error message (e.g. storage unreachable).
+	Ready func(context.Context) error
 
 	// Buckets are created (if absent) before the server begins serving in
 	// ListenAndServe / Serve.
@@ -138,6 +150,10 @@ func (c *Config) setDefaults() {
 
 	if c.HealthPath == "" {
 		c.HealthPath = DefaultHealthPath
+	}
+
+	if c.ReadyPath == "" {
+		c.ReadyPath = DefaultReadyPath
 	}
 }
 
@@ -239,6 +255,10 @@ func (s *Server) buildHandler() http.Handler {
 		})
 	}
 
+	if s.cfg.ReadyPath != "" && s.cfg.ReadyPath != "-" && s.cfg.ReadyPath != s.cfg.HealthPath {
+		mux.HandleFunc(s.cfg.ReadyPath, s.readyHandler)
+	}
+
 	var h http.Handler = mux
 	if s.cfg.WrapHandler != nil {
 		h = s.cfg.WrapHandler(h)
@@ -247,9 +267,25 @@ func (s *Server) buildHandler() http.Handler {
 	return h
 }
 
-// Handler returns the composed http.Handler (S3 router, optional health
-// endpoint and Config.WrapHandler). It can be mounted directly without using
-// ListenAndServe.
+// readyHandler runs the readiness probe: 200 when ready, 503 with the error
+// message otherwise.
+func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Ready != nil {
+		if err := s.cfg.Ready(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("NOT READY: " + err.Error()))
+
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("READY"))
+}
+
+// Handler returns the composed http.Handler (S3 router, optional health and
+// readiness endpoints and Config.WrapHandler). It can be mounted directly
+// without using ListenAndServe.
 func (s *Server) Handler() http.Handler {
 	return s.handler
 }

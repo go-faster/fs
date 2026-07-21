@@ -21,17 +21,16 @@ const (
 	permAdmin = "admin"
 )
 
-// buildAuthStore builds the auth store from configuration and environment.
-// Authentication is ON by default; it is disabled only when insecureNoAuth is
-// set (the --insecure-no-auth flag) or cfg.Auth.Disabled is true, in which case
-// it returns (nil, nil) and the server serves anonymously.
+// buildAuthConfig resolves the effective auth configuration from config and
+// environment. enabled is false when authentication is off (insecureNoAuth or
+// cfg.Auth.Disabled), in which case the returned auth.Config is empty.
 //
 // When enabled, credentials come from FS_ROOT_ACCESS_KEY/FS_ROOT_SECRET_KEY (a
 // root credential with admin over all buckets) and cfg.Auth.Keys. Enabling auth
 // with no credentials is an error, so a server never silently accepts nothing.
-func buildAuthStore(cfg Config, insecureNoAuth bool) (*auth.Store, error) {
+func buildAuthConfig(cfg Config, insecureNoAuth bool) (ac auth.Config, enabled bool, err error) {
 	if insecureNoAuth || cfg.Auth.Disabled {
-		return nil, nil
+		return auth.Config{}, false, nil
 	}
 
 	var keys []auth.Key
@@ -39,7 +38,7 @@ func buildAuthStore(cfg Config, insecureNoAuth bool) (*auth.Store, error) {
 	if ak := os.Getenv(envRootAccessKey); ak != "" {
 		sk := os.Getenv(envRootSecretKey)
 		if sk == "" {
-			return nil, errors.Errorf("%s is set but %s is empty", envRootAccessKey, envRootSecretKey)
+			return auth.Config{}, true, errors.Errorf("%s is set but %s is empty", envRootAccessKey, envRootSecretKey)
 		}
 
 		keys = append(keys, auth.Key{
@@ -52,19 +51,34 @@ func buildAuthStore(cfg Config, insecureNoAuth bool) (*auth.Store, error) {
 	for _, k := range cfg.Auth.Keys {
 		grants, err := parseGrants(k.Grants)
 		if err != nil {
-			return nil, errors.Wrapf(err, "key %q", k.AccessKey)
+			return auth.Config{}, true, errors.Wrapf(err, "key %q", k.AccessKey)
 		}
 
 		keys = append(keys, auth.Key{AccessKey: k.AccessKey, SecretKey: k.SecretKey, Grants: grants})
 	}
 
 	if len(keys) == 0 {
-		return nil, errors.Errorf("authentication is enabled but no credentials are configured: set %s and %s, "+
+		return auth.Config{}, true, errors.Errorf("authentication is enabled but no credentials are configured: set %s and %s, "+
 			"add auth.keys to the config file, or pass --insecure-no-auth to serve anonymously",
 			envRootAccessKey, envRootSecretKey)
 	}
 
-	store, err := auth.NewStore(auth.Config{Keys: keys, PublicReadBuckets: cfg.Auth.PublicReadBuckets})
+	return auth.Config{Keys: keys, PublicReadBuckets: cfg.Auth.PublicReadBuckets}, true, nil
+}
+
+// buildAuthStore builds the auth store from configuration and environment,
+// returning (nil, nil) when authentication is disabled.
+func buildAuthStore(cfg Config, insecureNoAuth bool) (*auth.Store, error) {
+	ac, enabled, err := buildAuthConfig(cfg, insecureNoAuth)
+	if err != nil {
+		return nil, err
+	}
+
+	if !enabled {
+		return nil, nil
+	}
+
+	store, err := auth.NewStore(ac)
 	if err != nil {
 		return nil, errors.Wrap(err, "build auth store")
 	}
