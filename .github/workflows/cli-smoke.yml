@@ -36,16 +36,17 @@ jobs:
       - name: Install S3 CLI clients
         run: |
           set -euo pipefail
-          # aws-cli
+          # aws-cli + s3cmd
           pip install --upgrade awscli s3cmd
-          # MinIO client (installed as mcli to avoid the Midnight Commander clash)
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mcli
-          chmod +x /usr/local/bin/mcli
+          # MinIO client (installed as mcli to avoid the Midnight Commander clash).
+          # `install` sets ownership+mode in one atomic step (a plain chmod after
+          # a root-owned copy fails with "Operation not permitted").
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mcli
+          sudo install -m 0755 /tmp/mcli /usr/local/bin/mcli
           # rclone
           curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
           unzip -q /tmp/rclone.zip -d /tmp/rclone
-          sudo cp /tmp/rclone/rclone-*-linux-amd64/rclone /usr/local/bin/rclone
-          chmod +x /usr/local/bin/rclone
+          sudo install -m 0755 /tmp/rclone/rclone-*-linux-amd64/rclone /usr/local/bin/rclone
           # Report versions
           aws --version; mcli --version; s3cmd --version; rclone --version | head -1
 
