@@ -36,6 +36,13 @@ type Storage struct {
 
 	// metaMu serializes sidecar read-modify-write cycles (tagging updates).
 	metaMu sync.Mutex
+
+	// putMu serializes the finalize step of PutObject (conditional-write
+	// evaluation, rename into place, and sidecar write) so concurrent
+	// conditional PUTs to the same key resolve to a single winner. The body is
+	// streamed to a temp file outside this lock, so only the fast rename step
+	// is serialized.
+	putMu sync.Mutex
 }
 
 // etagEntry is a cached ETag valid as long as size and modtime are unchanged.

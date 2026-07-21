@@ -50,16 +50,54 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, errors.Wrap(err, "close object")
 	}
 
+	etag := hex.EncodeToString(hash.Sum(nil))
+
+	// Finalize under putMu so the conditional-write check and the rename are
+	// atomic against other writers to this key (the body is already on disk).
+	s.putMu.Lock()
+	defer s.putMu.Unlock()
+
+	if req.IfNoneMatch != "" || req.IfMatch != "" {
+		exists, currentETag, err := s.currentObjectState(req.Bucket, req.Key, objectPath)
+		if err != nil {
+			_ = os.Remove(tmp.Name())
+			return nil, err
+		}
+
+		if req.PreconditionFailed(exists, currentETag) {
+			_ = os.Remove(tmp.Name())
+			return nil, fs.ErrPreconditionFailed
+		}
+	}
+
 	if err := os.Rename(tmp.Name(), objectPath); err != nil {
 		_ = os.Remove(tmp.Name())
 		return nil, errors.Wrap(err, "rename object")
 	}
-
-	etag := hex.EncodeToString(hash.Sum(nil))
 
 	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, req.Metadata, req.Tags)); err != nil {
 		return nil, err
 	}
 
 	return &fs.PutObjectResponse{ETag: etag}, nil
+}
+
+// currentObjectState reports whether the object at path exists and its ETag,
+// preferring the sidecar's stored ETag and falling back to recompute-on-read.
+func (s *Storage) currentObjectState(bucket, key, path string) (exists bool, etag string, err error) {
+	info, statErr := os.Stat(path)
+	if os.IsNotExist(statErr) {
+		return false, "", nil
+	}
+
+	if statErr != nil {
+		return false, "", errors.Wrap(statErr, "stat object")
+	}
+
+	etag, err = s.objectETag(bucket, key, path, info)
+	if err != nil {
+		return false, "", err
+	}
+
+	return true, etag, nil
 }

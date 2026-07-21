@@ -1,13 +1,10 @@
 package handler
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/s3err"
@@ -65,16 +62,6 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Evaluate If-Match / If-None-Match preconditions; on failure respond with
-	// 412 Precondition Failed.
-	if failed, err := h.checkPutPreconditions(ctx, bucket, key, r.Header); err != nil {
-		renderError(ctx, w, r, err)
-		return
-	} else if failed {
-		renderError(ctx, w, r, fs.ErrPreconditionFailed)
-		return
-	}
-
 	tags, err := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
 	if err != nil {
 		renderAPIError(ctx, w, r, s3err.InvalidArgument, err)
@@ -85,13 +72,19 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	reader := getBodyReader(r)
 	size := getDecodedContentLength(r)
 
+	// If-Match / If-None-Match are forwarded to the storage layer, which
+	// evaluates them atomically with the write so concurrent conditional PUTs
+	// resolve to a single winner. On failure it returns ErrPreconditionFailed,
+	// which maps to 412.
 	req := &fs.PutObjectRequest{
-		Reader:   reader,
-		Bucket:   bucket,
-		Key:      key,
-		Size:     size,
-		Metadata: extractObjectMetadata(r.Header),
-		Tags:     tags,
+		Reader:      reader,
+		Bucket:      bucket,
+		Key:         key,
+		Size:        size,
+		Metadata:    extractObjectMetadata(r.Header),
+		Tags:        tags,
+		IfNoneMatch: r.Header.Get("If-None-Match"),
+		IfMatch:     r.Header.Get("If-Match"),
 	}
 
 	resp, err := h.service.PutObject(ctx, req)
@@ -102,79 +95,4 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("ETag", quoteETag(resp.ETag))
 	w.WriteHeader(http.StatusOK)
-}
-
-// statObject reports whether an object currently exists and its (unquoted) ETag.
-// A missing bucket or object is reported as not existing rather than an error.
-func (h *handler) statObject(ctx context.Context, bucket, key string) (exists bool, etag string, err error) {
-	resp, err := h.service.GetObject(ctx, bucket, key)
-	if errors.Is(err, fs.ErrObjectNotFound) || errors.Is(err, fs.ErrBucketNotFound) {
-		return false, "", nil
-	}
-
-	if err != nil {
-		return false, "", err
-	}
-
-	_ = resp.Reader.Close()
-
-	return true, resp.ETag, nil
-}
-
-// checkPutPreconditions evaluates the If-Match / If-None-Match request headers
-// against the current state of the target object. It returns true when the
-// precondition fails (the caller should respond with 412).
-//
-//   - If-None-Match: *          fail if the object exists.
-//   - If-None-Match: "<etag>"   fail if it exists and the ETag matches.
-//   - If-Match: *               fail if the object does not exist.
-//   - If-Match: "<etag>"        fail if it is missing or the ETag differs.
-func (h *handler) checkPutPreconditions(ctx context.Context, bucket, key string, header http.Header) (bool, error) {
-	ifNoneMatch := strings.TrimSpace(header.Get("If-None-Match"))
-	ifMatch := strings.TrimSpace(header.Get("If-Match"))
-
-	if ifNoneMatch == "" && ifMatch == "" {
-		return false, nil
-	}
-
-	exists, etag, err := h.statObject(ctx, bucket, key)
-	if err != nil {
-		return false, err
-	}
-
-	if ifNoneMatch == "*" && exists {
-		return true, nil
-	}
-
-	if ifNoneMatch != "" && ifNoneMatch != "*" && exists && etagMatches(ifNoneMatch, etag) {
-		return true, nil
-	}
-
-	if ifMatch == "*" && !exists {
-		return true, nil
-	}
-
-	if ifMatch != "" && ifMatch != "*" && (!exists || !etagMatches(ifMatch, etag)) {
-		return true, nil
-	}
-
-	return false, nil
-}
-
-// etagMatches reports whether the raw ETag matches any entity-tag in an If-Match
-// or If-None-Match header value (a comma-separated list, each optionally quoted
-// or weak-prefixed with W/).
-func etagMatches(header, raw string) bool {
-	raw = strings.Trim(raw, `"`)
-
-	for tok := range strings.SplitSeq(header, ",") {
-		tok = strings.TrimSpace(tok)
-		tok = strings.TrimPrefix(tok, "W/")
-
-		if strings.Trim(tok, `"`) == raw {
-			return true
-		}
-	}
-
-	return false
 }
