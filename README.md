@@ -22,10 +22,15 @@ fs s3 --addr :9000 --root /data/s3
 
 **Features:**
 - Bucket operations (create, delete, list)
-- Object operations (put, get, delete, list)
+- Object operations (put, get, delete, list, copy, tagging, metadata)
+- Multipart uploads
 - File system-based storage
 - Compatible with AWS CLI, MinIO client, and other S3 clients
 - Health check endpoint
+
+Compatibility is measured against the upstream
+[ceph/s3-tests](https://github.com/ceph/s3-tests) suite and real S3 clients —
+see the [S3 conformance report](docs/CONFORMANCE.md).
 
 **Example Usage:**
 ```bash

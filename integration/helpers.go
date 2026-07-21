@@ -26,7 +26,10 @@ func NewClient(t testing.TB, srv *TestServer) *minio.Client {
 }
 
 type TestServer struct {
+	// Endpoint is the host:port, used by minio-go.
 	Endpoint string
+	// URL is the full base URL (scheme://host:port), used by aws-sdk-go-v2.
+	URL string
 }
 
 func newTestServer(t testing.TB, store fs.Storage) *TestServer {
@@ -40,5 +43,6 @@ func newTestServer(t testing.TB, store fs.Storage) *TestServer {
 
 	return &TestServer{
 		Endpoint: u.Host,
+		URL:      srv.URL,
 	}
 }

@@ -159,6 +159,20 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, fs.ErrBucketNotFound
 	}
 
+	// Evaluate any conditional-write header atomically with the store: the
+	// whole method holds s.mu, so no concurrent writer can slip a write in
+	// between this check and the assignment below.
+	existing, present := b.objects[req.Key]
+
+	var currentETag string
+	if present {
+		currentETag = existing.etag
+	}
+
+	if req.PreconditionFailed(present, currentETag) {
+		return nil, fs.ErrPreconditionFailed
+	}
+
 	// Read all data from the reader
 	data, err := io.ReadAll(req.Reader)
 	if err != nil {

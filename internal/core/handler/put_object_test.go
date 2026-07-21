@@ -3,7 +3,6 @@ package handler_test
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,19 +65,12 @@ func TestPutObject_IfNoneMatch_Conflict(t *testing.T) {
 		objectKey  = "hello.txt"
 	)
 
-	var putCalled bool
-
+	// The handler forwards the conditional header to storage, which evaluates
+	// it atomically and rejects the write with ErrPreconditionFailed.
 	svc := baseMock()
-	svc.GetObjectFunc = func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
-		require.Equal(t, bucketName, bucket)
-		require.Equal(t, objectKey, key)
-
-		// Object already exists.
-		return &fs.GetObjectResponse{Reader: io.NopCloser(strings.NewReader("existing"))}, nil
-	}
 	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
-		putCalled = true
-		return &fs.PutObjectResponse{ETag: "etag"}, nil
+		require.Equal(t, "*", req.IfNoneMatch)
+		return nil, fs.ErrPreconditionFailed
 	}
 
 	rec := httptest.NewRecorder()
@@ -87,7 +79,6 @@ func TestPutObject_IfNoneMatch_Conflict(t *testing.T) {
 	}))
 
 	require.Equal(t, http.StatusPreconditionFailed, rec.Code)
-	require.False(t, putCalled, "object must not be written when it already exists")
 }
 
 func TestPutObject_IfNoneMatch_Created(t *testing.T) {
@@ -99,15 +90,12 @@ func TestPutObject_IfNoneMatch_Created(t *testing.T) {
 	var putCalled bool
 
 	svc := baseMock()
-	svc.GetObjectFunc = func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
-		// Object does not exist yet.
-		return nil, fs.ErrObjectNotFound
-	}
 	svc.PutObjectFunc = func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 		putCalled = true
 
 		require.Equal(t, bucketName, req.Bucket)
 		require.Equal(t, objectKey, req.Key)
+		require.Equal(t, "*", req.IfNoneMatch)
 
 		return &fs.PutObjectResponse{ETag: "etag"}, nil
 	}

@@ -1,0 +1,53 @@
+name: cli-smoke
+
+# Drives a freshly built fs server with the real S3 command-line clients
+# (aws-cli, MinIO mc, s3cmd, rclone) through a bucket/object round-trip over
+# edge-case object key names. Gates on every installed client passing.
+#
+# See scripts/cli-smoke.sh for the matrix itself.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install S3 CLI clients
+        run: |
+          set -euo pipefail
+          # aws-cli
+          pip install --upgrade awscli s3cmd
+          # MinIO client (installed as mcli to avoid the Midnight Commander clash)
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mcli
+          chmod +x /usr/local/bin/mcli
+          # rclone
+          curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
+          unzip -q /tmp/rclone.zip -d /tmp/rclone
+          sudo cp /tmp/rclone/rclone-*-linux-amd64/rclone /usr/local/bin/rclone
+          chmod +x /usr/local/bin/rclone
+          # Report versions
+          aws --version; mcli --version; s3cmd --version; rclone --version | head -1
+
+      - name: Run CLI smoke matrix
+        run: ./scripts/cli-smoke.sh

@@ -42,6 +42,14 @@ jobs:
           go-version: stable
           cache: true
 
+      - name: Check CONFORMANCE.md is up to date
+        run: |
+          go run ./scripts/gencompat
+          if ! git diff --exit-code docs/CONFORMANCE.md; then
+            echo "::error::docs/CONFORMANCE.md is stale — run 'make compat' after editing the allow-list."
+            exit 1
+          fi
+
       - name: Build server
         run: go build -o fs ./cmd/fs
 

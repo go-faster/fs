@@ -51,6 +51,14 @@ type PutObjectRequest struct {
 	Size     int64
 	Metadata ObjectMetadata
 	Tags     []Tag
+
+	// IfNoneMatch and IfMatch carry the raw conditional-write header values
+	// (e.g. "*" or a quoted ETag list). When set, the storage backend must
+	// evaluate them atomically with the write — see PreconditionFailed — so
+	// concurrent conditional PUTs resolve to a single winner. Empty means no
+	// condition.
+	IfNoneMatch string
+	IfMatch     string
 }
 
 // PutObjectResponse reports the stored object's ETag.
