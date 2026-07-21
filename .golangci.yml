@@ -43,6 +43,14 @@ linters:
         - style
     gocyclo:
       min-complexity: 15
+    gosec:
+      excludes:
+        # G703 (path-traversal taint analysis) is experimental and flags many
+        # false positives here: bucket names and object keys are validated by
+        # internal/validate (rejecting "..", separators, absolute paths) before
+        # reaching the storage layer, and individual file opens carry per-line
+        # G304 justifications.
+        - G703
     lll:
       line-length: 140
     misspell:

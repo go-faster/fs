@@ -25,12 +25,12 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, errors.Wrap(err, "create object directory")
 	}
 
-	// Stream to a temp file in the target directory while hashing, then rename
-	// into place so a partially written object is never visible; the sidecar is
+	// Stream to a staging temp file while hashing, then rename into place so a
+	// partially written object is never visible in the bucket; the sidecar is
 	// written after the object (sidecar-less files stay readable).
-	tmp, err := os.CreateTemp(filepath.Dir(objectPath), ".tmp-put-*")
+	tmp, err := s.newObjectTemp()
 	if err != nil {
-		return nil, errors.Wrap(err, "create temp object")
+		return nil, err
 	}
 
 	cleanup := func() {
@@ -43,6 +43,12 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	if _, err := io.Copy(io.MultiWriter(tmp, hash), req.Reader); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("failed to write object: %w", err)
+	}
+
+	// Flush object data to stable storage before it becomes visible (per policy).
+	if err := s.syncFile(tmp); err != nil {
+		cleanup()
+		return nil, err
 	}
 
 	if err := tmp.Close(); err != nil {
@@ -73,6 +79,11 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	if err := os.Rename(tmp.Name(), objectPath); err != nil {
 		_ = os.Remove(tmp.Name())
 		return nil, errors.Wrap(err, "rename object")
+	}
+
+	// Persist the rename (per policy) so the object is durably visible.
+	if err := s.syncDir(filepath.Dir(objectPath)); err != nil {
+		return nil, err
 	}
 
 	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, req.Metadata, req.Tags, req.ACL)); err != nil {

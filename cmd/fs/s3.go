@@ -130,10 +130,17 @@ Command-line flags override YAML configuration values.`,
 					return fmt.Errorf("failed to resolve root path: %w", err)
 				}
 
-				storage, err := storagefs.New(absRoot)
+				syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
+				if err != nil {
+					return errors.Wrap(err, "storage fsync policy")
+				}
+
+				storage, err := storagefs.New(absRoot, storagefs.WithSyncPolicy(syncPolicy))
 				if err != nil {
 					return fmt.Errorf("failed to create storage: %w", err)
 				}
+
+				lg.Info("Durability", zap.String("fsync", cfg.Storage.Fsync))
 
 				// wrap injects OpenTelemetry instrumentation and optional request
 				// logging into the embeddable server's handler.
