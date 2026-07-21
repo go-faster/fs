@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/go-faster/errors"
@@ -16,20 +17,38 @@ import (
 
 var _ fs.Storage = (*Storage)(nil)
 
-func New(root string) (*Storage, error) {
+// stagingSubdir holds in-progress object bodies before they are renamed into
+// place. Keeping it outside the bucket tree means a crash mid-write never leaves
+// a partial file where ListObjects could see it. It is a root-level dot-dir, so
+// it is excluded from bucket listings.
+const stagingSubdir = ".tmp"
+
+func New(root string, opts ...Option) (*Storage, error) {
 	if err := os.MkdirAll(root, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create root directory: %w", err)
 	}
 
-	return &Storage{
+	s := &Storage{
 		root:      root,
 		multipart: newMultipartManager(root),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	if err := os.MkdirAll(s.stagingDir(), defaultDirPermissions); err != nil {
+		return nil, fmt.Errorf("failed to create staging directory: %w", err)
+	}
+
+	return s, nil
 }
 
 type Storage struct {
 	root      string
 	multipart *multipartManager
+
+	// sync is the durability policy applied to writes.
+	sync SyncPolicy
 
 	etagMu    sync.Mutex
 	etagCache map[string]etagEntry
@@ -88,4 +107,21 @@ func (s *Storage) etagFor(path string, info os.FileInfo) (string, error) {
 	s.etagMu.Unlock()
 
 	return etag, nil
+}
+
+// stagingDir returns the root-level staging directory for in-progress writes.
+func (s *Storage) stagingDir() string {
+	return filepath.Join(s.root, stagingSubdir)
+}
+
+// newObjectTemp creates a temp file in the staging directory for an object body
+// that will be renamed into its bucket. Staging and bucket dirs share the root
+// filesystem, so the rename is atomic.
+func (s *Storage) newObjectTemp() (*os.File, error) {
+	f, err := os.CreateTemp(s.stagingDir(), "obj-*")
+	if err != nil {
+		return nil, errors.Wrap(err, "create temp object")
+	}
+
+	return f, nil
 }

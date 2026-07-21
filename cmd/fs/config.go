@@ -97,6 +97,10 @@ type StorageConfig struct {
 	// Type of storage backend (currently only "filesystem" is supported)
 	Type string `yaml:"type"`
 
+	// Fsync is the durability policy: "none", "file" or "file+dir". The binary
+	// defaults to "file"; set "none" for dev/CI to trade durability for speed.
+	Fsync string `yaml:"fsync,omitempty"`
+
 	// Buckets to pre-create on startup (optional)
 	Buckets []string `yaml:"buckets,omitempty"`
 }
@@ -127,8 +131,9 @@ func DefaultConfig() Config {
 			HealthPath:   server.DefaultHealthPath,
 		},
 		Storage: StorageConfig{
-			Root: DefaultStorageRoot,
-			Type: StorageTypeFilesystem,
+			Root:  DefaultStorageRoot,
+			Type:  StorageTypeFilesystem,
+			Fsync: "file",
 		},
 		Observability: ObservabilityConfig{
 			ServiceName:          "go-faster/fs",

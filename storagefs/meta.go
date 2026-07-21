@@ -93,7 +93,8 @@ func (s *Storage) readSidecar(bucket, key string) (*sidecar, error) {
 	return &sc, nil
 }
 
-// writeSidecar persists an object's sidecar atomically (temp file + rename).
+// writeSidecar persists an object's sidecar atomically (temp file + rename),
+// with fsync per the storage's sync policy.
 func (s *Storage) writeSidecar(bucket string, sc *sidecar) error {
 	path := s.sidecarPath(bucket, sc.Key)
 
@@ -106,29 +107,7 @@ func (s *Storage) writeSidecar(bucket string, sc *sidecar) error {
 		return errors.Wrap(err, "marshal sidecar")
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return errors.Wrap(err, "create sidecar temp file")
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-
-		return errors.Wrap(err, "write sidecar")
-	}
-
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return errors.Wrap(err, "close sidecar")
-	}
-
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return errors.Wrap(err, "rename sidecar")
-	}
-
-	return nil
+	return s.atomicWrite(path, data)
 }
 
 // deleteSidecar removes an object's sidecar; a missing sidecar is fine.

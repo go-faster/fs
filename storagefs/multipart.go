@@ -342,16 +342,24 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	objectPath := filepath.Join(s.root, meta.Bucket, toOSPath(meta.Key))
 
 	// Ensure parent directory exists.
-	if err := os.MkdirAll(filepath.Dir(objectPath), 0750); err != nil {
+	objectDir := filepath.Dir(objectPath)
+	if err := os.MkdirAll(objectDir, 0750); err != nil {
 		return nil, errors.Wrap(err, "create object directory")
 	}
 
-	// Create the final file.
-	finalFile, err := os.Create(objectPath) //nolint:gosec // Path is constructed internally from validated bucket and key.
+	// Assemble into a staging temp file, then rename into place so a partially
+	// assembled object is never visible even if the process dies mid-complete.
+	finalFile, err := s.newObjectTemp()
 	if err != nil {
-		return nil, errors.Wrap(err, "create final file")
+		return nil, err
 	}
-	defer func() { _ = finalFile.Close() }()
+
+	tmpName := finalFile.Name()
+
+	cleanup := func() {
+		_ = finalFile.Close()
+		_ = os.Remove(tmpName)
+	}
 
 	// Concatenate all parts.
 	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
@@ -362,6 +370,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 
 		partFile, err := os.Open(partPath) //nolint:gosec // Path is constructed internally from validated uploadID and partNumber.
 		if err != nil {
+			cleanup()
 			return nil, errors.Wrapf(err, "open part %d", part.PartNumber)
 		}
 
@@ -370,14 +379,30 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		_ = partFile.Close()
 
 		if err != nil {
+			cleanup()
 			return nil, errors.Wrapf(err, "copy part %d", part.PartNumber)
 		}
 
 		_, _ = hash.Write(partHash.Sum(nil))
 	}
 
+	if err := s.syncFile(finalFile); err != nil {
+		cleanup()
+		return nil, err
+	}
+
 	if err := finalFile.Close(); err != nil {
+		_ = os.Remove(tmpName)
 		return nil, errors.Wrap(err, "close final file")
+	}
+
+	if err := os.Rename(tmpName, objectPath); err != nil {
+		_ = os.Remove(tmpName)
+		return nil, errors.Wrap(err, "rename final object")
+	}
+
+	if err := s.syncDir(objectDir); err != nil {
+		return nil, err
 	}
 
 	// Clean up upload directory.

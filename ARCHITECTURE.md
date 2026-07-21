@@ -214,11 +214,25 @@ changing the interface.
 2. It builds a `fs.PutObjectRequest` and calls the `fs.Storage` it was given —
    in the default wiring, the `service`.
 3. `service.PutObject` validates the bucket name and key, then delegates.
-4. The backend writes the bytes (storagefs: create parent dirs, stream to a
-   temp file while hashing, rename into place, then write the metadata
+4. The backend writes the bytes (storagefs: stream to a staging temp file while
+   hashing, fsync per policy, rename into the bucket, then write the metadata
    sidecar; storagemem: store in the map) and returns the ETag.
 5. On error, the backend returns a sentinel; the handler maps it to a status.
    On success, the handler writes the S3 response (headers, ETag).
+
+### storagefs durability
+
+Every object write (single PUT and multipart complete) streams to a temp file
+under a root-level staging directory (`<root>/.tmp`), then renames it into the
+bucket. The rename is atomic and the staging dir is outside the bucket tree, so
+a crash mid-write never leaves a torn or spurious object visible to
+`ListObjects` — only an orphaned temp file. The `SyncPolicy`
+(`none | file | file+dir`, binary default `file`) controls durability on top of
+that atomicity: `file` fsyncs object data before the rename, `file+dir` also
+fsyncs the parent directory afterward so the rename survives a power loss. A
+subprocess crash-consistency test (`SIGKILL` mid-write) asserts the no-torn
+invariant. Sidecar and bucket-meta writes go through the same
+`atomicWrite` (temp + fsync + rename).
 
 ### storagefs metadata sidecars
 

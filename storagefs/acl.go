@@ -56,29 +56,7 @@ func (s *Storage) writeBucketMeta(bucket string, m bucketMeta) error {
 		return errors.Wrap(err, "marshal bucket meta")
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return errors.Wrap(err, "create bucket meta temp file")
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-
-		return errors.Wrap(err, "write bucket meta")
-	}
-
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return errors.Wrap(err, "close bucket meta")
-	}
-
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return errors.Wrap(err, "rename bucket meta")
-	}
-
-	return nil
+	return s.atomicWrite(path, data)
 }
 
 func (s *Storage) bucketExists(bucket string) bool {
