@@ -64,11 +64,11 @@ func TestHandler_AbortMultipartUpload(t *testing.T) {
 
 	svc := baseMock()
 	uploadID := ""
-	svc.CreateMultipartUploadFunc = func(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+	svc.CreateMultipartUploadFunc = func(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
 		return &fs.MultipartUpload{
 			UploadID: "test-upload-123",
-			Bucket:   bucket,
-			Key:      key,
+			Bucket:   req.Bucket,
+			Key:      req.Key,
 		}, nil
 	}
 	svc.AbortMultipartUploadFunc = func(ctx context.Context, bucket, key, uID string) error {

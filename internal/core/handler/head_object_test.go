@@ -34,7 +34,7 @@ func TestHandler_HeadObject(t *testing.T) {
 				Size:         7,
 				LastModified: lastModified,
 				ETag:         "abc123",
-				ContentType:  "text/plain",
+				Metadata:     fs.ObjectMetadata{ContentType: "text/plain"},
 			}, nil
 		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
@@ -111,7 +111,7 @@ func TestHandler_HeadObject_NoETag(t *testing.T) {
 				Size:         7,
 				LastModified: lastModified,
 				ETag:         "",
-				ContentType:  "application/octet-stream",
+				Metadata:     fs.ObjectMetadata{ContentType: "application/octet-stream"},
 			}, nil
 		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
@@ -142,7 +142,7 @@ func TestHandler_HeadObject_NoContentType(t *testing.T) {
 				Size:         7,
 				LastModified: lastModified,
 				ETag:         "abc123",
-				ContentType:  "",
+				Metadata:     fs.ObjectMetadata{ContentType: ""},
 			}, nil
 		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
@@ -178,7 +178,7 @@ func TestHandler_HeadObject_NestedKey(t *testing.T) {
 				Size:         14,
 				LastModified: lastModified,
 				ETag:         "nested-etag",
-				ContentType:  "text/plain",
+				Metadata:     fs.ObjectMetadata{ContentType: "text/plain"},
 			}, nil
 		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
@@ -212,7 +212,7 @@ func TestHandler_HeadObject_LargeFile(t *testing.T) {
 				Size:         fileSize,
 				LastModified: lastModified,
 				ETag:         "large-file-etag",
-				ContentType:  "application/octet-stream",
+				Metadata:     fs.ObjectMetadata{ContentType: "application/octet-stream"},
 			}, nil
 		},
 		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {

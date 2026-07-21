@@ -24,7 +24,7 @@ func TestStorage_UploadPart_MultipleParts(t *testing.T) {
 	err = storage.CreateBucket(ctx, "test-bucket")
 	require.NoError(t, err)
 
-	upload, err := storage.CreateMultipartUpload(ctx, "test-bucket", "test-key")
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "test-key"})
 	require.NoError(t, err)
 
 	// Upload multiple parts.
@@ -69,7 +69,7 @@ func TestStorage_MultipartUpload_MetadataPersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create multipart upload.
-	upload, err := storage.CreateMultipartUpload(ctx, "test-bucket", "test-key")
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "test-key"})
 	require.NoError(t, err)
 
 	// Verify metadata file was created.
@@ -97,7 +97,7 @@ func TestStorage_MultipartUpload_NestedKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create multipart upload with nested key.
-	upload, err := storage.CreateMultipartUpload(ctx, "test-bucket", "path/to/nested/file.txt")
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "path/to/nested/file.txt"})
 	require.NoError(t, err)
 
 	// Upload part.
@@ -144,7 +144,7 @@ func TestStorage_MultipartUpload_LargeFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create upload.
-	upload, err := storage.CreateMultipartUpload(ctx, "test-bucket", "large-file.bin")
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "large-file.bin"})
 	require.NoError(t, err)
 
 	// Create 3 parts of 1MB each.
@@ -231,10 +231,10 @@ func TestStorage_MultipartUpload_ConcurrentUploads(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create two concurrent multipart uploads.
-	upload1, err := storage.CreateMultipartUpload(ctx, "test-bucket", "file1.txt")
+	upload1, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "file1.txt"})
 	require.NoError(t, err)
 
-	upload2, err := storage.CreateMultipartUpload(ctx, "test-bucket", "file2.txt")
+	upload2, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "file2.txt"})
 	require.NoError(t, err)
 
 	// Upload parts to both.
@@ -304,7 +304,7 @@ func TestStorage_MultipartUpload_OverwritePart(t *testing.T) {
 	err = storage.CreateBucket(ctx, "test-bucket")
 	require.NoError(t, err)
 
-	upload, err := storage.CreateMultipartUpload(ctx, "test-bucket", "test-key.txt")
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: "test-key.txt"})
 	require.NoError(t, err)
 
 	// Upload part first time.

@@ -8,19 +8,30 @@
 # ignored. Keep sorted. See README.md for how to grow this list.
 #
 # Coverage: bucket create/delete/head/location, object put/get/head/delete,
-# ranged and multi-part reads, CopyObject, DeleteObjects, ListObjects v1/v2
-# (prefix, delimiter, pagination, encoding-type, max-keys edges), multipart
-# semantics (part validation: InvalidPart/InvalidPartOrder/EntityTooSmall/
-# MalformedXML; ListMultipartUploads/ListParts; UploadPartCopy incl. range
-# errors), and S3 XML error responses (NoSuch*, NotImplemented, precondition
-# and range errors).
+# ranged and multi-part reads, CopyObject (incl. metadata COPY/REPLACE
+# directives and copy-to-itself), DeleteObjects, ListObjects v1/v2 (prefix,
+# delimiter, pagination, encoding-type, max-keys edges), multipart semantics
+# (part validation: InvalidPart/InvalidPartOrder/EntityTooSmall/MalformedXML;
+# ListMultipartUploads/ListParts; UploadPartCopy incl. range errors; part
+# resend), object metadata (Content-Type/Cache-Control/x-amz-meta-* round-trip,
+# ETag on PUT, atomic writes), object tagging (limits -> InvalidTag), and S3
+# XML error responses (NoSuch*, NotImplemented, precondition and range errors).
 
 s3tests/functional/test_s3.py::test_100_continue_error_retry
 s3tests/functional/test_s3.py::test_abort_multipart_upload
 s3tests/functional/test_s3.py::test_abort_multipart_upload_not_found
+s3tests/functional/test_s3.py::test_atomic_conditional_write_1mb
+s3tests/functional/test_s3.py::test_atomic_dual_conditional_write_1mb
+s3tests/functional/test_s3.py::test_atomic_dual_write_1mb
+s3tests/functional/test_s3.py::test_atomic_dual_write_4mb
+s3tests/functional/test_s3.py::test_atomic_dual_write_8mb
 s3tests/functional/test_s3.py::test_atomic_multipart_upload_write
 s3tests/functional/test_s3.py::test_atomic_read_1mb
+s3tests/functional/test_s3.py::test_atomic_read_4mb
 s3tests/functional/test_s3.py::test_atomic_read_8mb
+s3tests/functional/test_s3.py::test_atomic_write_1mb
+s3tests/functional/test_s3.py::test_atomic_write_4mb
+s3tests/functional/test_s3.py::test_atomic_write_8mb
 s3tests/functional/test_s3.py::test_atomic_write_bucket_gone
 s3tests/functional/test_s3.py::test_basic_key_count
 s3tests/functional/test_s3.py::test_bucket_create_delete
@@ -119,6 +130,7 @@ s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-ST
 s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-1048576]
 s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-1]
 s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-8388608]
+s3tests/functional/test_s3.py::test_copy_object_ifmatch_good
 s3tests/functional/test_s3.py::test_copy_object_ifnonematch_failed
 s3tests/functional/test_s3.py::test_copy_part_enc[sse-c-unencrypted-STANDARD-STANDARD-8388608]
 s3tests/functional/test_s3.py::test_copy_part_enc[sse-kms-unencrypted-STANDARD-STANDARD-8388608]
@@ -127,10 +139,14 @@ s3tests/functional/test_s3.py::test_encrypted_transfer_13b
 s3tests/functional/test_s3.py::test_encrypted_transfer_1MB
 s3tests/functional/test_s3.py::test_encrypted_transfer_1b
 s3tests/functional/test_s3.py::test_encrypted_transfer_1kb
+s3tests/functional/test_s3.py::test_encryption_sse_c_multipart_upload
+s3tests/functional/test_s3.py::test_encryption_sse_c_unaligned_multipart_upload
 s3tests/functional/test_s3.py::test_get_obj_tagging
+s3tests/functional/test_s3.py::test_get_object_ifmatch_good
 s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed
 s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good
 s3tests/functional/test_s3.py::test_get_object_ifnonematch_failed
+s3tests/functional/test_s3.py::test_get_object_ifnonematch_good
 s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed
 s3tests/functional/test_s3.py::test_list_multipart_upload
 s3tests/functional/test_s3.py::test_multi_object_delete
@@ -148,6 +164,7 @@ s3tests/functional/test_s3.py::test_multipart_upload_incorrect_etag
 s3tests/functional/test_s3.py::test_multipart_upload_missing_part
 s3tests/functional/test_s3.py::test_multipart_upload_multiple_sizes
 s3tests/functional/test_s3.py::test_multipart_upload_overwrite_existing_object
+s3tests/functional/test_s3.py::test_multipart_upload_resend_part
 s3tests/functional/test_s3.py::test_multipart_upload_size_too_small
 s3tests/functional/test_s3.py::test_object_acl_full_control_verify_owner
 s3tests/functional/test_s3.py::test_object_anon_put_write_access
@@ -156,7 +173,12 @@ s3tests/functional/test_s3.py::test_object_copy_bucket_not_found
 s3tests/functional/test_s3.py::test_object_copy_canned_acl
 s3tests/functional/test_s3.py::test_object_copy_diff_bucket
 s3tests/functional/test_s3.py::test_object_copy_key_not_found
+s3tests/functional/test_s3.py::test_object_copy_replacing_metadata
+s3tests/functional/test_s3.py::test_object_copy_retaining_metadata
 s3tests/functional/test_s3.py::test_object_copy_same_bucket
+s3tests/functional/test_s3.py::test_object_copy_to_itself
+s3tests/functional/test_s3.py::test_object_copy_to_itself_with_metadata
+s3tests/functional/test_s3.py::test_object_copy_verify_contenttype
 s3tests/functional/test_s3.py::test_object_copy_zero_size
 s3tests/functional/test_s3.py::test_object_delete_key_bucket_gone
 s3tests/functional/test_s3.py::test_object_head_zero_bytes
@@ -178,10 +200,19 @@ s3tests/functional/test_s3.py::test_object_raw_get_bucket_gone
 s3tests/functional/test_s3.py::test_object_raw_get_object_gone
 s3tests/functional/test_s3.py::test_object_read_not_exist
 s3tests/functional/test_s3.py::test_object_requestid_matches_header_on_error
+s3tests/functional/test_s3.py::test_object_set_get_metadata_none_to_empty
+s3tests/functional/test_s3.py::test_object_set_get_metadata_none_to_good
+s3tests/functional/test_s3.py::test_object_set_get_metadata_overwrite_to_empty
+s3tests/functional/test_s3.py::test_object_write_cache_control
+s3tests/functional/test_s3.py::test_object_write_check_etag
 s3tests/functional/test_s3.py::test_object_write_file
 s3tests/functional/test_s3.py::test_object_write_read_update_read_delete
 s3tests/functional/test_s3.py::test_object_write_to_nonexist_bucket
 s3tests/functional/test_s3.py::test_object_write_with_chunked_transfer_encoding
+s3tests/functional/test_s3.py::test_put_delete_tags
+s3tests/functional/test_s3.py::test_put_excess_key_tags
+s3tests/functional/test_s3.py::test_put_excess_tags
+s3tests/functional/test_s3.py::test_put_excess_val_tags
 s3tests/functional/test_s3.py::test_put_max_kvsize_tags
 s3tests/functional/test_s3.py::test_put_max_tags
 s3tests/functional/test_s3.py::test_put_modify_tags
@@ -196,8 +227,10 @@ s3tests/functional/test_s3.py::test_ranged_big_request_response_code
 s3tests/functional/test_s3.py::test_ranged_request_response_code
 s3tests/functional/test_s3.py::test_ranged_request_return_trailing_bytes_response_code
 s3tests/functional/test_s3.py::test_ranged_request_skip_leading_bytes_response_code
+s3tests/functional/test_s3.py::test_set_multipart_tagging
 s3tests/functional/test_s3.py::test_sse_kms_multipart_invalid_chunks_1
 s3tests/functional/test_s3.py::test_sse_kms_multipart_invalid_chunks_2
+s3tests/functional/test_s3.py::test_sse_kms_multipart_upload
 s3tests/functional/test_s3.py::test_sse_kms_present
 s3tests/functional/test_s3.py::test_sse_kms_transfer_13b
 s3tests/functional/test_s3.py::test_sse_kms_transfer_1MB

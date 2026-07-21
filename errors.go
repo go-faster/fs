@@ -23,4 +23,7 @@ var (
 	// ErrEntityTooSmall reports a non-last multipart part smaller than the 5 MiB
 	// minimum.
 	ErrEntityTooSmall = errors.New("entity too small")
+	// ErrInvalidTag reports an object tag set violating the S3 limits
+	// (at most 10 tags, unique keys, key ≤ 128 chars, value ≤ 256 chars).
+	ErrInvalidTag = errors.New("invalid tag")
 )

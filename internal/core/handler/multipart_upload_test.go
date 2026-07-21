@@ -21,14 +21,14 @@ func TestHandler_InitiateMultipartUpload(t *testing.T) {
 	)
 
 	svc := baseMock()
-	svc.CreateMultipartUploadFunc = func(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
-		require.Equal(t, bucketName, bucket)
-		require.Equal(t, objectKey, key)
+	svc.CreateMultipartUploadFunc = func(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
+		require.Equal(t, bucketName, req.Bucket)
+		require.Equal(t, objectKey, req.Key)
 
 		return &fs.MultipartUpload{
 			UploadID:  uploadID,
-			Bucket:    bucket,
-			Key:       key,
+			Bucket:    req.Bucket,
+			Key:       req.Key,
 			Initiated: time.Now(),
 		}, nil
 	}
@@ -45,7 +45,7 @@ func TestHandler_InitiateMultipartUpload_BucketNotFound(t *testing.T) {
 	t.Parallel()
 
 	svc := baseMock()
-	svc.CreateMultipartUploadFunc = func(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+	svc.CreateMultipartUploadFunc = func(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
 		return nil, fs.ErrBucketNotFound
 	}
 
@@ -66,13 +66,13 @@ func TestHandler_InitiateMultipartUpload_NestedKey(t *testing.T) {
 	)
 
 	svc := baseMock()
-	svc.CreateMultipartUploadFunc = func(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
-		require.Equal(t, objectKey, key)
+	svc.CreateMultipartUploadFunc = func(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
+		require.Equal(t, objectKey, req.Key)
 
 		return &fs.MultipartUpload{
 			UploadID:  uploadID,
-			Bucket:    bucket,
-			Key:       key,
+			Bucket:    req.Bucket,
+			Key:       req.Key,
 			Initiated: time.Now(),
 		}, nil
 	}

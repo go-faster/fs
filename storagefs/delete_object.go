@@ -29,6 +29,8 @@ func (s *Storage) DeleteObject(ctx context.Context, bucket, key string) error {
 		return errors.Wrap(err, "delete object")
 	}
 
+	s.deleteSidecar(bucket, key)
+
 	// Prune the now-empty parent directories left behind by a nested key, up
 	// to (but not including) the bucket root, so a bucket whose objects have
 	// all been deleted becomes genuinely empty and can be removed.

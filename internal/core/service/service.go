@@ -31,16 +31,95 @@ func (s Service) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.O
 	return s.storage.ListObjects(ctx, bucket, prefix)
 }
 
-func (s Service) PutObject(ctx context.Context, req *fs.PutObjectRequest) error {
+func (s Service) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 	if err := validate.BucketName(req.Bucket); err != nil {
-		return errors.Wrap(err, "validate bucket name")
+		return nil, errors.Wrap(err, "validate bucket name")
 	}
 
 	if err := validate.Key(req.Key); err != nil {
-		return errors.Wrap(err, "validate object key")
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	if err := validateTags(req.Tags); err != nil {
+		return nil, err
 	}
 
 	return s.storage.PutObject(ctx, req)
+}
+
+// S3 object-tagging limits.
+const (
+	maxObjectTags  = 10
+	maxTagKeyLen   = 128
+	maxTagValueLen = 256
+)
+
+// validateTags enforces the S3 object-tagging limits: at most 10 tags with
+// unique, non-empty keys of at most 128 characters and values of at most 256.
+func validateTags(tags []fs.Tag) error {
+	if len(tags) > maxObjectTags {
+		return errors.Wrapf(fs.ErrInvalidTag, "%d tags exceed the limit of %d", len(tags), maxObjectTags)
+	}
+
+	seen := make(map[string]struct{}, len(tags))
+
+	for _, tag := range tags {
+		if tag.Key == "" || len(tag.Key) > maxTagKeyLen {
+			return errors.Wrapf(fs.ErrInvalidTag, "tag key %q", tag.Key)
+		}
+
+		if len(tag.Value) > maxTagValueLen {
+			return errors.Wrapf(fs.ErrInvalidTag, "tag %q value too long", tag.Key)
+		}
+
+		if _, ok := seen[tag.Key]; ok {
+			return errors.Wrapf(fs.ErrInvalidTag, "duplicate tag key %q", tag.Key)
+		}
+
+		seen[tag.Key] = struct{}{}
+	}
+
+	return nil
+}
+
+func (s Service) GetObjectTagging(ctx context.Context, bucket, key string) ([]fs.Tag, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.GetObjectTagging(ctx, bucket, key)
+}
+
+func (s Service) PutObjectTagging(ctx context.Context, bucket, key string, tags []fs.Tag) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	if err := validateTags(tags); err != nil {
+		return err
+	}
+
+	return s.storage.PutObjectTagging(ctx, bucket, key, tags)
+}
+
+func (s Service) DeleteObjectTagging(ctx context.Context, bucket, key string) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.DeleteObjectTagging(ctx, bucket, key)
 }
 
 func (s Service) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
@@ -95,16 +174,20 @@ func (s Service) GetObject(ctx context.Context, bucket, key string) (*fs.GetObje
 	return s.storage.GetObject(ctx, bucket, key)
 }
 
-func (s Service) CreateMultipartUpload(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
-	if err := validate.BucketName(bucket); err != nil {
+func (s Service) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
+	if err := validate.BucketName(req.Bucket); err != nil {
 		return nil, errors.Wrap(err, "validate bucket name")
 	}
 
-	if err := validate.Key(key); err != nil {
+	if err := validate.Key(req.Key); err != nil {
 		return nil, errors.Wrap(err, "validate object key")
 	}
 
-	return s.storage.CreateMultipartUpload(ctx, bucket, key)
+	if err := validateTags(req.Tags); err != nil {
+		return nil, err
+	}
+
+	return s.storage.CreateMultipartUpload(ctx, req)
 }
 
 const (

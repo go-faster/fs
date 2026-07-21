@@ -61,7 +61,7 @@ func TestStorage_WindowsPathCompatibility(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Put object.
-			err := storage.PutObject(ctx, &fs.PutObjectRequest{
+			_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
 				Reader: bytes.NewReader(tt.content),
 				Bucket: "test-bucket",
 				Key:    tt.key,
@@ -124,7 +124,7 @@ func TestStorage_ListObjects_WindowsPathCompatibility(t *testing.T) {
 	}
 
 	for _, key := range objects {
-		err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
 			Reader: bytes.NewReader([]byte("content")),
 			Bucket: "test-bucket",
 			Key:    key,
@@ -163,7 +163,7 @@ func TestStorage_MultipartUpload_WindowsPathCompatibility(t *testing.T) {
 	// Create multipart upload with nested key.
 	const nestedKey = "path/to/multipart/file.txt"
 
-	upload, err := storage.CreateMultipartUpload(ctx, "test-bucket", nestedKey)
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "test-bucket", Key: nestedKey})
 	require.NoError(t, err)
 	require.NotEmpty(t, upload.UploadID)
 

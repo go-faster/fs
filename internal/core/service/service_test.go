@@ -137,18 +137,18 @@ func TestService_ListObjects(t *testing.T) {
 func TestService_PutObject(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		storage := &mock.StorageMock{
-			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) error {
+			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 				require.Equal(t, "valid-bucket", req.Bucket)
 				require.Equal(t, "valid-key.txt", req.Key)
 
-				return nil
+				return &fs.PutObjectResponse{ETag: "etag"}, nil
 			},
 		}
 
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		err := svc.PutObject(ctx, &fs.PutObjectRequest{
+		_, err := svc.PutObject(ctx, &fs.PutObjectRequest{
 			Bucket: "valid-bucket",
 			Key:    "valid-key.txt",
 		})
@@ -161,7 +161,7 @@ func TestService_PutObject(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		err := svc.PutObject(ctx, &fs.PutObjectRequest{
+		_, err := svc.PutObject(ctx, &fs.PutObjectRequest{
 			Bucket: "INVALID",
 			Key:    "valid-key.txt",
 		})
@@ -175,7 +175,7 @@ func TestService_PutObject(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		err := svc.PutObject(ctx, &fs.PutObjectRequest{
+		_, err := svc.PutObject(ctx, &fs.PutObjectRequest{
 			Bucket: "valid-bucket",
 			Key:    "",
 		})
@@ -325,9 +325,9 @@ func TestService_CreateMultipartUpload(t *testing.T) {
 		}
 
 		storage := &mock.StorageMock{
-			CreateMultipartUploadFunc: func(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
-				require.Equal(t, "valid-bucket", bucket)
-				require.Equal(t, "valid-key.txt", key)
+			CreateMultipartUploadFunc: func(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
+				require.Equal(t, "valid-bucket", req.Bucket)
+				require.Equal(t, "valid-key.txt", req.Key)
 
 				return expectedUpload, nil
 			},
@@ -336,7 +336,7 @@ func TestService_CreateMultipartUpload(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		upload, err := svc.CreateMultipartUpload(ctx, "valid-bucket", "valid-key.txt")
+		upload, err := svc.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "valid-bucket", Key: "valid-key.txt"})
 		require.NoError(t, err)
 		require.Equal(t, expectedUpload, upload)
 	})
@@ -347,7 +347,7 @@ func TestService_CreateMultipartUpload(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		_, err := svc.CreateMultipartUpload(ctx, "INVALID", "valid-key.txt")
+		_, err := svc.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "INVALID", Key: "valid-key.txt"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "validate bucket name")
 	})
@@ -358,7 +358,7 @@ func TestService_CreateMultipartUpload(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		_, err := svc.CreateMultipartUpload(ctx, "valid-bucket", "")
+		_, err := svc.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "valid-bucket", Key: ""})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "validate object key")
 	})

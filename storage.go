@@ -13,11 +13,18 @@ type Storage interface {
 	DeleteBucket(ctx context.Context, bucket string) error
 	BucketExists(ctx context.Context, bucket string) (bool, error)
 	ListObjects(ctx context.Context, bucket, prefix string) ([]Object, error)
-	PutObject(ctx context.Context, req *PutObjectRequest) error
+	PutObject(ctx context.Context, req *PutObjectRequest) (*PutObjectResponse, error)
 	GetObject(ctx context.Context, bucket, key string) (*GetObjectResponse, error)
 	DeleteObject(ctx context.Context, bucket, key string) error
 
-	CreateMultipartUpload(ctx context.Context, bucket, key string) (*MultipartUpload, error)
+	// GetObjectTagging returns the object's tag set (empty when untagged).
+	GetObjectTagging(ctx context.Context, bucket, key string) ([]Tag, error)
+	// PutObjectTagging replaces the object's tag set.
+	PutObjectTagging(ctx context.Context, bucket, key string, tags []Tag) error
+	// DeleteObjectTagging removes the object's tag set.
+	DeleteObjectTagging(ctx context.Context, bucket, key string) error
+
+	CreateMultipartUpload(ctx context.Context, req *CreateMultipartUploadRequest) (*MultipartUpload, error)
 	UploadPart(ctx context.Context, req *UploadPartRequest) (*Part, error)
 	// ListParts returns the parts uploaded so far for an in-progress multipart
 	// upload, sorted by ascending part number.

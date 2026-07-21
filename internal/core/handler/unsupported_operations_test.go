@@ -121,11 +121,11 @@ func TestHandler_SupportedOperations(t *testing.T) {
 			svc := baseMock()
 
 			// Setup specific mocks for supported operations.
-			svc.CreateMultipartUploadFunc = func(ctx context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+			svc.CreateMultipartUploadFunc = func(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
 				return &fs.MultipartUpload{
 					UploadID: "test-123",
-					Bucket:   bucket,
-					Key:      key,
+					Bucket:   req.Bucket,
+					Key:      req.Key,
 				}, nil
 			}
 			svc.CompleteMultipartUploadFunc = func(ctx context.Context, req *fs.CompleteMultipartUploadRequest) (*fs.CompleteMultipartUploadResponse, error) {

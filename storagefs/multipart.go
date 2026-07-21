@@ -30,6 +30,9 @@ type multipartMetadata struct {
 	Bucket    string    `json:"bucket"`
 	Key       string    `json:"key"`
 	Initiated time.Time `json:"initiated"`
+	// Metadata and Tags are applied to the object when the upload completes.
+	Metadata fs.ObjectMetadata `json:"metadata,omitzero"`
+	Tags     []fs.Tag          `json:"tags,omitempty"`
 }
 
 // multipartManager manages multipart uploads with disk-based persistence.
@@ -102,9 +105,9 @@ func (m *multipartManager) deleteUpload(uploadID string) error {
 	return os.RemoveAll(uploadPath)
 }
 
-func (s *Storage) CreateMultipartUpload(_ context.Context, bucket, key string) (*fs.MultipartUpload, error) {
+func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
 	// Verify bucket exists.
-	bucketPath := filepath.Join(s.root, bucket)
+	bucketPath := filepath.Join(s.root, req.Bucket)
 	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
 		return nil, fs.ErrBucketNotFound
 	}
@@ -118,9 +121,11 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, bucket, key string) (
 
 	meta := &multipartMetadata{
 		ID:        uploadID,
-		Bucket:    bucket,
-		Key:       key,
+		Bucket:    req.Bucket,
+		Key:       req.Key,
 		Initiated: time.Now(),
+		Metadata:  req.Metadata,
+		Tags:      req.Tags,
 	}
 
 	s.multipart.mu.Lock()
@@ -133,8 +138,8 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, bucket, key string) (
 
 	return &fs.MultipartUpload{
 		UploadID:  uploadID,
-		Bucket:    bucket,
-		Key:       key,
+		Bucket:    req.Bucket,
+		Key:       req.Key,
 		Initiated: meta.Initiated,
 	}, nil
 }
@@ -379,14 +384,9 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 
 	etag := hex.EncodeToString(hash.Sum(nil)) + "-" + strconv.Itoa(len(parts))
 
-	if info, err := os.Stat(objectPath); err == nil {
-		s.etagMu.Lock()
-		if s.etagCache == nil {
-			s.etagCache = make(map[string]etagEntry)
-		}
-
-		s.etagCache[objectPath] = etagEntry{size: info.Size(), modNano: info.ModTime().UnixNano(), etag: etag}
-		s.etagMu.Unlock()
+	// Persist the multipart ETag and the metadata captured at initiation.
+	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, meta.Metadata, meta.Tags)); err != nil {
+		return nil, err
 	}
 
 	return &fs.CompleteMultipartUploadResponse{

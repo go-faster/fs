@@ -30,5 +30,7 @@ func (s *Storage) DeleteBucket(ctx context.Context, bucket string) error {
 		return errors.Wrap(err, "delete bucket")
 	}
 
+	s.deleteBucketMeta(bucket)
+
 	return nil
 }

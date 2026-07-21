@@ -38,7 +38,7 @@ func TestGetObject(t *testing.T) {
 				Reader:       io.NopCloser(bytes.NewReader(expectedContent)),
 				Size:         int64(len(expectedContent)),
 				LastModified: expectedTime,
-				ContentType:  "text/plain",
+				Metadata:     fs.ObjectMetadata{ContentType: "text/plain"},
 			}, nil
 		},
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 // getBodyReader returns the appropriate reader for the request body,
@@ -74,26 +75,32 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags, err := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if err != nil {
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, err)
+		return
+	}
+
 	// Handle AWS chunked encoding.
 	reader := getBodyReader(r)
 	size := getDecodedContentLength(r)
 
 	req := &fs.PutObjectRequest{
-		Reader: reader,
-		Bucket: bucket,
-		Key:    key,
-		Size:   size,
+		Reader:   reader,
+		Bucket:   bucket,
+		Key:      key,
+		Size:     size,
+		Metadata: extractObjectMetadata(r.Header),
+		Tags:     tags,
 	}
 
-	if err := h.service.PutObject(ctx, req); err != nil {
+	resp, err := h.service.PutObject(ctx, req)
+	if err != nil {
 		renderError(ctx, w, r, err)
 		return
 	}
 
-	// NB: S3 returns the stored object's ETag header on PUT. That requires the
-	// storage layer to surface the ETag from PutObject (an interface change
-	// scheduled with the Phase 3 metadata work); until then no ETag is sent,
-	// which clients tolerate.
+	w.Header().Set("ETag", quoteETag(resp.ETag))
 	w.WriteHeader(http.StatusOK)
 }
 
