@@ -26,4 +26,8 @@ var (
 	// ErrInvalidTag reports an object tag set violating the S3 limits
 	// (at most 10 tags, unique keys, key ≤ 128 chars, value ≤ 256 chars).
 	ErrInvalidTag = errors.New("invalid tag")
+
+	// ErrIntegrity reports that an object's stored content does not match its
+	// recorded checksum (bit-rot / corruption detected on read).
+	ErrIntegrity = errors.New("object integrity check failed")
 )

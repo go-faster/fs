@@ -100,6 +100,10 @@ func FromError(err error) APIError {
 		return EntityTooSmall
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
+	case errors.Is(err, fs.ErrIntegrity):
+		// Server-side corruption: the object is damaged, so surface a 500
+		// rather than serve bad bytes.
+		return InternalError
 	case errors.Is(err, fs.ErrUnsupportedOperation):
 		return NotImplemented
 	default:

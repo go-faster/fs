@@ -135,12 +135,21 @@ Command-line flags override YAML configuration values.`,
 					return errors.Wrap(err, "storage fsync policy")
 				}
 
-				storage, err := storagefs.New(absRoot, storagefs.WithSyncPolicy(syncPolicy))
+				storage, err := storagefs.New(absRoot,
+					storagefs.WithSyncPolicy(syncPolicy),
+					storagefs.WithVerifyReads(cfg.Integrity.VerifyOnRead),
+				)
 				if err != nil {
 					return fmt.Errorf("failed to create storage: %w", err)
 				}
 
-				lg.Info("Durability", zap.String("fsync", cfg.Storage.Fsync))
+				lg.Info("Durability",
+					zap.String("fsync", cfg.Storage.Fsync),
+					zap.Bool("verify_on_read", cfg.Integrity.VerifyOnRead),
+				)
+
+				// Background integrity scrubber (no-op unless an interval is set).
+				go runScrubber(ctx, lg, storage, cfg.Integrity)
 
 				// wrap injects OpenTelemetry instrumentation and optional request
 				// logging into the embeddable server's handler.

@@ -97,9 +97,12 @@ func TestCrashConsistency(t *testing.T) {
 		t.Skip("SIGKILL / fsync crash semantics are POSIX-specific")
 	}
 
-	// Vary the kill delay to catch the writer at different points (mid-copy,
-	// mid-rename, between writes).
-	for i, delay := range []time.Duration{80, 150, 250, 400} {
+	// Vary a small jitter so the kill lands at different points of a write once
+	// the writer is warmed up. We first wait for at least one committed object,
+	// so the kill is always mid-stream regardless of runner speed — a fixed
+	// delay from start flakes on slow CI where the child has not committed
+	// anything yet.
+	for i, jitter := range []time.Duration{1, 8, 20, 45} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			dir := t.TempDir()
 
@@ -108,7 +111,15 @@ func TestCrashConsistency(t *testing.T) {
 			cmd.Env = append(os.Environ(), "FS_CRASH_DIR="+dir)
 			require.NoError(t, cmd.Start())
 
-			time.Sleep(delay * time.Millisecond)
+			// Wait until the writer has committed at least one object.
+			bucketDir := filepath.Join(dir, crashBucket)
+
+			require.Eventually(t, func() bool {
+				entries, _ := os.ReadDir(bucketDir)
+				return len(entries) > 0
+			}, 15*time.Second, 2*time.Millisecond, "writer never committed an object")
+
+			time.Sleep(jitter * time.Millisecond)
 			require.NoError(t, cmd.Process.Kill()) // SIGKILL
 			_, _ = cmd.Process.Wait()
 

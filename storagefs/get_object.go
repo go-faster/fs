@@ -35,6 +35,15 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		return nil, errors.Wrap(err, "stat object")
 	}
 
+	// Verify-on-read: recompute and check the checksum before serving so corrupt
+	// content is never returned (opt-in; costs an extra full read).
+	if s.verifyReads {
+		if err := s.verifyContent(bucket, key, objectPath); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+	}
+
 	resp := &fs.GetObjectResponse{
 		Reader:       f,
 		Size:         info.Size(),

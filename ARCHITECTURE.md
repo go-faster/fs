@@ -234,6 +234,15 @@ subprocess crash-consistency test (`SIGKILL` mid-write) asserts the no-torn
 invariant. Sidecar and bucket-meta writes go through the same
 `atomicWrite` (temp + fsync + rename).
 
+**Integrity.** Each object stores a full-content MD5 in its sidecar
+(`checksum`, distinct from the multipart `-N` ETag; computed on both PUT and
+multipart complete). `WithVerifyReads` makes `GetObject` recompute and check it
+before serving, returning `fs.ErrIntegrity` (500) rather than serving corrupt
+bytes. `Storage.Scrub` walks every object comparing content to its checksum,
+reporting bit-rot and optionally quarantining corrupt objects into
+`<root>/.quarantine`; the binary runs it on a configurable interval and logs
+findings loudly.
+
 ### storagefs metadata sidecars
 
 Object metadata (ETag, representation headers, `x-amz-meta-*`, tags) lives in
