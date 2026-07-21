@@ -86,7 +86,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, err
 	}
 
-	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, req.Metadata, req.Tags, req.ACL)); err != nil {
+	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, etag, req.Metadata, req.Tags, req.ACL)); err != nil {
 		return nil, err
 	}
 

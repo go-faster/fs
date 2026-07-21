@@ -29,8 +29,26 @@ type Config struct {
 	// Auth configuration
 	Auth AuthConfig `yaml:"auth"`
 
+	// Integrity configuration
+	Integrity IntegrityConfig `yaml:"integrity"`
+
 	// Observability configuration
 	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// IntegrityConfig configures object integrity checking.
+type IntegrityConfig struct {
+	// VerifyOnRead recomputes and checks each object's checksum before serving
+	// it (costs a full extra read per GET). Off by default.
+	VerifyOnRead bool `yaml:"verify_on_read,omitempty"`
+
+	// ScrubInterval, if positive, runs a background scrubber that walks all
+	// objects on this cadence and reports bit-rot. Zero disables it.
+	ScrubInterval time.Duration `yaml:"scrub_interval,omitempty"`
+
+	// ScrubQuarantine moves corrupt objects aside (into <root>/.quarantine)
+	// instead of only reporting them.
+	ScrubQuarantine bool `yaml:"scrub_quarantine,omitempty"`
 }
 
 // AuthConfig configures authentication and authorization.

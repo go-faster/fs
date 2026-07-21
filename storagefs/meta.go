@@ -36,6 +36,10 @@ type sidecar struct {
 	UserMetadata       map[string]string `json:"user_metadata,omitempty"`
 	Tags               []fs.Tag          `json:"tags,omitempty"`
 	ACL                fs.ACL            `json:"acl,omitempty"`
+	// Checksum is the hex MD5 of the full object content, used by the scrubber
+	// and verify-on-read for bit-rot detection. Distinct from ETag, which for a
+	// multipart object is the "-N" composite, not a content hash.
+	Checksum string `json:"checksum,omitempty"`
 }
 
 // metadata converts the sidecar's header fields to the domain type.
@@ -49,8 +53,10 @@ func (sc *sidecar) metadata() fs.ObjectMetadata {
 	}
 }
 
-// newSidecar builds a sidecar document for an object.
-func newSidecar(key, etag string, meta fs.ObjectMetadata, tags []fs.Tag, acl fs.ACL) *sidecar {
+// newSidecar builds a sidecar document for an object. checksum is the hex MD5
+// of the full content (equal to etag for single-part PUTs, distinct for
+// multipart).
+func newSidecar(key, etag, checksum string, meta fs.ObjectMetadata, tags []fs.Tag, acl fs.ACL) *sidecar {
 	return &sidecar{
 		Version:            sidecarVersion,
 		Key:                key,
@@ -62,6 +68,7 @@ func newSidecar(key, etag string, meta fs.ObjectMetadata, tags []fs.Tag, acl fs.
 		UserMetadata:       meta.UserMetadata,
 		Tags:               tags,
 		ACL:                acl,
+		Checksum:           checksum,
 	}
 }
 

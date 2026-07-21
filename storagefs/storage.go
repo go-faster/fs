@@ -50,6 +50,9 @@ type Storage struct {
 	// sync is the durability policy applied to writes.
 	sync SyncPolicy
 
+	// verifyReads makes GetObject verify the object checksum before serving.
+	verifyReads bool
+
 	etagMu    sync.Mutex
 	etagCache map[string]etagEntry
 

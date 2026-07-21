@@ -51,6 +51,13 @@ func WithSyncPolicy(p SyncPolicy) Option {
 	return func(s *Storage) { s.sync = p }
 }
 
+// WithVerifyReads makes GetObject recompute and check each object's checksum
+// before serving it, returning fs.ErrIntegrity on a mismatch so corrupt data is
+// never served. Off by default: it costs a full extra read per GET.
+func WithVerifyReads(v bool) Option {
+	return func(s *Storage) { s.verifyReads = v }
+}
+
 // syncFile fsyncs f when the policy requires file-level durability.
 func (s *Storage) syncFile(f *os.File) error {
 	if s.sync < SyncFile {

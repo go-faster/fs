@@ -361,8 +361,11 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		_ = os.Remove(tmpName)
 	}
 
-	// Concatenate all parts.
-	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	// Concatenate all parts. hash accumulates the S3 multipart ETag (over the
+	// per-part MD5s); contentHash is the MD5 of the full assembled content, used
+	// for bit-rot detection.
+	hash := md5.New()        //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	contentHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	uploadPath := s.multipart.uploadPath(req.UploadID)
 	for _, part := range parts {
@@ -375,7 +378,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		}
 
 		partHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-		_, err = io.Copy(io.MultiWriter(finalFile, partHash), partFile)
+		_, err = io.Copy(io.MultiWriter(finalFile, partHash, contentHash), partFile)
 		_ = partFile.Close()
 
 		if err != nil {
@@ -411,9 +414,11 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	}
 
 	etag := hex.EncodeToString(hash.Sum(nil)) + "-" + strconv.Itoa(len(parts))
+	checksum := hex.EncodeToString(contentHash.Sum(nil))
 
-	// Persist the multipart ETag and the metadata captured at initiation.
-	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, meta.Metadata, meta.Tags, meta.ACL)); err != nil {
+	// Persist the multipart ETag, content checksum and the metadata captured at
+	// initiation.
+	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL)); err != nil {
 		return nil, err
 	}
 
