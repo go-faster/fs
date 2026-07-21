@@ -1,0 +1,41 @@
+# Server config for the s3tests CI job: the ceph/s3-tests credentials
+# (from s3tests.conf) as admin keys, so the suite runs against an
+# AUTHENTICATED server. Generated to match s3tests.conf; keep in sync if
+# that file's credentials change.
+server:
+  addr: ":8077"
+storage:
+  root: ./.s3data-ci
+  type: filesystem
+auth:
+  keys:
+    - access_key: 0555b35654ad1656d804
+      secret_key: "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: NOPQRSTUVWXYZABCDEFG
+      secret_key: "nopqrstuvwxyzabcdefghijklmnabcdefghijklm"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: HIJKLMNOPQRSTUVWXYZA
+      secret_key: "opqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: ABCDEFGHIJKLMNOPQRST
+      secret_key: "abcdefghijklmnopqrstuvwxyzabcdefghijklmn"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: AAAAAAAAAAAAAAAAAAaa
+      secret_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: BBBBBBBBBBBBBBBBBBbb
+      secret_key: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      grants:
+        - bucket: "*"
+          permission: admin

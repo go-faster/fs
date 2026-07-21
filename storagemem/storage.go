@@ -35,12 +35,14 @@ type object struct {
 	etag         string
 	metadata     fs.ObjectMetadata
 	tags         []fs.Tag
+	acl          fs.ACL
 }
 
 type bucket struct {
 	name         string
 	creationDate time.Time
 	objects      map[string]*object
+	acl          fs.ACL
 }
 
 type uploadPart struct {
@@ -58,6 +60,7 @@ type multipartUpload struct {
 	parts     map[int]*uploadPart
 	metadata  fs.ObjectMetadata
 	tags      []fs.Tag
+	acl       fs.ACL
 }
 
 // Storage implements fs.Storage interface using in-memory storage.
@@ -189,6 +192,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		etag:         etag,
 		metadata:     req.Metadata,
 		tags:         append([]fs.Tag(nil), req.Tags...),
+		acl:          req.ACL,
 	}
 
 	return &fs.PutObjectResponse{ETag: etag}, nil
@@ -247,6 +251,53 @@ func (s *Storage) DeleteObjectTagging(_ context.Context, bucketName, key string)
 	obj.tags = nil
 
 	return nil
+}
+
+func (s *Storage) SetBucketACL(_ context.Context, bucketName string, acl fs.ACL) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.ErrBucketNotFound
+	}
+
+	b.acl = acl
+
+	return nil
+}
+
+func (s *Storage) BucketACL(_ context.Context, bucketName string) (fs.ACL, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.ACLPrivate, fs.ErrBucketNotFound
+	}
+
+	return normalizeACL(b.acl), nil
+}
+
+func (s *Storage) ObjectACL(_ context.Context, bucketName, key string) (fs.ACL, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return fs.ACLPrivate, err
+	}
+
+	return normalizeACL(obj.acl), nil
+}
+
+// normalizeACL defaults an unset (zero-value) ACL to ACLPrivate.
+func normalizeACL(a fs.ACL) fs.ACL {
+	if a == "" {
+		return fs.ACLPrivate
+	}
+
+	return a
 }
 
 func (s *Storage) GetObject(ctx context.Context, bucketName, key string) (*fs.GetObjectResponse, error) {
@@ -319,6 +370,7 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		parts:     make(map[int]*uploadPart),
 		metadata:  req.Metadata,
 		tags:      append([]fs.Tag(nil), req.Tags...),
+		acl:       req.ACL,
 	}
 
 	s.uploads[uploadID] = upload
@@ -488,6 +540,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		etag:         etag,
 		metadata:     upload.metadata,
 		tags:         upload.tags,
+		acl:          upload.acl,
 	}
 
 	delete(s.uploads, req.UploadID)

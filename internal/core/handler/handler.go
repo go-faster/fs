@@ -57,7 +57,7 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 
 	var inner http.Handler = mux
 	if o.authenticator != nil {
-		inner = authMiddleware(o.authenticator, inner)
+		inner = authMiddleware(o.authenticator, s, inner)
 	}
 
 	if o.cors != nil {

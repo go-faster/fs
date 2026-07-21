@@ -70,14 +70,14 @@ func minioClient(t testing.TB, endpoint, access, secret string) *minio.Client {
 	return c
 }
 
-func awsClient(t testing.TB, endpoint, access, secret string) *awss3.Client {
+func awsClient(t testing.TB, endpoint string) *awss3.Client {
 	t.Helper()
 
 	return awss3.New(awss3.Options{
 		BaseEndpoint: aws.String("http://" + endpoint),
 		Region:       "us-east-1",
 		UsePathStyle: true,
-		Credentials:  awscreds.NewStaticCredentialsProvider(access, secret, ""),
+		Credentials:  awscreds.NewStaticCredentialsProvider(authAccessKey, authSecretKey, ""),
 	})
 }
 
@@ -129,7 +129,7 @@ func TestAuth_AWSRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	endpoint := newAuthServer(t, adminConfig())
-	client := awsClient(t, endpoint, authAccessKey, authSecretKey)
+	client := awsClient(t, endpoint)
 
 	const bucket = "auth-bucket"
 
@@ -319,4 +319,146 @@ func TestAuth_PresignedURL(t *testing.T) {
 	got, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, content, got)
+}
+
+func TestAuth_PublicReadACL(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	endpoint := newAuthServer(t, adminConfig())
+	client := awsClient(t, endpoint)
+
+	// Bucket + object created public-read via canned ACL.
+	_, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{
+		Bucket: aws.String("pub"),
+		ACL:    "public-read",
+	})
+	require.NoError(t, err)
+
+	content := []byte("anyone can read this")
+	_, err = client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("pub"),
+		Key:    aws.String("open.txt"),
+		Body:   bytes.NewReader(content),
+		ACL:    "public-read",
+	})
+	require.NoError(t, err)
+
+	base := "http://" + endpoint
+
+	t.Run("AnonymousReadAllowed", func(t *testing.T) {
+		resp, err := http.Get(base + "/pub/open.txt") //nolint:noctx // test fetch of a local URL.
+		require.NoError(t, err)
+
+		defer func() { _ = resp.Body.Close() }()
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		got, _ := io.ReadAll(resp.Body)
+		require.Equal(t, content, got)
+	})
+
+	t.Run("AnonymousWriteDenied", func(t *testing.T) {
+		// public-read does not grant anonymous write.
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, base+"/pub/hack.txt", bytes.NewReader([]byte("x")))
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+
+		defer func() { _ = resp.Body.Close() }()
+
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("MissingObjectIs404NotForbidden", func(t *testing.T) {
+		// Existence-first ordering: anonymous read of a missing key under a
+		// public bucket returns NoSuchKey, not AccessDenied.
+		resp, err := http.Get(base + "/pub/missing.txt") //nolint:noctx // test fetch of a local URL.
+		require.NoError(t, err)
+
+		defer func() { _ = resp.Body.Close() }()
+
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("MissingBucketIs404NotForbidden", func(t *testing.T) {
+		resp, err := http.Get(base + "/nonexistent-bucket/x") //nolint:noctx // test fetch of a local URL.
+		require.NoError(t, err)
+
+		defer func() { _ = resp.Body.Close() }()
+
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func TestAuth_PublicReadWriteACL(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	endpoint := newAuthServer(t, adminConfig())
+	client := awsClient(t, endpoint)
+
+	_, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{
+		Bucket: aws.String("open"),
+		ACL:    "public-read-write",
+	})
+	require.NoError(t, err)
+
+	// Anonymous write is allowed on a public-read-write bucket.
+	base := "http://" + endpoint
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, base+"/open/anon.txt", bytes.NewReader([]byte("hello")))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// And the object is readable (bucket is also public-read).
+	get, err := http.Get(base + "/open/anon.txt") //nolint:noctx // test fetch of a local URL.
+	require.NoError(t, err)
+
+	defer func() { _ = get.Body.Close() }()
+
+	got, _ := io.ReadAll(get.Body)
+	require.Equal(t, []byte("hello"), got)
+}
+
+func TestAuth_ObjectLevelPublicRead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	endpoint := newAuthServer(t, adminConfig())
+	client := awsClient(t, endpoint)
+
+	// Private bucket, but the object is public-read.
+	_, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String("mixed")})
+	require.NoError(t, err)
+
+	_, err = client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("mixed"),
+		Key:    aws.String("public.txt"),
+		Body:   bytes.NewReader([]byte("public object")),
+		ACL:    "public-read",
+	})
+	require.NoError(t, err)
+
+	_, err = client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("mixed"),
+		Key:    aws.String("private.txt"),
+		Body:   bytes.NewReader([]byte("private object")),
+	})
+	require.NoError(t, err)
+
+	base := "http://" + endpoint
+
+	pub, err := http.Get(base + "/mixed/public.txt") //nolint:noctx // test fetch of a local URL.
+	require.NoError(t, err)
+
+	_ = pub.Body.Close()
+	require.Equal(t, http.StatusOK, pub.StatusCode)
+
+	priv, err := http.Get(base + "/mixed/private.txt") //nolint:noctx // test fetch of a local URL.
+	require.NoError(t, err)
+
+	_ = priv.Body.Close()
+	require.Equal(t, http.StatusForbidden, priv.StatusCode)
 }

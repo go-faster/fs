@@ -30,9 +30,11 @@ type multipartMetadata struct {
 	Bucket    string    `json:"bucket"`
 	Key       string    `json:"key"`
 	Initiated time.Time `json:"initiated"`
-	// Metadata and Tags are applied to the object when the upload completes.
+	// Metadata, Tags and ACL are applied to the object when the upload
+	// completes.
 	Metadata fs.ObjectMetadata `json:"metadata,omitzero"`
 	Tags     []fs.Tag          `json:"tags,omitempty"`
+	ACL      fs.ACL            `json:"acl,omitempty"`
 }
 
 // multipartManager manages multipart uploads with disk-based persistence.
@@ -126,6 +128,7 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipa
 		Initiated: time.Now(),
 		Metadata:  req.Metadata,
 		Tags:      req.Tags,
+		ACL:       req.ACL,
 	}
 
 	s.multipart.mu.Lock()
@@ -385,7 +388,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	etag := hex.EncodeToString(hash.Sum(nil)) + "-" + strconv.Itoa(len(parts))
 
 	// Persist the multipart ETag and the metadata captured at initiation.
-	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, meta.Metadata, meta.Tags)); err != nil {
+	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, meta.Metadata, meta.Tags, meta.ACL)); err != nil {
 		return nil, err
 	}
 

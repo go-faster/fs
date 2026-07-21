@@ -51,6 +51,9 @@ type PutObjectRequest struct {
 	Size     int64
 	Metadata ObjectMetadata
 	Tags     []Tag
+	// ACL is the canned access-control level for the object (default
+	// ACLPrivate). Governs anonymous access only.
+	ACL ACL
 
 	// IfNoneMatch and IfMatch carry the raw conditional-write header values
 	// (e.g. "*" or a quoted ETag list). When set, the storage backend must
@@ -90,6 +93,7 @@ type CreateMultipartUploadRequest struct {
 	Key      string
 	Metadata ObjectMetadata
 	Tags     []Tag
+	ACL      ACL
 }
 
 // Part represents a part of a multipart upload.

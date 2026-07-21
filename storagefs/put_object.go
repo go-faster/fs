@@ -75,7 +75,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, errors.Wrap(err, "rename object")
 	}
 
-	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, req.Metadata, req.Tags)); err != nil {
+	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, req.Metadata, req.Tags, req.ACL)); err != nil {
 		return nil, err
 	}
 

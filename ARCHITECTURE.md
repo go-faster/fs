@@ -127,6 +127,16 @@ with optional public-read buckets. The snapshot sits behind an atomic pointer,
 so `Set` hot-reloads credentials without locking readers. `Store` satisfies the
 handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`).
 
+Anonymous (unsigned) requests are authorized against **canned ACLs**
+(`private` / `public-read` / `public-read-write`) stored per bucket and per
+object: the auth middleware consults `fs.Storage.BucketACL`/`ObjectACL`
+directly. Reads need a public-read bucket or object; writes need a
+public-read-write bucket; bucket create/delete are never anonymous. A missing
+bucket/object is let through so the router returns the natural 404
+(existence-first ordering, matching RGW) rather than a blanket 403. This is the
+canned subset only — full ACL grammar / `AccessControlPolicy` enforcement is
+out of scope (the `?acl` subresource is echo-only).
+
 ### `cors` (public) — per-bucket CORS
 
 `Config` holds per-bucket (and default) `Rule`s; the handler's CORS middleware

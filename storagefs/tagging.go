@@ -60,7 +60,7 @@ func (s *Storage) updateTags(bucket, key string, tags []fs.Tag) error {
 	}
 
 	if sc == nil {
-		sc = newSidecar(key, "", fs.ObjectMetadata{}, nil)
+		sc = newSidecar(key, "", fs.ObjectMetadata{}, nil, fs.ACLPrivate)
 	}
 
 	sc.Tags = tags
