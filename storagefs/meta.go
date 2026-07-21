@@ -35,6 +35,7 @@ type sidecar struct {
 	ContentEncoding    string            `json:"content_encoding,omitempty"`
 	UserMetadata       map[string]string `json:"user_metadata,omitempty"`
 	Tags               []fs.Tag          `json:"tags,omitempty"`
+	ACL                fs.ACL            `json:"acl,omitempty"`
 }
 
 // metadata converts the sidecar's header fields to the domain type.
@@ -49,7 +50,7 @@ func (sc *sidecar) metadata() fs.ObjectMetadata {
 }
 
 // newSidecar builds a sidecar document for an object.
-func newSidecar(key, etag string, meta fs.ObjectMetadata, tags []fs.Tag) *sidecar {
+func newSidecar(key, etag string, meta fs.ObjectMetadata, tags []fs.Tag, acl fs.ACL) *sidecar {
 	return &sidecar{
 		Version:            sidecarVersion,
 		Key:                key,
@@ -60,6 +61,7 @@ func newSidecar(key, etag string, meta fs.ObjectMetadata, tags []fs.Tag) *sideca
 		ContentEncoding:    meta.ContentEncoding,
 		UserMetadata:       meta.UserMetadata,
 		Tags:               tags,
+		ACL:                acl,
 	}
 }
 

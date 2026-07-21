@@ -122,6 +122,34 @@ func (s Service) DeleteObjectTagging(ctx context.Context, bucket, key string) er
 	return s.storage.DeleteObjectTagging(ctx, bucket, key)
 }
 
+func (s Service) SetBucketACL(ctx context.Context, bucket string, acl fs.ACL) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	return s.storage.SetBucketACL(ctx, bucket, acl)
+}
+
+func (s Service) BucketACL(ctx context.Context, bucket string) (fs.ACL, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return fs.ACLPrivate, errors.Wrap(err, "validate bucket name")
+	}
+
+	return s.storage.BucketACL(ctx, bucket)
+}
+
+func (s Service) ObjectACL(ctx context.Context, bucket, key string) (fs.ACL, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return fs.ACLPrivate, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return fs.ACLPrivate, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.ObjectACL(ctx, bucket, key)
+}
+
 func (s Service) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
 	return s.storage.ListBuckets(ctx)
 }

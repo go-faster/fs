@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/internal/s3err"
 	"github.com/go-faster/fs/internal/sigv4"
@@ -25,14 +27,15 @@ type Authenticator interface {
 
 // authMiddleware authenticates and authorizes every request before it reaches
 // the router. Signed requests (SigV4 header or presigned query) are verified
-// and authorized; unsigned requests are allowed only as reads of a public-read
-// bucket. For signed streaming uploads the request body is replaced with a
-// chunk-signature-verifying reader so tampered payloads never reach storage.
-func authMiddleware(a Authenticator, next http.Handler) http.Handler {
+// and authorized; unsigned requests are allowed only when the target's canned
+// ACL permits anonymous access. For signed streaming uploads the request body
+// is replaced with a chunk-signature-verifying reader so tampered payloads
+// never reach storage.
+func authMiddleware(a Authenticator, store fs.Storage, next http.Handler) http.Handler {
 	verifier := sigv4.NewVerifier(a.Secret)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bucket, action := requestScope(r)
+		bucket, key, action := requestScope(r)
 
 		if hasSigV4Credentials(r) {
 			res, err := verifier.Verify(r)
@@ -55,8 +58,7 @@ func authMiddleware(a Authenticator, next http.Handler) http.Handler {
 			return
 		}
 
-		// Anonymous access: only reads of an explicitly public-read bucket.
-		if action == auth.ActionRead && bucket != "" && a.PublicRead(bucket) {
+		if anonymousAllowed(r.Context(), store, a, bucket, key, action) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -65,19 +67,71 @@ func authMiddleware(a Authenticator, next http.Handler) http.Handler {
 	})
 }
 
-// requestScope derives the target bucket and the access level a request needs
+// requestScope derives the target bucket, key and access level a request needs
 // from its method and path (path-style addressing). A root request (ListBuckets)
-// has an empty bucket.
-func requestScope(r *http.Request) (bucket string, action auth.Action) {
+// has an empty bucket; a bucket-level request has an empty key.
+func requestScope(r *http.Request) (bucket, key string, action auth.Action) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
-	bucket, _, _ = strings.Cut(path, "/")
+	bucket, key, _ = strings.Cut(path, "/")
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return bucket, auth.ActionRead
+		return bucket, key, auth.ActionRead
 	default:
-		return bucket, auth.ActionWrite
+		return bucket, key, auth.ActionWrite
 	}
+}
+
+// anonymousAllowed decides whether an unsigned request may proceed, consulting
+// the stored canned ACLs. It returns true either when access is genuinely
+// public or when the target is missing — in the latter case the request is let
+// through so the router produces the natural NoSuchBucket/NoSuchKey (404),
+// matching S3-compatible (RGW) behavior rather than a blanket 403.
+//
+//   - service level (no bucket): denied.
+//   - bucket level (no key): reads need a public-read bucket; writes (bucket
+//     create/delete) are never anonymous.
+//   - object level: a missing bucket is let through (→ 404); otherwise writes
+//     need a public-read-write bucket and reads need the bucket or the object
+//     to be public-read.
+func anonymousAllowed(ctx context.Context, store fs.Storage, a Authenticator, bucket, key string, action auth.Action) bool {
+	if bucket == "" {
+		return false
+	}
+
+	if key == "" {
+		if action == auth.ActionWrite {
+			return false
+		}
+
+		level, err := store.BucketACL(ctx, bucket)
+
+		return err == nil && (level.AllowsAnonRead() || a.PublicRead(bucket))
+	}
+
+	level, err := store.BucketACL(ctx, bucket)
+	if errors.Is(err, fs.ErrBucketNotFound) {
+		return true // let the router return NoSuchBucket
+	}
+
+	if err != nil {
+		return false
+	}
+
+	if action == auth.ActionWrite {
+		return level.AllowsAnonWrite()
+	}
+
+	if level.AllowsAnonRead() || a.PublicRead(bucket) {
+		return true
+	}
+
+	objACL, err := store.ObjectACL(ctx, bucket, key)
+	if err != nil {
+		return false
+	}
+
+	return objACL.AllowsAnonRead()
 }
 
 // hasSigV4Credentials reports whether the request carries SigV4 auth (an

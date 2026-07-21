@@ -105,6 +105,11 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Conditional/IfNoneMatch":            testConditionalIfNoneMatch,
 	"Conditional/IfMatch":                testConditionalIfMatch,
 	"Conditional/ConcurrentSingleWinner": testConditionalConcurrentSingleWinner,
+	"ACL/BucketRoundTrip":                testACLBucketRoundTrip,
+	"ACL/BucketDefaultPrivate":           testACLBucketDefaultPrivate,
+	"ACL/BucketNotFound":                 testACLBucketNotFound,
+	"ACL/ObjectFromPut":                  testACLObjectFromPut,
+	"ACL/ObjectDefaultPrivate":           testACLObjectDefaultPrivate,
 }
 
 func putObject(t *testing.T, storage fs.Storage, key string, content []byte) {
@@ -1078,4 +1083,75 @@ func testConditionalConcurrentSingleWinner(t *testing.T, storage fs.Storage) {
 
 	require.Equal(t, int64(1), winners.Load(), "exactly one racer must win")
 	require.Equal(t, int64(racers-1), conflicts.Load(), "all losers must see ErrPreconditionFailed")
+}
+
+func testACLBucketRoundTrip(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	require.NoError(t, storage.SetBucketACL(ctx, testBucket, fs.ACLPublicRead))
+
+	acl, err := storage.BucketACL(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPublicRead, acl)
+
+	require.NoError(t, storage.SetBucketACL(ctx, testBucket, fs.ACLPublicReadWrite))
+
+	acl, err = storage.BucketACL(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPublicReadWrite, acl)
+}
+
+func testACLBucketDefaultPrivate(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	acl, err := storage.BucketACL(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPrivate, acl)
+}
+
+func testACLBucketNotFound(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	_, err := storage.BucketACL(ctx, "missing")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+
+	err = storage.SetBucketACL(ctx, "missing", fs.ACLPublicRead)
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+}
+
+func testACLObjectFromPut(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket: testBucket,
+		Key:    "obj.txt",
+		Reader: strings.NewReader("x"),
+		Size:   1,
+		ACL:    fs.ACLPublicRead,
+	})
+	require.NoError(t, err)
+
+	acl, err := storage.ObjectACL(ctx, testBucket, "obj.txt")
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPublicRead, acl)
+
+	// A missing object reports ErrObjectNotFound.
+	_, err = storage.ObjectACL(ctx, testBucket, "nope.txt")
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+}
+
+func testACLObjectDefaultPrivate(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	putObject(t, storage, "obj.txt", []byte("x"))
+
+	acl, err := storage.ObjectACL(ctx, testBucket, "obj.txt")
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPrivate, acl)
 }

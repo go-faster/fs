@@ -23,6 +23,9 @@ var _ fs.Storage = &StorageMock{}
 //			AbortMultipartUploadFunc: func(ctx context.Context, bucket string, key string, uploadID string) error {
 //				panic("mock out the AbortMultipartUpload method")
 //			},
+//			BucketACLFunc: func(ctx context.Context, bucket string) (fs.ACL, error) {
+//				panic("mock out the BucketACL method")
+//			},
 //			BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 //				panic("mock out the BucketExists method")
 //			},
@@ -62,11 +65,17 @@ var _ fs.Storage = &StorageMock{}
 //			ListPartsFunc: func(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error) {
 //				panic("mock out the ListParts method")
 //			},
+//			ObjectACLFunc: func(ctx context.Context, bucket string, key string) (fs.ACL, error) {
+//				panic("mock out the ObjectACL method")
+//			},
 //			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 //				panic("mock out the PutObject method")
 //			},
 //			PutObjectTaggingFunc: func(ctx context.Context, bucket string, key string, tags []fs.Tag) error {
 //				panic("mock out the PutObjectTagging method")
+//			},
+//			SetBucketACLFunc: func(ctx context.Context, bucket string, acl fs.ACL) error {
+//				panic("mock out the SetBucketACL method")
 //			},
 //			UploadPartFunc: func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 //				panic("mock out the UploadPart method")
@@ -80,6 +89,9 @@ var _ fs.Storage = &StorageMock{}
 type StorageMock struct {
 	// AbortMultipartUploadFunc mocks the AbortMultipartUpload method.
 	AbortMultipartUploadFunc func(ctx context.Context, bucket string, key string, uploadID string) error
+
+	// BucketACLFunc mocks the BucketACL method.
+	BucketACLFunc func(ctx context.Context, bucket string) (fs.ACL, error)
 
 	// BucketExistsFunc mocks the BucketExists method.
 	BucketExistsFunc func(ctx context.Context, bucket string) (bool, error)
@@ -120,11 +132,17 @@ type StorageMock struct {
 	// ListPartsFunc mocks the ListParts method.
 	ListPartsFunc func(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error)
 
+	// ObjectACLFunc mocks the ObjectACL method.
+	ObjectACLFunc func(ctx context.Context, bucket string, key string) (fs.ACL, error)
+
 	// PutObjectFunc mocks the PutObject method.
 	PutObjectFunc func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error)
 
 	// PutObjectTaggingFunc mocks the PutObjectTagging method.
 	PutObjectTaggingFunc func(ctx context.Context, bucket string, key string, tags []fs.Tag) error
+
+	// SetBucketACLFunc mocks the SetBucketACL method.
+	SetBucketACLFunc func(ctx context.Context, bucket string, acl fs.ACL) error
 
 	// UploadPartFunc mocks the UploadPart method.
 	UploadPartFunc func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error)
@@ -141,6 +159,13 @@ type StorageMock struct {
 			Key string
 			// UploadID is the uploadID argument value.
 			UploadID string
+		}
+		// BucketACL holds details about calls to the BucketACL method.
+		BucketACL []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
 		}
 		// BucketExists holds details about calls to the BucketExists method.
 		BucketExists []struct {
@@ -245,6 +270,15 @@ type StorageMock struct {
 			// UploadID is the uploadID argument value.
 			UploadID string
 		}
+		// ObjectACL holds details about calls to the ObjectACL method.
+		ObjectACL []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
+		}
 		// PutObject holds details about calls to the PutObject method.
 		PutObject []struct {
 			// Ctx is the ctx argument value.
@@ -263,6 +297,15 @@ type StorageMock struct {
 			// Tags is the tags argument value.
 			Tags []fs.Tag
 		}
+		// SetBucketACL holds details about calls to the SetBucketACL method.
+		SetBucketACL []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// ACL is the acl argument value.
+			ACL fs.ACL
+		}
 		// UploadPart holds details about calls to the UploadPart method.
 		UploadPart []struct {
 			// Ctx is the ctx argument value.
@@ -272,6 +315,7 @@ type StorageMock struct {
 		}
 	}
 	lockAbortMultipartUpload    sync.RWMutex
+	lockBucketACL               sync.RWMutex
 	lockBucketExists            sync.RWMutex
 	lockCompleteMultipartUpload sync.RWMutex
 	lockCreateBucket            sync.RWMutex
@@ -285,8 +329,10 @@ type StorageMock struct {
 	lockListMultipartUploads    sync.RWMutex
 	lockListObjects             sync.RWMutex
 	lockListParts               sync.RWMutex
+	lockObjectACL               sync.RWMutex
 	lockPutObject               sync.RWMutex
 	lockPutObjectTagging        sync.RWMutex
+	lockSetBucketACL            sync.RWMutex
 	lockUploadPart              sync.RWMutex
 }
 
@@ -331,6 +377,42 @@ func (mock *StorageMock) AbortMultipartUploadCalls() []struct {
 	mock.lockAbortMultipartUpload.RLock()
 	calls = mock.calls.AbortMultipartUpload
 	mock.lockAbortMultipartUpload.RUnlock()
+	return calls
+}
+
+// BucketACL calls BucketACLFunc.
+func (mock *StorageMock) BucketACL(ctx context.Context, bucket string) (fs.ACL, error) {
+	if mock.BucketACLFunc == nil {
+		panic("StorageMock.BucketACLFunc: method is nil but Storage.BucketACL was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+	}
+	mock.lockBucketACL.Lock()
+	mock.calls.BucketACL = append(mock.calls.BucketACL, callInfo)
+	mock.lockBucketACL.Unlock()
+	return mock.BucketACLFunc(ctx, bucket)
+}
+
+// BucketACLCalls gets all the calls that were made to BucketACL.
+// Check the length with:
+//
+//	len(mockedStorage.BucketACLCalls())
+func (mock *StorageMock) BucketACLCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+	}
+	mock.lockBucketACL.RLock()
+	calls = mock.calls.BucketACL
+	mock.lockBucketACL.RUnlock()
 	return calls
 }
 
@@ -826,6 +908,46 @@ func (mock *StorageMock) ListPartsCalls() []struct {
 	return calls
 }
 
+// ObjectACL calls ObjectACLFunc.
+func (mock *StorageMock) ObjectACL(ctx context.Context, bucket string, key string) (fs.ACL, error) {
+	if mock.ObjectACLFunc == nil {
+		panic("StorageMock.ObjectACLFunc: method is nil but Storage.ObjectACL was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		Key:    key,
+	}
+	mock.lockObjectACL.Lock()
+	mock.calls.ObjectACL = append(mock.calls.ObjectACL, callInfo)
+	mock.lockObjectACL.Unlock()
+	return mock.ObjectACLFunc(ctx, bucket, key)
+}
+
+// ObjectACLCalls gets all the calls that were made to ObjectACL.
+// Check the length with:
+//
+//	len(mockedStorage.ObjectACLCalls())
+func (mock *StorageMock) ObjectACLCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	Key    string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}
+	mock.lockObjectACL.RLock()
+	calls = mock.calls.ObjectACL
+	mock.lockObjectACL.RUnlock()
+	return calls
+}
+
 // PutObject calls PutObjectFunc.
 func (mock *StorageMock) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 	if mock.PutObjectFunc == nil {
@@ -903,6 +1025,46 @@ func (mock *StorageMock) PutObjectTaggingCalls() []struct {
 	mock.lockPutObjectTagging.RLock()
 	calls = mock.calls.PutObjectTagging
 	mock.lockPutObjectTagging.RUnlock()
+	return calls
+}
+
+// SetBucketACL calls SetBucketACLFunc.
+func (mock *StorageMock) SetBucketACL(ctx context.Context, bucket string, acl fs.ACL) error {
+	if mock.SetBucketACLFunc == nil {
+		panic("StorageMock.SetBucketACLFunc: method is nil but Storage.SetBucketACL was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		ACL    fs.ACL
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		ACL:    acl,
+	}
+	mock.lockSetBucketACL.Lock()
+	mock.calls.SetBucketACL = append(mock.calls.SetBucketACL, callInfo)
+	mock.lockSetBucketACL.Unlock()
+	return mock.SetBucketACLFunc(ctx, bucket, acl)
+}
+
+// SetBucketACLCalls gets all the calls that were made to SetBucketACL.
+// Check the length with:
+//
+//	len(mockedStorage.SetBucketACLCalls())
+func (mock *StorageMock) SetBucketACLCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	ACL    fs.ACL
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		ACL    fs.ACL
+	}
+	mock.lockSetBucketACL.RLock()
+	calls = mock.calls.SetBucketACL
+	mock.lockSetBucketACL.RUnlock()
 	return calls
 }
 

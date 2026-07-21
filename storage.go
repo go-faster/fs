@@ -25,6 +25,15 @@ type Storage interface {
 	// DeleteObjectTagging removes the object's tag set.
 	DeleteObjectTagging(ctx context.Context, bucket, key string) error
 
+	// SetBucketACL records the bucket's canned ACL.
+	SetBucketACL(ctx context.Context, bucket string, acl ACL) error
+	// BucketACL returns the bucket's canned ACL (ACLPrivate default);
+	// ErrBucketNotFound when the bucket is absent.
+	BucketACL(ctx context.Context, bucket string) (ACL, error)
+	// ObjectACL returns the object's canned ACL (ACLPrivate default);
+	// ErrBucketNotFound/ErrObjectNotFound when absent.
+	ObjectACL(ctx context.Context, bucket, key string) (ACL, error)
+
 	CreateMultipartUpload(ctx context.Context, req *CreateMultipartUploadRequest) (*MultipartUpload, error)
 	UploadPart(ctx context.Context, req *UploadPartRequest) (*Part, error)
 	// ListParts returns the parts uploaded so far for an in-progress multipart

@@ -35,9 +35,11 @@ excluded from gating.
 After a feature lands, promote the tests it makes pass:
 
 ```sh
-# Build and start the server (any free port; keep it in sync with s3tests.conf).
+# Build and start the server AUTHENTICATED (as CI does): server.yaml carries
+# the s3-tests credentials so the suite exercises SigV4 through boto3. The
+# anonymous-access tests pass via canned public-read/-write ACLs.
 go build -o fs ./cmd/fs
-./fs s3 --addr :8077 --root ./.s3data-ci &
+./fs s3 --config .github/s3tests/server.yaml --addr :8077 --root ./.s3data-ci &
 
 # Set up the suite (pin to the same commit as the workflow).
 git clone https://github.com/ceph/s3-tests && cd s3-tests
