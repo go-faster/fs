@@ -57,59 +57,60 @@ func Run(t *testing.T, factory Factory) {
 }
 
 var suite = map[string]func(t *testing.T, storage fs.Storage){
-	"CreateBucket":                       testCreateBucket,
-	"CreateBucket/AlreadyExists":         testCreateBucketAlreadyExists,
-	"ListBuckets":                        testListBuckets,
-	"BucketExists":                       testBucketExists,
-	"DeleteBucket":                       testDeleteBucket,
-	"DeleteBucket/NotFound":              testDeleteBucketNotFound,
-	"DeleteBucket/NotEmpty":              testDeleteBucketNotEmpty,
-	"DeleteBucket/EmptyAfterNested":      testDeleteBucketEmptyAfterNestedDelete,
-	"PutObject":                          testPutObject,
-	"PutObject/NestedKey":                testPutObjectNestedKey,
-	"PutObject/Overwrite":                testPutObjectOverwrite,
-	"PutObject/BucketNotFound":           testPutObjectBucketNotFound,
-	"GetObject":                          testGetObject,
-	"GetObject/BucketNotFound":           testGetObjectBucketNotFound,
-	"GetObject/ObjectNotFound":           testGetObjectObjectNotFound,
-	"DeleteObject":                       testDeleteObject,
-	"DeleteObject/BucketNotFound":        testDeleteObjectBucketNotFound,
-	"DeleteObject/ObjectNotFound":        testDeleteObjectObjectNotFound,
-	"ListObjects":                        testListObjects,
-	"ListObjects/WithPrefix":             testListObjectsWithPrefix,
-	"ListObjects/BucketNotFound":         testListObjectsBucketNotFound,
-	"Multipart/Create":                   testMultipartCreate,
-	"Multipart/Create/BucketNotFound":    testMultipartCreateBucketNotFound,
-	"Multipart/UploadPart":               testMultipartUploadPart,
-	"Multipart/UploadPart/NotFound":      testMultipartUploadPartNotFound,
-	"Multipart/Complete":                 testMultipartComplete,
-	"Multipart/Complete/ETag":            testMultipartCompleteETag,
-	"Multipart/Complete/OutOfOrder":      testMultipartCompleteOutOfOrder,
-	"Multipart/Complete/NotFound":        testMultipartCompleteNotFound,
-	"Multipart/Abort":                    testMultipartAbort,
-	"Multipart/Abort/NotFound":           testMultipartAbortNotFound,
-	"Multipart/ListParts":                testMultipartListParts,
-	"Multipart/ListParts/Overwrite":      testMultipartListPartsOverwrite,
-	"Multipart/ListParts/NotFound":       testMultipartListPartsNotFound,
-	"Multipart/ListParts/WrongKey":       testMultipartListPartsWrongKey,
-	"Multipart/ListUploads":              testMultipartListUploads,
-	"Multipart/ListUploads/NotFound":     testMultipartListUploadsBucketNotFound,
-	"Multipart/ListUploads/Lifecycle":    testMultipartListUploadsLifecycle,
-	"Metadata/PutETag":                   testPutObjectETag,
-	"Metadata/RoundTrip":                 testMetadataRoundTrip,
-	"Metadata/OverwriteReplaces":         testMetadataOverwriteReplaces,
-	"Metadata/Multipart":                 testMetadataMultipart,
-	"Tagging/RoundTrip":                  testTaggingRoundTrip,
-	"Tagging/PutObjectTags":              testTaggingOnPut,
-	"Tagging/NotFound":                   testTaggingNotFound,
-	"Conditional/IfNoneMatch":            testConditionalIfNoneMatch,
-	"Conditional/IfMatch":                testConditionalIfMatch,
-	"Conditional/ConcurrentSingleWinner": testConditionalConcurrentSingleWinner,
-	"ACL/BucketRoundTrip":                testACLBucketRoundTrip,
-	"ACL/BucketDefaultPrivate":           testACLBucketDefaultPrivate,
-	"ACL/BucketNotFound":                 testACLBucketNotFound,
-	"ACL/ObjectFromPut":                  testACLObjectFromPut,
-	"ACL/ObjectDefaultPrivate":           testACLObjectDefaultPrivate,
+	"CreateBucket":                          testCreateBucket,
+	"CreateBucket/AlreadyExists":            testCreateBucketAlreadyExists,
+	"ListBuckets":                           testListBuckets,
+	"BucketExists":                          testBucketExists,
+	"DeleteBucket":                          testDeleteBucket,
+	"DeleteBucket/NotFound":                 testDeleteBucketNotFound,
+	"DeleteBucket/NotEmpty":                 testDeleteBucketNotEmpty,
+	"DeleteBucket/EmptyAfterNested":         testDeleteBucketEmptyAfterNestedDelete,
+	"PutObject":                             testPutObject,
+	"PutObject/NestedKey":                   testPutObjectNestedKey,
+	"PutObject/Overwrite":                   testPutObjectOverwrite,
+	"PutObject/BucketNotFound":              testPutObjectBucketNotFound,
+	"GetObject":                             testGetObject,
+	"GetObject/BucketNotFound":              testGetObjectBucketNotFound,
+	"GetObject/ObjectNotFound":              testGetObjectObjectNotFound,
+	"DeleteObject":                          testDeleteObject,
+	"DeleteObject/BucketNotFound":           testDeleteObjectBucketNotFound,
+	"DeleteObject/ObjectNotFound":           testDeleteObjectObjectNotFound,
+	"ListObjects":                           testListObjects,
+	"ListObjects/WithPrefix":                testListObjectsWithPrefix,
+	"ListObjects/BucketNotFound":            testListObjectsBucketNotFound,
+	"Multipart/Create":                      testMultipartCreate,
+	"Multipart/Create/BucketNotFound":       testMultipartCreateBucketNotFound,
+	"Multipart/UploadPart":                  testMultipartUploadPart,
+	"Multipart/UploadPart/NotFound":         testMultipartUploadPartNotFound,
+	"Multipart/Complete":                    testMultipartComplete,
+	"Multipart/Complete/ETag":               testMultipartCompleteETag,
+	"Multipart/Complete/OutOfOrder":         testMultipartCompleteOutOfOrder,
+	"Multipart/Complete/NotFound":           testMultipartCompleteNotFound,
+	"Multipart/Abort":                       testMultipartAbort,
+	"Multipart/Abort/NotFound":              testMultipartAbortNotFound,
+	"Multipart/ListParts":                   testMultipartListParts,
+	"Multipart/ListParts/Overwrite":         testMultipartListPartsOverwrite,
+	"Multipart/ListParts/NotFound":          testMultipartListPartsNotFound,
+	"Multipart/ListParts/WrongKey":          testMultipartListPartsWrongKey,
+	"Multipart/ListUploads":                 testMultipartListUploads,
+	"Multipart/ListUploads/NotFound":        testMultipartListUploadsBucketNotFound,
+	"Multipart/ListUploads/Lifecycle":       testMultipartListUploadsLifecycle,
+	"Metadata/PutETag":                      testPutObjectETag,
+	"Metadata/RoundTrip":                    testMetadataRoundTrip,
+	"Metadata/OverwriteReplaces":            testMetadataOverwriteReplaces,
+	"Metadata/Multipart":                    testMetadataMultipart,
+	"Tagging/RoundTrip":                     testTaggingRoundTrip,
+	"Tagging/PutObjectTags":                 testTaggingOnPut,
+	"Tagging/NotFound":                      testTaggingNotFound,
+	"Conditional/IfNoneMatch":               testConditionalIfNoneMatch,
+	"Conditional/IfMatch":                   testConditionalIfMatch,
+	"Conditional/ConcurrentSingleWinner":    testConditionalConcurrentSingleWinner,
+	"Conditional/ConcurrentCASSingleWinner": testConditionalConcurrentCASSingleWinner,
+	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
+	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
+	"ACL/BucketNotFound":                    testACLBucketNotFound,
+	"ACL/ObjectFromPut":                     testACLObjectFromPut,
+	"ACL/ObjectDefaultPrivate":              testACLObjectDefaultPrivate,
 }
 
 func putObject(t *testing.T, storage fs.Storage, key string, content []byte) {
@@ -1082,6 +1083,61 @@ func testConditionalConcurrentSingleWinner(t *testing.T, storage fs.Storage) {
 	wg.Wait()
 
 	require.Equal(t, int64(1), winners.Load(), "exactly one racer must win")
+	require.Equal(t, int64(racers-1), conflicts.Load(), "all losers must see ErrPreconditionFailed")
+}
+
+// testConditionalConcurrentCASSingleWinner is the compare-and-swap counterpart:
+// an object exists at ETag E0; N goroutines each read E0 and race to replace it
+// with distinct content under If-Match: "E0". Exactly one must win — its write
+// moves the object off E0, so every other If-Match: "E0" must then fail. A
+// check-then-act backend lets several observe E0 and all overwrite.
+func testConditionalConcurrentCASSingleWinner(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	// Seed the object; every racer targets its ETag.
+	put, err := putConditional(t, storage, "cas", []byte("v0"), "*", "")
+	require.NoError(t, err)
+
+	e0 := put.ETag
+
+	const racers = 24
+
+	var (
+		wg        sync.WaitGroup
+		winners   atomic.Int64
+		conflicts atomic.Int64
+		start     = make(chan struct{})
+	)
+
+	for i := range racers {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			<-start
+
+			// Distinct bodies so each successful write yields a distinct ETag —
+			// otherwise identical content keeps the ETag at E0 and multiple
+			// idempotent writers legitimately match.
+			_, err := putConditional(t, storage, "cas", []byte(fmt.Sprintf("cas-body-%d", i)), "", e0)
+			switch {
+			case err == nil:
+				winners.Add(1)
+			case errors.Is(err, fs.ErrPreconditionFailed):
+				conflicts.Add(1)
+			default:
+				t.Errorf("unexpected error: %v", err)
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, int64(1), winners.Load(), "exactly one CAS racer must win")
 	require.Equal(t, int64(racers-1), conflicts.Load(), "all losers must see ErrPreconditionFailed")
 }
 
