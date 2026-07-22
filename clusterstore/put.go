@@ -106,6 +106,11 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		etag = checksum
 	}
 
+	var seq int64 = 1
+	if oldSC != nil {
+		seq = oldSC.Seq + 1
+	}
+
 	sc := &Sidecar{
 		Version:            sidecarVersion,
 		Bucket:             req.Bucket,
@@ -113,6 +118,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		Scheme:             s.String(),
 		Size:               req.Size,
 		Generation:         gen,
+		Seq:                seq,
 		Modified:           time.Now().UTC(),
 		ETag:               etag,
 		Checksum:           checksum,

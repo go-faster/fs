@@ -422,8 +422,7 @@ func (r *Repairer) authoritativeSidecar(ctx context.Context, bucket, key string,
 			continue // A corrupt replica; others decide.
 		}
 
-		if best == nil || sc.Modified.After(best.Modified) ||
-			(sc.Modified.Equal(best.Modified) && sc.Generation > best.Generation) {
+		if best == nil || sc.Supersedes(best) {
 			best = sc
 		}
 	}
