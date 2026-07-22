@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { getToken, setToken, clearToken, subscribe } from "./lib/auth";
+import { useGetInfo } from "./api/admin";
 import MatrixRain from "./components/MatrixRain";
 import Overview from "./pages/Overview";
 import AccessKeys from "./pages/AccessKeys";
@@ -13,6 +15,15 @@ function useToken(): string {
   return token;
 }
 
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="logo">fs</span>
+      <span className="tag">admin</span>
+    </div>
+  );
+}
+
 function Gate() {
   const [value, setValue] = useState("");
 
@@ -23,12 +34,9 @@ function Gate() {
 
   return (
     <div className="gate">
-      <form className="panel" onSubmit={submit}>
-        <div className="brand">
-          fs admin
-          <small>go-faster/fs</small>
-        </div>
-        <p className="muted">
+      <form className="card" onSubmit={submit}>
+        <Brand />
+        <p className="lead">
           Enter the admin API token to manage access keys. It is stored in this
           browser only and sent as a bearer token to the admin API.
         </p>
@@ -51,40 +59,76 @@ function Gate() {
   );
 }
 
-function Layout() {
+function Topbar() {
+  const qc = useQueryClient();
+  const info = useGetInfo();
+
+  const meta = info.data
+    ? `${info.data.version} · ${info.data.go_version}`
+    : "go-faster/fs";
+
   return (
-    <div className="app">
+    <header className="topbar">
+      <h1>fs</h1>
+      <span className="sub">Admin Panel</span>
+      <span className="spacer" />
+      <span className="meta">{meta}</span>
+      <button
+        onClick={() => void qc.invalidateQueries()}
+        disabled={info.isFetching}
+      >
+        {info.isFetching ? "Refreshing…" : "Refresh"}
+      </button>
+    </header>
+  );
+}
+
+function Dot() {
+  return <span className="ic" aria-hidden="true" />;
+}
+
+function Layout() {
+  const navClass = ({ isActive }: { isActive: boolean }) =>
+    isActive ? "nav-item active" : "nav-item";
+
+  return (
+    <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
-          fs admin
-          <small>go-faster/fs</small>
-        </div>
-        <nav className="nav">
-          <NavLink to="/" end>
-            Overview
-          </NavLink>
-          <NavLink to="/access-keys">Access keys</NavLink>
-        </nav>
-        <div className="sidebar-foot">
+        <Brand />
+        <div className="nav-group">Instance</div>
+        <NavLink className={navClass} to="/" end>
+          <Dot />
+          Overview
+        </NavLink>
+        <NavLink className={navClass} to="/access-keys">
+          <Dot />
+          Access keys
+        </NavLink>
+        <div className="foot">
           <button onClick={() => clearToken()}>Sign out</button>
         </div>
       </aside>
-      <main className="main">
-        <header className="matrix-hero">
-          <MatrixRain />
-          <div className="matrix-hero__content">
-            <span className="matrix-hero__title">fs admin</span>
-            <span className="matrix-hero__subtitle">
-              go-faster/fs · S3 access control
-            </span>
+
+      <div className="content">
+        <Topbar />
+        <div className="page">
+          <div className="matrix-hero">
+            <MatrixRain />
+            <div className="matrix-hero__content">
+              <span className="matrix-hero__title">fs admin</span>
+              <span className="matrix-hero__subtitle">
+                go-faster/fs · S3 access control
+              </span>
+            </div>
           </div>
-        </header>
-        <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/access-keys" element={<AccessKeys />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
+
+          <Routes>
+            <Route path="/" element={<Overview />} />
+            <Route path="/access-keys" element={<AccessKeys />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+      </div>
     </div>
   );
 }

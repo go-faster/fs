@@ -12,11 +12,11 @@ import { useToast } from "../components/toast";
 const PERMISSIONS: Permission[] = ["read", "write", "admin"];
 
 function GrantList({ grants }: { grants: Grant[] }) {
-  if (grants.length === 0) return <span className="muted">none</span>;
+  if (grants.length === 0) return <span className="empty">none</span>;
   return (
     <>
       {grants.map((g, i) => (
-        <span className="grant mono" key={i}>
+        <span className="chip" key={i}>
           {g.bucket}:{g.permission}
         </span>
       ))}
@@ -71,13 +71,12 @@ function CreatePanel({ onCreated }: { onCreated: (c: CreatedAccessKey) => void }
   };
 
   return (
-    <div className="panel">
+    <div className="card">
       <h2>Create access key</h2>
-      <div className="field" style={{ maxWidth: 420 }}>
-        <label htmlFor="ak">Access key ID (optional)</label>
+      <div className="field field-narrow">
+        <label htmlFor="ak">Access key ID — optional</label>
         <input
           id="ak"
-          className="mono"
           value={accessKey}
           onChange={(e) => setAccessKey(e.target.value)}
           placeholder="generated when blank"
@@ -88,7 +87,6 @@ function CreatePanel({ onCreated }: { onCreated: (c: CreatedAccessKey) => void }
       {grants.map((g, i) => (
         <div className="grant-row" key={i}>
           <input
-            className="mono"
             value={g.bucket}
             onChange={(e) => setGrant(i, { bucket: e.target.value })}
             placeholder="bucket pattern (e.g. uploads-*)"
@@ -113,11 +111,11 @@ function CreatePanel({ onCreated }: { onCreated: (c: CreatedAccessKey) => void }
         </div>
       ))}
 
-      <div className="row" style={{ marginTop: "0.5rem" }}>
+      <div className="actions" style={{ marginTop: "14px" }}>
         <button type="button" onClick={addGrant}>
           Add grant
         </button>
-        <div className="spacer" />
+        <span className="spacer" />
         <button className="primary" onClick={submit} disabled={create.isPending}>
           {create.isPending ? "Creating…" : "Create key"}
         </button>
@@ -126,8 +124,8 @@ function CreatePanel({ onCreated }: { onCreated: (c: CreatedAccessKey) => void }
   );
 }
 
-// SecretPanel shows a newly created secret exactly once.
-function SecretPanel({ created, onDismiss }: { created: CreatedAccessKey; onDismiss: () => void }) {
+// SecretCard shows a newly created secret exactly once.
+function SecretCard({ created, onDismiss }: { created: CreatedAccessKey; onDismiss: () => void }) {
   const toast = useToast();
   const copy = (text: string) => {
     void navigator.clipboard?.writeText(text).then(
@@ -137,7 +135,7 @@ function SecretPanel({ created, onDismiss }: { created: CreatedAccessKey; onDism
   };
 
   return (
-    <div className="panel">
+    <div className="card">
       <h2>New credential</h2>
       <div className="secret-box">
         <div className="warn">
@@ -145,14 +143,14 @@ function SecretPanel({ created, onDismiss }: { created: CreatedAccessKey; onDism
         </div>
         <dl className="kv">
           <dt>Access key</dt>
-          <dd className="mono">
+          <dd>
             {created.access_key}{" "}
             <button type="button" onClick={() => copy(created.access_key)}>
               Copy
             </button>
           </dd>
           <dt>Secret key</dt>
-          <dd className="mono">
+          <dd>
             {created.secret_key}{" "}
             <button type="button" onClick={() => copy(created.secret_key)}>
               Copy
@@ -160,8 +158,8 @@ function SecretPanel({ created, onDismiss }: { created: CreatedAccessKey; onDism
           </dd>
         </dl>
       </div>
-      <div className="row" style={{ marginTop: "0.75rem" }}>
-        <div className="spacer" />
+      <div className="actions" style={{ marginTop: "14px" }}>
+        <span className="spacer" />
         <button onClick={onDismiss}>Done</button>
       </div>
     </div>
@@ -191,33 +189,38 @@ export default function AccessKeys() {
     del.mutate({ accessKey });
   };
 
+  const count = list.data?.keys.length ?? 0;
+
   return (
     <>
-      <div className="page-head">
-        <h1>Access keys</h1>
-        <button onClick={() => void list.refetch()} disabled={list.isFetching}>
-          {list.isFetching ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
+      <div className="section-title">Access keys</div>
 
       {created && (
-        <SecretPanel created={created} onDismiss={() => setCreated(null)} />
+        <div style={{ marginBottom: "14px" }}>
+          <SecretCard created={created} onDismiss={() => setCreated(null)} />
+        </div>
       )}
 
-      <CreatePanel onCreated={setCreated} />
+      <div style={{ marginBottom: "14px" }}>
+        <CreatePanel onCreated={setCreated} />
+      </div>
 
-      <div className="panel">
-        <h2>Configured credentials</h2>
-        {list.isLoading && <p className="muted">Loading…</p>}
-        {list.error && (
-          <p className="muted">Failed to load: {list.error.error_message}</p>
-        )}
+      <div className="card">
+        <h2>
+          Configured credentials
+          <span className="sub">
+            {count} credential{count === 1 ? "" : "s"}
+          </span>
+        </h2>
+
+        {list.isLoading && <div className="empty">Loading…</div>}
+        {list.error && <div className="err-box">{list.error.error_message}</div>}
         {list.data && list.data.keys.length === 0 && (
           <div className="empty">No access keys.</div>
         )}
         {list.data && list.data.keys.length > 0 && (
-          <div className="table-wrap">
-            <table>
+          <div className="scroll">
+            <table className="left">
               <thead>
                 <tr>
                   <th>Access key</th>
@@ -230,14 +233,18 @@ export default function AccessKeys() {
               <tbody>
                 {list.data.keys.map((k) => (
                   <tr key={k.access_key}>
-                    <td className="mono">{k.access_key}</td>
+                    <td>{k.access_key}</td>
                     <td>
                       <GrantList grants={k.grants} />
                     </td>
                     <td>
-                      <span className={`badge badge-${k.source}`}>{k.source}</span>
+                      {k.source === "managed" ? (
+                        <span className="chip on">managed</span>
+                      ) : (
+                        <span className="chip">config</span>
+                      )}
                     </td>
-                    <td className="muted">
+                    <td>
                       {k.created_at
                         ? new Date(k.created_at).toLocaleString()
                         : "—"}
@@ -252,7 +259,7 @@ export default function AccessKeys() {
                           Delete
                         </button>
                       ) : (
-                        <span className="muted" title="Defined in config">
+                        <span className="empty" title="Defined in config">
                           read-only
                         </span>
                       )}
