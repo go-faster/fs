@@ -209,16 +209,37 @@ a:hover {
   flex-direction: column;
 }
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+  isolation: isolate;
+}
+/* Digital rain lives behind the bar; a scrim keeps the controls legible. */
+.topbar .matrix-canvas {
+  z-index: 0;
+}
+.topbar__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    90deg,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 32%, transparent) 26%,
+    color-mix(in srgb, var(--bg) 32%, transparent) 68%,
+    var(--bg) 100%
+  );
+}
+.topbar__content {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 15px 30px;
-  border-bottom: 1px solid var(--line);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: color-mix(in srgb, var(--bg) 84%, transparent);
-  backdrop-filter: blur(8px);
 }
 .topbar h1 {
   font-size: 15px;
@@ -227,6 +248,9 @@ a:hover {
   color: var(--fg-strong);
   font-family: var(--mono);
   letter-spacing: -0.01em;
+  text-shadow:
+    0 0 6px color-mix(in srgb, var(--accent) 70%, transparent),
+    0 0 14px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .topbar .sub {
   font-size: 10.5px;
@@ -234,6 +258,7 @@ a:hover {
   text-transform: uppercase;
   letter-spacing: 0.13em;
   font-weight: 600;
+  text-shadow: 0 1px 3px var(--bg);
 }
 .topbar .spacer {
   flex: 1;
@@ -243,6 +268,7 @@ a:hover {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-family: var(--mono);
+  text-shadow: 0 1px 3px var(--bg);
 }
 .page {
   padding: 26px 30px 60px;
@@ -588,60 +614,15 @@ select:focus {
   border-left-color: var(--accent);
 }
 
-/* Matrix digital-rain hero — a decorative brand band matching the card shell
-   (line border, radius). Drawn from the theme tokens: brass accent trail, a
-   strong-foreground leading glyph, base-colored fade wash. */
-.matrix-hero {
-  position: relative;
-  height: 132px;
-  margin-bottom: 22px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--bg);
-  isolation: isolate;
-}
+/* Digital-rain canvas, drawn from the theme tokens (brass accent trail, strong
+   foreground leading glyph, base-colored fade). Sized to its parent (the
+   topbar), where it sits behind the controls. */
 .matrix-canvas {
   position: absolute;
   inset: 0;
   display: block;
   width: 100%;
   height: 100%;
-}
-.matrix-hero__content {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0 26px;
-  background: linear-gradient(
-    90deg,
-    var(--bg) 0%,
-    color-mix(in srgb, var(--bg) 55%, transparent) 45%,
-    transparent 100%
-  );
-  pointer-events: none;
-}
-.matrix-hero__title {
-  font-family: var(--mono);
-  font-size: 1.7rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  color: var(--fg-strong);
-  text-shadow:
-    0 0 6px color-mix(in srgb, var(--accent) 80%, transparent),
-    0 0 16px color-mix(in srgb, var(--accent) 50%, transparent);
-}
-.matrix-hero__subtitle {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.13em;
-  font-weight: 600;
-  color: var(--muted);
 }
 
 @media (max-width: 760px) {

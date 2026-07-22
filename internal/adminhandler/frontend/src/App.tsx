@@ -69,16 +69,20 @@ function Topbar() {
 
   return (
     <header className="topbar">
-      <h1>fs</h1>
-      <span className="sub">Admin Panel</span>
-      <span className="spacer" />
-      <span className="meta">{meta}</span>
-      <button
-        onClick={() => void qc.invalidateQueries()}
-        disabled={info.isFetching}
-      >
-        {info.isFetching ? "Refreshing…" : "Refresh"}
-      </button>
+      <MatrixRain />
+      <div className="topbar__scrim" aria-hidden="true" />
+      <div className="topbar__content">
+        <h1>fs</h1>
+        <span className="sub">Admin Panel</span>
+        <span className="spacer" />
+        <span className="meta">{meta}</span>
+        <button
+          onClick={() => void qc.invalidateQueries()}
+          disabled={info.isFetching}
+        >
+          {info.isFetching ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
     </header>
   );
 }
@@ -112,16 +116,6 @@ function Layout() {
       <div className="content">
         <Topbar />
         <div className="page">
-          <div className="matrix-hero">
-            <MatrixRain />
-            <div className="matrix-hero__content">
-              <span className="matrix-hero__title">fs admin</span>
-              <span className="matrix-hero__subtitle">
-                go-faster/fs · S3 access control
-              </span>
-            </div>
-          </div>
-
           <Routes>
             <Route path="/" element={<Overview />} />
             <Route path="/access-keys" element={<AccessKeys />} />
