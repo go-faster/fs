@@ -18,9 +18,15 @@ import (
 // codec must read the finished data fragments), so encoding is two-phase:
 // EncodeStream first streams the body into the data fragments (replicas or EC
 // data shards) in a single pass, then re-reads them via the caller's SourceFunc
-// (clusterstore points it at the staging files) to produce the parity
-// fragments. This mirrors how the replica schemes ack anyway: W=2 data copies
-// synchronously, parity behind the async queue.
+// (clusterstore points it at the staging files) to produce the remainder
+// fragments. The phase split matches scheme.WriteQuorum: the replica schemes
+// ack after W=2 synchronous copies, and the third target's payload — the
+// RF=2.5 parity or the RF=3 trailing replica — is produced behind the async
+// queue.
+
+// writeQuorumReplicas is the number of replicas the synchronous data phase
+// writes for the replica schemes (scheme.WriteQuorum for RF=2.5 and RF=3).
+const writeQuorumReplicas = 2
 
 // Item describes one planned fragment: its destination, what it holds, its
 // index, and the exact payload size for an object of the planned length.
@@ -247,10 +253,11 @@ func writeECShards(plan []Item, s scheme.Scheme, objSize int64, body io.Reader, 
 }
 
 // EncodeDataStream is the synchronous half of the write path: it streams the
-// body into only the data fragments (full replicas, or EC data shards) in a
-// single pass — the fragments a write quorum waits on. Parity is produced
-// afterwards by EncodeParityStream (typically behind the async repair queue).
-// EncodeStream chains the two for callers that want both at once.
+// body into only the write-quorum fragments (the first two replicas for the
+// replica schemes, or the EC data shards) in a single pass — the fragments a
+// write quorum waits on. The remainder is produced afterwards by
+// EncodeParityStream (typically behind the async repair queue). EncodeStream
+// chains the two for callers that want both at once.
 func EncodeDataStream(plan []Item, s scheme.Scheme, objSize int64, body io.Reader, sink SinkFunc) error {
 	if err := s.Validate(); err != nil {
 		return err
@@ -261,10 +268,8 @@ func EncodeDataStream(plan []Item, s scheme.Scheme, objSize int64, body io.Reade
 	}
 
 	switch s.Kind {
-	case scheme.RF3:
-		return writeReplicas(plan, objSize, body, sink)
-	case scheme.RF25:
-		return writeReplicas(plan[:2], objSize, body, sink)
+	case scheme.RF3, scheme.RF25:
+		return writeReplicas(plan[:writeQuorumReplicas], objSize, body, sink)
 	case scheme.EC:
 		return writeECShards(plan, s, objSize, body, sink)
 	default:
@@ -272,10 +277,10 @@ func EncodeDataStream(plan []Item, s scheme.Scheme, objSize int64, body io.Reade
 	}
 }
 
-// EncodeParityStream produces the parity fragments for an already-written
-// object by re-reading its data fragments. It is the asynchronous half of the
-// write path (see EncodeDataStream). plan must be the full Plan result. A
-// no-op for RF=3 and empty objects.
+// EncodeParityStream produces the remainder fragments for an already-written
+// object by re-reading its data fragments: the RF=2.5 half-parity, the RF=3
+// trailing replica, or the EC parity shards. It is the asynchronous half of
+// the write path (see EncodeDataStream). plan must be the full Plan result.
 func EncodeParityStream(plan []Item, s scheme.Scheme, objSize int64, sink SinkFunc, reopen SourceFunc) error {
 	if err := s.Validate(); err != nil {
 		return err
@@ -287,7 +292,7 @@ func EncodeParityStream(plan []Item, s scheme.Scheme, objSize int64, sink SinkFu
 
 	switch s.Kind {
 	case scheme.RF3:
-		return nil
+		return writeThirdReplica(plan, objSize, sink, reopen)
 	case scheme.RF25:
 		return writeHalfParity(plan, objSize, sink, reopen)
 	case scheme.EC:
@@ -295,6 +300,38 @@ func EncodeParityStream(plan []Item, s scheme.Scheme, objSize int64, sink SinkFu
 	default:
 		return errors.Errorf("unknown scheme kind %d", s.Kind)
 	}
+}
+
+// writeThirdReplica produces the RF=3 trailing replica by re-reading the
+// primary (plan[0]) — the async remainder of an RF=3 write, mirroring the
+// RF=2.5 parity pass.
+func writeThirdReplica(plan []Item, objSize int64, sink SinkFunc, reopen SourceFunc) error {
+	w, err := sink(plan[2])
+	if err != nil {
+		return errors.Wrap(err, "open third replica sink")
+	}
+
+	if objSize > 0 {
+		r, err := reopen(plan[0])
+		if err != nil {
+			_ = w.Close()
+			return errors.Wrap(err, "reopen primary replica")
+		}
+
+		_, err = io.CopyN(w, r, objSize)
+		_ = r.Close()
+
+		if err != nil {
+			_ = w.Close()
+			return errors.Wrap(err, "stream third replica")
+		}
+	}
+
+	if err := w.Close(); err != nil {
+		return errors.Wrap(err, "close third replica sink")
+	}
+
+	return nil
 }
 
 // writeECParity re-reads the k data shards and streams the m parity shards.
