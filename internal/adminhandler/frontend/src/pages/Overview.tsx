@@ -16,46 +16,51 @@ export default function Overview() {
   const info = useGetInfo();
   const keys = useListAccessKeys();
 
+  const managed = keys.data?.keys.filter((k) => k.source === "managed").length;
+
   return (
     <>
-      <div className="page-head">
-        <h1>Overview</h1>
-      </div>
+      <div className="section-title">Instance</div>
+      <div className="grid">
+        <div className="card">
+          <h2>Build</h2>
+          {info.isLoading && <div className="empty">Loading…</div>}
+          {info.error && (
+            <div className="err-box">{info.error.error_message}</div>
+          )}
+          {info.data && (
+            <dl className="kv">
+              <dt>Version</dt>
+              <dd>{info.data.version}</dd>
+              <dt>Commit</dt>
+              <dd>{info.data.commit}</dd>
+              <dt>Runtime</dt>
+              <dd>
+                {info.data.go_version} · {info.data.os}/{info.data.arch}
+              </dd>
+              <dt>Uptime</dt>
+              <dd>{fmtUptime(info.data.uptime_seconds)}</dd>
+              <dt>Auth</dt>
+              <dd>{info.data.auth_enabled ? "enabled · SigV4" : "disabled"}</dd>
+            </dl>
+          )}
+        </div>
 
-      <div className="panel">
-        <h2>Instance</h2>
-        {info.isLoading && <p className="muted">Loading…</p>}
-        {info.error && <p className="muted">Failed to load: {info.error.error_message}</p>}
-        {info.data && (
-          <dl className="kv">
-            <dt>Version</dt>
-            <dd className="mono">{info.data.version}</dd>
-            <dt>Commit</dt>
-            <dd className="mono">{info.data.commit}</dd>
-            <dt>Runtime</dt>
-            <dd className="mono">
-              {info.data.go_version} · {info.data.os}/{info.data.arch}
-            </dd>
-            <dt>Uptime</dt>
-            <dd>{fmtUptime(info.data.uptime_seconds)}</dd>
-            <dt>Authentication</dt>
-            <dd>{info.data.auth_enabled ? "enabled (SigV4)" : "disabled"}</dd>
-          </dl>
-        )}
-      </div>
-
-      <div className="panel">
-        <h2>Access keys</h2>
-        {keys.data ? (
-          <p>
-            <strong>{keys.data.keys.length}</strong> credential
-            {keys.data.keys.length === 1 ? "" : "s"} configured (
-            {keys.data.keys.filter((k) => k.source === "managed").length} managed
-            at runtime).
-          </p>
-        ) : (
-          <p className="muted">Loading…</p>
-        )}
+        <div className="card">
+          <h2>Access keys</h2>
+          {keys.data ? (
+            <dl className="kv">
+              <dt>Total</dt>
+              <dd>{keys.data.keys.length}</dd>
+              <dt>Runtime-managed</dt>
+              <dd>{managed}</dd>
+              <dt>Config</dt>
+              <dd>{keys.data.keys.length - (managed ?? 0)}</dd>
+            </dl>
+          ) : (
+            <div className="empty">Loading…</div>
+          )}
+        </div>
       </div>
     </>
   );
