@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 
@@ -27,6 +28,9 @@ type Store interface {
 	Stat(ctx context.Context, disk cluster.DiskID, name string) (int64, error)
 	// Delete removes the fragment, or ErrNotFound.
 	Delete(ctx context.Context, disk cluster.DiskID, name string) error
+	// List returns the names on a disk with the given prefix, sorted
+	// lexicographically. An unknown prefix is an empty listing, not an error.
+	List(ctx context.Context, disk cluster.DiskID, prefix string) ([]string, error)
 }
 
 // ValidName reports whether a fragment name is safe to serve: non-empty,
@@ -115,6 +119,24 @@ func (s *MemStore) Stat(_ context.Context, disk cluster.DiskID, name string) (in
 	}
 
 	return int64(len(data)), nil
+}
+
+// List implements Store.
+func (s *MemStore) List(_ context.Context, disk cluster.DiskID, prefix string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var names []string
+
+	for key := range s.frags {
+		if key.disk == disk && strings.HasPrefix(key.name, prefix) {
+			names = append(names, key.name)
+		}
+	}
+
+	sort.Strings(names)
+
+	return names, nil
 }
 
 // Delete implements Store.

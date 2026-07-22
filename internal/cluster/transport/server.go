@@ -35,6 +35,7 @@ func NewServer(store Store, secret Secret) *Server {
 	s.mux.HandleFunc("GET /v1/fragments/{disk}/{name...}", s.get)
 	s.mux.HandleFunc("HEAD /v1/fragments/{disk}/{name...}", s.stat)
 	s.mux.HandleFunc("DELETE /v1/fragments/{disk}/{name...}", s.delete)
+	s.mux.HandleFunc("GET /v1/names/{disk}/{prefix...}", s.list)
 
 	return s
 }
@@ -135,6 +136,43 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		// Mid-stream failure: the missing/invalid trailer makes the client
 		// reject the payload.
 		return
+	}
+
+	digest := hex.EncodeToString(hash.Sum(nil))
+
+	w.Header().Set(headerDigest, digest)
+	w.Header().Set(headerRespAuth, s.secret.signResponse(r.Header.Get(headerAuth), digest))
+}
+
+// list streams the fragment names matching a prefix, newline-separated, with
+// the digest and response signature as trailers (same integrity contract as
+// get). The prefix travels in the path — not the query — so it is bound into
+// the request signature; a tampered prefix cannot silently shrink a listing.
+func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	disk := cluster.DiskID(r.PathValue("disk"))
+	if disk == "" {
+		http.Error(w, "bad list path", http.StatusBadRequest)
+		return
+	}
+
+	names, err := s.store.List(r.Context(), disk, r.PathValue("prefix"))
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+
+	w.Header().Set("Trailer", headerDigest+", "+headerRespAuth)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	hash := sha256.New()
+	out := io.MultiWriter(w, hash)
+
+	for _, name := range names {
+		if _, err := io.WriteString(out, name+"\n"); err != nil {
+			// Mid-stream failure: the missing trailer fails the client read.
+			return
+		}
 	}
 
 	digest := hex.EncodeToString(hash.Sum(nil))
