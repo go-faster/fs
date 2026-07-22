@@ -2,10 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { writeFileSync } from "node:fs";
 
-// The built SPA (dist/) is committed so a plain `go build` embeds the real UI.
-// emptyOutDir wipes the dist/.gitkeep placeholder on every build, so recreate it
-// once the bundle is written to keep the go:embed directive happy on a clean
-// checkout even before the first build.
+// The built SPA (dist/) is not committed; only dist/.gitkeep is, so the Go
+// go:embed directive compiles on a fresh checkout. emptyOutDir wipes that
+// placeholder on every build, so recreate it once the bundle is written.
 function keepPlaceholder() {
   return {
     name: "keep-dist-placeholder",
