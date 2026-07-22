@@ -222,6 +222,35 @@ func (c *Coordinator) waitKey(bucket, key string) {
 	c.inflightMu.Unlock()
 }
 
+// exclusiveKey acquires the object's async-work slot exclusively: it waits
+// for pending remainder work, then holds the slot so mutating operations
+// (which waitKey first) block until release. The repairer uses it so a repair
+// pass never races a write's remainder — and a write never lands mid-repair
+// (where the repairer's stale-generation sweep could delete it).
+func (c *Coordinator) exclusiveKey(bucket, key string) (release func()) {
+	ref := objectRef(bucket, key)
+
+	c.inflightMu.Lock()
+	for c.inflight[ref] > 0 {
+		c.inflightCond.Wait()
+	}
+
+	c.inflight[ref]++
+	c.inflightMu.Unlock()
+
+	return func() {
+		c.inflightMu.Lock()
+
+		c.inflight[ref]--
+		if c.inflight[ref] <= 0 {
+			delete(c.inflight, ref)
+		}
+
+		c.inflightCond.Broadcast()
+		c.inflightMu.Unlock()
+	}
+}
+
 // Flush blocks until every async task enqueued so far has completed. It is a
 // test and shutdown aid; new writes may enqueue more work concurrently.
 func (c *Coordinator) Flush() {

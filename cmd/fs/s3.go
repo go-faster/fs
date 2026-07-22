@@ -155,6 +155,9 @@ Command-line flags override YAML configuration values.`,
 					}
 
 					storage = clusterRT.Storage
+
+					// Cluster-wide scrub/repair on the single-node scrub cadence.
+					go clusterRT.RunScrubber(ctx, cfg.Integrity.ScrubInterval)
 				default: // StorageTypeFilesystem, enforced by Validate.
 					syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
 					if err != nil {
