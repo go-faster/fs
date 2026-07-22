@@ -28,6 +28,7 @@ type clusterRuntime struct {
 	Storage fs.Storage
 
 	server   *http.Server
+	repairer *clusterstore.Repairer
 	listener net.Listener
 	addr     string
 	lg       *zap.Logger
@@ -173,6 +174,22 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	rt.closers = append(rt.closers, coord.Close)
 	rt.Storage = clusterstore.NewStorage(coord)
 
+	rt.repairer, err = clusterstore.NewRepairer(clusterstore.RepairerConfig{
+		Coordinator: coord,
+		Self:        rt.nodeID,
+		Verify:      true,
+		OnError: func(bucket, key string, err error) {
+			lg.Warn("Object repair failed",
+				zap.String("bucket", bucket), zap.String("key", key), zap.Error(err))
+		},
+	})
+	if err != nil {
+		_ = listener.Close()
+		_ = rt.close()
+
+		return nil, errors.Wrap(err, "cluster repairer")
+	}
+
 	rt.server = &http.Server{
 		Handler:           transport.NewServer(store, secret),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -218,6 +235,54 @@ func (rt *clusterRuntime) Serve(ctx context.Context) error {
 	}
 
 	return err
+}
+
+// RunScrubber periodically walks this node's disks and repairs every object
+// found — the cluster-wide scrub/repair loop (checksum-verifying). A no-op
+// when interval is zero.
+func (rt *clusterRuntime) RunScrubber(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+
+	rt.lg.Info("Cluster scrubber enabled", zap.Duration("interval", interval))
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		report, err := rt.repairer.Scrub(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				rt.lg.Warn("Cluster scrub pass failed", zap.Error(err))
+			}
+
+			continue
+		}
+
+		log := rt.lg.Debug
+		if report.Repaired > 0 || report.Failed > 0 || report.Totals.ECUnverified {
+			log = rt.lg.Warn
+		}
+
+		log("Cluster scrub pass",
+			zap.Int("objects", report.Objects),
+			zap.Int("repaired", report.Repaired),
+			zap.Int("failed", report.Failed),
+			zap.Int("rebuilt_fragments", report.Totals.RebuiltFragments),
+			zap.Int("rewritten_sidecars", report.Totals.RewrittenSidecars),
+			zap.Int("deleted_stale", report.Totals.DeletedStale),
+			zap.Int("corrupt_replicas", report.Totals.CorruptReplicas),
+			zap.Int("unknown_dirs", report.UnknownDirs),
+			zap.Bool("ec_unverified", report.Totals.ECUnverified),
+		)
+	}
 }
 
 // close tears down the node in reverse construction order: coordinator (async
