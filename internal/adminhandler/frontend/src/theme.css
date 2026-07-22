@@ -365,3 +365,64 @@ label {
 .spacer {
   flex: 1;
 }
+
+/* Matrix digital-rain hero — a decorative top panel matching the panel shell
+   (radius/border/shadow/spacing/type). The rain is drawn from the theme's own
+   tokens (accent trail, foreground head, panel-colored fade), so it tracks
+   light/dark like the rest of the dashboard. */
+.matrix-hero {
+  position: relative;
+  height: 150px;
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  background: var(--panel);
+  isolation: isolate;
+}
+
+.matrix-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Panel-colored left-to-right scrim keeps the title legible over the rain. */
+.matrix-hero__content {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0 1.5rem;
+  background: linear-gradient(
+    90deg,
+    var(--panel) 0%,
+    color-mix(in srgb, var(--panel) 60%, transparent) 45%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.matrix-hero__title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-shadow:
+    0 0 6px color-mix(in srgb, var(--accent) 80%, transparent),
+    0 0 16px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.matrix-hero__subtitle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}

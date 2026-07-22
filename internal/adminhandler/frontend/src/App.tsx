@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { getToken, setToken, clearToken, subscribe } from "./lib/auth";
+import MatrixRain from "./components/MatrixRain";
 import Overview from "./pages/Overview";
 import AccessKeys from "./pages/AccessKeys";
 
@@ -69,6 +70,15 @@ function Layout() {
         </div>
       </aside>
       <main className="main">
+        <header className="matrix-hero">
+          <MatrixRain />
+          <div className="matrix-hero__content">
+            <span className="matrix-hero__title">fs admin</span>
+            <span className="matrix-hero__subtitle">
+              go-faster/fs · S3 access control
+            </span>
+          </div>
+        </header>
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/access-keys" element={<AccessKeys />} />
