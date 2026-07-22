@@ -20,6 +20,7 @@ type Peer interface {
 	Get(ctx context.Context, disk cluster.DiskID, name string) (io.ReadCloser, int64, error)
 	Stat(ctx context.Context, disk cluster.DiskID, name string) (int64, error)
 	Delete(ctx context.Context, disk cluster.DiskID, name string) error
+	List(ctx context.Context, disk cluster.DiskID, prefix string) ([]string, error)
 }
 
 var _ Peer = (*transport.Client)(nil)
@@ -73,6 +74,11 @@ func (p LocalPeer) Stat(ctx context.Context, disk cluster.DiskID, name string) (
 // Delete implements Peer.
 func (p LocalPeer) Delete(ctx context.Context, disk cluster.DiskID, name string) error {
 	return p.Store.Delete(ctx, disk, name)
+}
+
+// List implements Peer.
+func (p LocalPeer) List(ctx context.Context, disk cluster.DiskID, prefix string) ([]string, error) {
+	return p.Store.List(ctx, disk, prefix)
 }
 
 // HTTPPeers is the production PeerDialer: the node's own targets go straight

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/fragment"
 	"github.com/go-faster/fs/internal/cluster/placement"
@@ -104,6 +105,10 @@ func (errPeer) Get(context.Context, cluster.DiskID, string) (io.ReadCloser, int6
 
 func (errPeer) Stat(context.Context, cluster.DiskID, string) (int64, error) { return 0, errNodeDown }
 func (errPeer) Delete(context.Context, cluster.DiskID, string) error        { return errNodeDown }
+
+func (errPeer) List(context.Context, cluster.DiskID, string) ([]string, error) {
+	return nil, errNodeDown
+}
 
 // fakeCluster is an in-process cluster: one tracking store per node, direct
 // LocalPeer dialing, per-node kill switch.
@@ -573,9 +578,23 @@ func TestHTTPCluster(t *testing.T) {
 	assert.Equal(t, "rf2.5", sc.Scheme)
 	assert.True(t, bytes.Equal(data, readObject(t, reader, "видео/clip 01.mp4")), "cross-node read")
 
+	// Scatter-gather listing and the bucket registry over real transport.
+	require.NoError(t, writer.CreateBucket(t.Context(), "b", fs.ACLPrivate))
+
+	listed, err := reader.ListObjects(t.Context(), "b", "видео/")
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, "видео/clip 01.mp4", listed[0].Key)
+
+	buckets, err := reader.ListBuckets(t.Context())
+	require.NoError(t, err)
+	require.Len(t, buckets, 1)
+	assert.Equal(t, "b", buckets[0].Name)
+
+	require.NoError(t, reader.DeleteBucket(t.Context(), "b"))
 	require.NoError(t, reader.Delete(t.Context(), "b", "видео/clip 01.mp4"))
 
-	_, _, err := writer.Get(t.Context(), "b", "видео/clip 01.mp4")
+	_, _, err = writer.Get(t.Context(), "b", "видео/clip 01.mp4")
 	require.ErrorIs(t, err, ErrNotFound)
 
 	for id, s := range stores {

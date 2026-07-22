@@ -138,6 +138,50 @@ func (c *Client) Get(ctx context.Context, disk cluster.DiskID, name string) (io.
 	}, size, nil
 }
 
+// List returns the peer's fragment names matching prefix on a disk, sorted.
+// The newline-separated body is digest-verified via the same trailer contract
+// as Get, so a truncated or tampered listing never parses cleanly.
+func (c *Client) List(ctx context.Context, disk cluster.DiskID, prefix string) ([]string, error) {
+	u := *c.base
+	u.Path = strings.TrimSuffix(c.base.Path, "/") + "/v1/names/" + string(disk) + "/" + prefix
+	u.RawPath = "" // force re-encoding from the decoded Path
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
+	if err != nil {
+		return nil, errors.Wrap(err, "build request")
+	}
+
+	reqSig := c.secret.authenticate(req, c.node, c.now())
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "list fragments")
+	}
+
+	if err := statusError(resp); err != nil {
+		drainClose(resp)
+		return nil, err
+	}
+
+	body, err := io.ReadAll(&verifyingReader{
+		resp:   resp,
+		secret: c.secret,
+		reqSig: reqSig,
+		hash:   sha256.New(),
+	})
+	_ = resp.Body.Close()
+
+	if err != nil {
+		return nil, errors.Wrap(err, "read listing")
+	}
+
+	if len(body) == 0 {
+		return nil, nil
+	}
+
+	return strings.Split(strings.TrimSuffix(string(body), "\n"), "\n"), nil
+}
+
 // Stat reports the size of the named fragment on the peer.
 func (c *Client) Stat(ctx context.Context, disk cluster.DiskID, name string) (int64, error) {
 	if !ValidName(name) {

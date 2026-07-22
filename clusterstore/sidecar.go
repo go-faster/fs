@@ -96,13 +96,22 @@ func decodeSidecar(data []byte) (*Sidecar, error) {
 	return &sc, nil
 }
 
-// objectBase is the per-object fragment namespace: object keys are arbitrary
-// unicode (and may collide with path syntax), so the directory is a hash and
-// the human-readable bucket/key live in the sidecar.
+// bucketObjectsPrefix is the store-name prefix holding every object of a
+// bucket. The bucket gets its own hashed namespace segment so a per-bucket
+// listing is a single prefix scan.
+func bucketObjectsPrefix(bucket string) string {
+	sum := sha256.Sum256([]byte(bucket))
+
+	return "obj/" + hex.EncodeToString(sum[:]) + "/"
+}
+
+// objectBase is the per-object fragment namespace: bucket names and object
+// keys are arbitrary unicode (and may collide with path syntax), so both
+// segments are hashes and the human-readable bucket/key live in the sidecar.
 func objectBase(bucket, key string) string {
 	sum := sha256.Sum256([]byte(bucket + "\x00" + key))
 
-	return "obj/" + hex.EncodeToString(sum[:])
+	return bucketObjectsPrefix(bucket) + hex.EncodeToString(sum[:])
 }
 
 // sidecarName is the sidecar's fragment name. It is generation-less: replacing
