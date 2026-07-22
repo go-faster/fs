@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -27,6 +28,7 @@ type clusterRuntime struct {
 	Storage fs.Storage
 
 	server   *http.Server
+	listener net.Listener
 	addr     string
 	lg       *zap.Logger
 	closers  []func() error
@@ -86,6 +88,22 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		schemeID: defaultScheme.String(),
 	}
 
+	// Bind the peer listener BEFORE registering in etcd: the moment the node
+	// appears in the topology, peers may dial it — a registered node without
+	// an accepting socket serves connection-refused to its cluster.
+	addr := cc.Addr
+	if addr == "" {
+		addr = DefaultClusterAddr
+	}
+
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, errors.Wrap(err, "bind cluster listener")
+	}
+
+	rt.listener = listener
+	rt.addr = listener.Addr().String()
+
 	// Control plane: etcd client, this node's leased registration, and the
 	// watched topology.
 	client, err := clientv3.New(clientv3.Config{
@@ -93,6 +111,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
+		_ = listener.Close()
 		return nil, errors.Wrap(err, "etcd client")
 	}
 
@@ -110,7 +129,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		Disks: disks,
 	})
 	if err != nil {
+		_ = listener.Close()
 		_ = rt.close()
+
 		return nil, errors.Wrap(err, "register node")
 	}
 
@@ -118,7 +139,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	source, err := etcd.NewSource(ctx, client, etcdCfg)
 	if err != nil {
+		_ = listener.Close()
 		_ = rt.close()
+
 		return nil, errors.Wrap(err, "watch topology")
 	}
 
@@ -140,7 +163,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		},
 	})
 	if err != nil {
+		_ = listener.Close()
 		_ = rt.close()
+
 		return nil, errors.Wrap(err, "cluster coordinator")
 	}
 
@@ -148,14 +173,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	rt.closers = append(rt.closers, coord.Close)
 	rt.Storage = clusterstore.NewStorage(coord)
 
-	addr := cc.Addr
-	if addr == "" {
-		addr = DefaultClusterAddr
-	}
-
-	rt.addr = addr
 	rt.server = &http.Server{
-		Addr:              addr,
 		Handler:           transport.NewServer(store, secret),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -175,7 +193,7 @@ func (rt *clusterRuntime) Serve(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
 	go func() {
-		if err := rt.server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		if err := rt.server.Serve(rt.listener); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
