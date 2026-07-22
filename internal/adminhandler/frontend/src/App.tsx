@@ -72,7 +72,7 @@ function Topbar() {
       <MatrixRain />
       <div className="topbar__scrim" aria-hidden="true" />
       <div className="topbar__content">
-        <h1>fs</h1>
+        <h1>go-faster / fs</h1>
         <span className="sub">Admin Panel</span>
         <span className="spacer" />
         <span className="meta">{meta}</span>
