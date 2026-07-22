@@ -46,6 +46,8 @@ type PutRequest struct {
 // behind the async queue. A write that cannot reach quorum is refused and
 // leaves no new committed state.
 func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error) {
+	c.waitKey(req.Bucket, req.Key)
+
 	topo := c.topo.Topology()
 	s := c.schemeFor(req.Bucket)
 	pkey := placement.ObjectKey(req.Bucket, req.Key)
@@ -131,7 +133,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		return nil, err
 	}
 
-	c.enqueue(func() {
+	c.enqueue(req.Bucket, req.Key, func() {
 		bg, cancel := context.WithTimeout(context.Background(), asyncTimeout)
 		defer cancel()
 
@@ -139,6 +141,55 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 	})
 
 	return sc, nil
+}
+
+// UpdateSidecar rewrites an object's committed metadata in place (tags, ACL —
+// anything that does not touch payload fragments): the sidecar is fetched,
+// mutated, and re-replicated to the object's targets, quorum synchronously
+// and the remainder best-effort. Concurrent Put/Update races on the same key
+// are the caller's to serialize (the fs.Storage layer holds a per-key lock);
+// cross-node races follow last-write-wins per target like every sidecar
+// write.
+func (c *Coordinator) UpdateSidecar(ctx context.Context, bucket, key string, mutate func(*Sidecar)) error {
+	c.waitKey(bucket, key)
+
+	topo := c.topo.Topology()
+
+	sc, err := c.fetchSidecar(ctx, topo, bucket, key)
+	if err != nil {
+		return err
+	}
+
+	s, plan, peers, err := c.planFor(topo, sc)
+	if err != nil {
+		return err
+	}
+
+	mutate(sc)
+
+	data, err := sc.encode()
+	if err != nil {
+		return err
+	}
+
+	name := sidecarName(bucket, key)
+
+	for i := range plan {
+		err := putBytes(ctx, peers[i], plan[i].Target.Disk, name, data)
+		if err == nil {
+			continue
+		}
+
+		if i < s.WriteQuorum() {
+			// Sub-quorum: already-updated targets diverge until repair, but
+			// the caller learns the update did not durably land.
+			return errors.Wrapf(err, "update sidecar on %s/%s", plan[i].Target.Node, plan[i].Target.Disk)
+		}
+
+		c.onErr(bucket, key, errors.Wrapf(err, "extend sidecar update to %s/%s", plan[i].Target.Node, plan[i].Target.Disk))
+	}
+
+	return nil
 }
 
 // dialPlan resolves the peer for every planned fragment, indexed by

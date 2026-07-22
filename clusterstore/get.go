@@ -54,6 +54,8 @@ func (c *Coordinator) Stat(ctx context.Context, bucket, key string) (*Sidecar, e
 // fragments, best-effort across all placement targets. Deleting an absent
 // object returns ErrNotFound.
 func (c *Coordinator) Delete(ctx context.Context, bucket, key string) error {
+	c.waitKey(bucket, key)
+
 	topo := c.topo.Topology()
 
 	sc, err := c.fetchSidecar(ctx, topo, bucket, key)
