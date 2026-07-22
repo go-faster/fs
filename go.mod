@@ -16,6 +16,7 @@ require (
 	github.com/go-faster/jx v1.2.0
 	github.com/go-faster/sdk v0.37.0
 	github.com/google/uuid v1.6.0
+	github.com/klauspost/reedsolomon v1.14.1
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/ogen-go/ogen v1.22.0
 	github.com/spf13/cobra v1.10.2
@@ -58,7 +59,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/matryer/moq v0.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
