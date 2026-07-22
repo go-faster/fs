@@ -17,4 +17,5 @@ allow_dependencies_licenses:
   - 'pkg:golang/golang.org/x/sync'
   - 'pkg:golang/golang.org/x/sys'
   - 'pkg:golang/golang.org/x/text'
+  - 'pkg:golang/golang.org/x/time'
   - 'pkg:golang/golang.org/x/tools'
