@@ -6,12 +6,14 @@ import (
 	"crypto/md5" //nolint:gosec // Object checksums are MD5 by protocol.
 	"encoding/hex"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/fragment"
+	"github.com/go-faster/fs/internal/cluster/placement"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
@@ -91,18 +93,34 @@ func (r *RepairReport) add(o *RepairReport) {
 	r.ECUnverified = r.ECUnverified || o.ECUnverified
 }
 
-// RepairObject restores one object to full protection. It holds the object's
-// async-work slot exclusively, so writes to the key wait for the repair (and
-// the repair never races a pending remainder). Returns ErrNotFound when no
-// committed sidecar is reachable and ErrUnrecoverable when too few fragments
-// survive to rebuild.
+// localFragments describes one object's fragments found on a local disk by
+// the scrubber: extra rebuild sources (and sweep targets) beyond what the
+// remembered epochs predict — they keep relocation working even after a
+// restart lost the epoch memory.
+type localFragments struct {
+	disk cluster.DiskID
+	// gens maps generation → fragment indexes present locally.
+	gens map[string][]int
+}
+
+// RepairObject restores one object to full protection at the current epoch's
+// placement. It holds the object's async-work slot exclusively, so writes to
+// the key wait for the repair (and the repair never races a pending
+// remainder). Returns ErrNotFound when no committed sidecar is reachable and
+// ErrUnrecoverable when too few fragments survive to rebuild.
 func (r *Repairer) RepairObject(ctx context.Context, bucket, key string) (*RepairReport, error) {
+	return r.repair(ctx, bucket, key, nil, nil)
+}
+
+// repair is RepairObject plus scrub-provided hints: a locally-read sidecar
+// and locally-present fragments (relocation sources).
+func (r *Repairer) repair(ctx context.Context, bucket, key string, hint *Sidecar, local *localFragments) (*RepairReport, error) {
 	release := r.coord.exclusiveKey(bucket, key)
 	defer release()
 
 	topo := r.coord.topo.Topology()
 
-	sc, err := r.authoritativeSidecar(ctx, topo, bucket, key)
+	sc, err := r.authoritativeSidecar(ctx, bucket, key, hint)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +142,19 @@ func (r *Repairer) RepairObject(ctx context.Context, bucket, key string) (*Repai
 		r.verifyReplicas(ctx, sc, s, plan, peers, missing, report)
 	}
 
+	// Old-placement copies first: after a topology change the fragments are
+	// byte-identical, just on the wrong targets — a straight copy beats a
+	// scheme rebuild.
+	sources := r.fragmentSources(s, sc, local)
+	r.restoreFromCopies(ctx, sc, plan, peers, missing, sources, report)
+
+	// Last resort before declaring the object unrecoverable: hunt the whole
+	// cluster for same-index copies the epoch memory does not predict (e.g.
+	// old-placement fragments after a restart lost the memory).
+	if sc.Size > 0 && !recoverable(s, missing) {
+		r.huntAndRestore(ctx, sc, plan, peers, missing, report)
+	}
+
 	if err := r.rebuild(ctx, sc, s, plan, peers, missing, report); err != nil {
 		return report, err
 	}
@@ -132,28 +163,244 @@ func (r *Repairer) RepairObject(ctx context.Context, bucket, key string) (*Repai
 		r.verifyEC(ctx, sc, s, plan, peers, report)
 	}
 
+	// With the current placement fully healthy, retire old-placement copies
+	// (copy → verify → delete: an object is never below its protection level
+	// mid-move).
+	r.relocationSweep(ctx, sc, plan, peers, sources, local, report)
+
 	return report, nil
 }
 
+// fragmentSources maps fragment index → old-placement copies to restore from:
+// previous-epoch targets plus scrub-discovered local fragments.
+func (r *Repairer) fragmentSources(s scheme.Scheme, sc *Sidecar, local *localFragments) map[int][]candidateTarget {
+	sources := make(map[int][]candidateTarget)
+
+	plans := r.coord.epochPlans(s, sc.Bucket, sc.Key, sc.Size)
+	for _, ep := range plans[1:] { // plans[0] is the current epoch (the destination).
+		for _, item := range ep.plan {
+			sources[item.Index] = append(sources[item.Index], candidateTarget{target: item.Target, topo: ep.topo})
+		}
+	}
+
+	if local != nil {
+		topo := r.coord.topo.Topology()
+		for _, idx := range local.gens[sc.Generation] {
+			sources[idx] = append(sources[idx], candidateTarget{
+				target: placementTarget(r.self, local.disk),
+				topo:   topo,
+			})
+		}
+	}
+
+	return sources
+}
+
+// recoverable reports whether the scheme can rebuild the missing set without
+// further sources.
+func recoverable(s scheme.Scheme, missing map[int]struct{}) bool {
+	if s.Kind == scheme.EC {
+		return s.K+s.M-len(missing) >= s.K
+	}
+
+	for i := range s.FullReplicas() {
+		if _, gone := missing[i]; !gone {
+			return true
+		}
+	}
+
+	return false
+}
+
+// huntAndRestore scans every disk in the current topology for byte-identical
+// copies of still-missing fragments and copies them home. Expensive (a stat
+// per disk per fragment) and only used when the object would otherwise be
+// unrecoverable.
+func (r *Repairer) huntAndRestore(ctx context.Context, sc *Sidecar, plan []fragment.Item, peers []Peer, missing map[int]struct{}, report *RepairReport) {
+	topo := r.coord.topo.Topology()
+
+	for idx := range missing {
+		name := fragmentName(sc.Bucket, sc.Key, sc.Generation, idx)
+
+	hunt:
+		for ni := range topo.Nodes {
+			node := &topo.Nodes[ni]
+
+			p, err := r.coord.dial(topo, node.ID)
+			if err != nil {
+				continue
+			}
+
+			for _, disk := range node.Disks {
+				if node.ID == plan[idx].Target.Node && disk.ID == plan[idx].Target.Disk {
+					continue // The missing destination itself.
+				}
+
+				rc, size, err := p.Get(ctx, disk.ID, name)
+				if err != nil {
+					continue
+				}
+
+				if size != plan[idx].Size {
+					_ = rc.Close()
+					continue
+				}
+
+				err = peers[idx].Put(ctx, plan[idx].Target.Disk, name, size, rc)
+				_ = rc.Close()
+
+				if err != nil {
+					continue
+				}
+
+				delete(missing, idx)
+
+				report.RebuiltFragments++
+
+				break hunt
+			}
+		}
+	}
+}
+
+// restoreFromCopies fills missing fragments by streaming byte-identical
+// copies from old-placement sources.
+func (r *Repairer) restoreFromCopies(ctx context.Context, sc *Sidecar, plan []fragment.Item, peers []Peer, missing map[int]struct{}, sources map[int][]candidateTarget, report *RepairReport) {
+	for idx := range missing {
+		name := fragmentName(sc.Bucket, sc.Key, sc.Generation, idx)
+
+		for _, src := range sources[idx] {
+			if targetRef(src.target) == targetRef(plan[idx].Target) {
+				continue // The missing destination itself.
+			}
+
+			p, err := r.coord.dial(src.topo, src.target.Node)
+			if err != nil {
+				continue
+			}
+
+			rc, size, err := p.Get(ctx, src.target.Disk, name)
+			if err != nil {
+				continue
+			}
+
+			if size != plan[idx].Size {
+				_ = rc.Close()
+				continue
+			}
+
+			err = peers[idx].Put(ctx, plan[idx].Target.Disk, name, size, rc)
+			_ = rc.Close()
+
+			if err != nil {
+				continue
+			}
+
+			delete(missing, idx)
+
+			report.RebuiltFragments++
+
+			break
+		}
+	}
+}
+
+// relocationSweep retires everything that should no longer exist — stale
+// generations, misplaced committed-generation copies, whole old-placement
+// targets — but ONLY once every current-epoch fragment is verifiably in
+// place. Deletion is strictly copy → verify → delete: an object is never
+// taken below its protection level mid-move, and an unhealthy object is
+// never swept at all.
+func (r *Repairer) relocationSweep(ctx context.Context, sc *Sidecar, plan []fragment.Item, peers []Peer, sources map[int][]candidateTarget, local *localFragments, report *RepairReport) {
+	// Cutover gate: every current-epoch fragment must be durably present.
+	for i := range plan {
+		name := fragmentName(sc.Bucket, sc.Key, sc.Generation, plan[i].Index)
+		if size, err := peers[i].Stat(ctx, plan[i].Target.Disk, name); err != nil || size != plan[i].Size {
+			return
+		}
+	}
+
+	metaName := sidecarName(sc.Bucket, sc.Key)
+	base := objectBase(sc.Bucket, sc.Key) + "/"
+
+	// What each current-placement target may keep.
+	keep := make(map[diskRef]map[string]struct{}, len(plan))
+
+	for i := range plan {
+		ref := targetRef(plan[i].Target)
+		keep[ref] = map[string]struct{}{
+			metaName: {},
+			fragmentName(sc.Bucket, sc.Key, sc.Generation, plan[i].Index): {},
+		}
+	}
+
+	// Sweep set: current targets (down to their keep-set) plus every known
+	// old-placement location (down to nothing).
+	targets := make(map[diskRef]candidateTarget, len(plan))
+
+	topo := r.coord.topo.Topology()
+	for i := range plan {
+		targets[targetRef(plan[i].Target)] = candidateTarget{target: plan[i].Target, topo: topo}
+	}
+
+	for _, cands := range sources {
+		for _, ct := range cands {
+			if _, ok := targets[targetRef(ct.target)]; !ok {
+				targets[targetRef(ct.target)] = ct
+			}
+		}
+	}
+
+	if local != nil {
+		ct := candidateTarget{target: placementTarget(r.self, local.disk), topo: topo}
+		if _, ok := targets[targetRef(ct.target)]; !ok {
+			targets[targetRef(ct.target)] = ct
+		}
+	}
+
+	for ref, ct := range targets {
+		p, err := r.coord.dial(ct.topo, ct.target.Node)
+		if err != nil {
+			continue // Unreachable target: retired by a later pass.
+		}
+
+		names, err := p.List(ctx, ct.target.Disk, base)
+		if err != nil {
+			continue
+		}
+
+		for _, n := range names {
+			if _, ok := keep[ref][n]; ok {
+				continue
+			}
+
+			if err := p.Delete(ctx, ct.target.Disk, n); err == nil {
+				report.DeletedStale++
+			}
+		}
+	}
+}
+
 // authoritativeSidecar gathers every readable sidecar replica for the object
-// and returns the newest (same ordering as list-merge: Modified, then
+// — across all remembered topology epochs, plus the scrubber's locally-read
+// hint — and returns the newest (same ordering as list-merge: Modified, then
 // generation).
-func (r *Repairer) authoritativeSidecar(ctx context.Context, topo *cluster.Topology, bucket, key string) (*Sidecar, error) {
+func (r *Repairer) authoritativeSidecar(ctx context.Context, bucket, key string, hint *Sidecar) (*Sidecar, error) {
 	name := sidecarName(bucket, key)
 
 	var (
-		best    *Sidecar
+		best    = hint
 		lastErr error
 	)
 
-	for _, t := range r.coord.sidecarCandidates(topo, bucket, key) {
-		p, err := r.coord.dial(topo, t.Node)
+	for _, ct := range r.coord.allSidecarCandidates(bucket, key) {
+		p, err := r.coord.dial(ct.topo, ct.target.Node)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 
-		rc, _, err := p.Get(ctx, t.Disk, name)
+		rc, _, err := p.Get(ctx, ct.target.Disk, name)
 		if err != nil {
 			if !errors.Is(err, transport.ErrNotFound) {
 				lastErr = err
@@ -222,22 +469,10 @@ func (r *Repairer) survey(ctx context.Context, sc *Sidecar, plan []fragment.Item
 			missing[plan[i].Index] = struct{}{}
 		}
 
-		// Sweep strays under the object's namespace on this target: anything
-		// but the sidecar and this target's committed fragment.
-		names, err := peers[i].List(ctx, disk, objectBase(sc.Bucket, sc.Key)+"/")
-		if err != nil {
-			continue // Listing is advisory; a down peer skips its sweep.
-		}
-
-		for _, n := range names {
-			if n == metaName || n == fragName {
-				continue
-			}
-
-			if err := peers[i].Delete(ctx, disk, n); err == nil {
-				report.DeletedStale++
-			}
-		}
+		// NB: no deletions here. Stray names may be relocation sources (a
+		// committed-generation fragment under another epoch's index); all
+		// sweeping happens at the end of the pass, gated on the object being
+		// verifiably healthy at the current placement.
 	}
 
 	return missing, nil
@@ -570,6 +805,25 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 		metas[dir] = metas[dir] || strings.HasSuffix(n, "/meta")
 	}
 
+	// Collect each namespace's locally-present fragment indexes by
+	// generation — relocation sources for repair.
+	frags := make(map[string]map[string][]int)
+
+	for _, n := range names {
+		dir, file := n[:strings.LastIndex(n, "/")], n[strings.LastIndex(n, "/")+1:]
+
+		gen, idx, ok := parseFragmentFile(file)
+		if !ok {
+			continue
+		}
+
+		if frags[dir] == nil {
+			frags[dir] = make(map[string][]int)
+		}
+
+		frags[dir][gen] = append(frags[dir][gen], idx)
+	}
+
 	for dir, hasMeta := range metas {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -598,7 +852,7 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 		seen[ref] = struct{}{}
 		report.Objects++
 
-		rep, err := r.RepairObject(ctx, sc.Bucket, sc.Key)
+		rep, err := r.repair(ctx, sc.Bucket, sc.Key, sc, &localFragments{disk: disk, gens: frags[dir]})
 		if err != nil {
 			report.Failed++
 
@@ -615,4 +869,24 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 	}
 
 	return nil
+}
+
+// parseFragmentFile splits a fragment file name "<generation>.f<index>".
+func parseFragmentFile(file string) (gen string, idx int, ok bool) {
+	gen, tail, found := strings.Cut(file, ".f")
+	if !found || gen == "" {
+		return "", 0, false
+	}
+
+	n, err := strconv.Atoi(tail)
+	if err != nil || n < 0 {
+		return "", 0, false
+	}
+
+	return gen, n, true
+}
+
+// placementTarget builds a placement target for a local (node, disk) pair.
+func placementTarget(node cluster.NodeID, disk cluster.DiskID) placement.Target {
+	return placement.Target{Node: node, Disk: disk}
 }

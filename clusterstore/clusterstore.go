@@ -94,6 +94,10 @@ type Coordinator struct {
 	schemeFor SchemeFunc
 	onErr     func(bucket, key string, err error)
 
+	// epochs remembers recent topology snapshots so reads, deletes and repair
+	// can reach fragments still sitting at a previous epoch's placement.
+	epochs epochMemory
+
 	queue chan func()
 	wg    sync.WaitGroup // in-flight async tasks
 
