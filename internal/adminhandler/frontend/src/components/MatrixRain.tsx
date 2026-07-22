@@ -50,9 +50,9 @@ function resolveRGB(
 
 // MatrixRain paints a canvas-based Matrix digital-rain animation sized to its
 // parent, using the dashboard theme's own tokens (accent for the trail, the
-// foreground color for the leading glyph, the panel color for the fade wash).
-// It respects prefers-reduced-motion (renders a single static frame) and is
-// purely decorative (aria-hidden).
+// strong foreground for the leading glyph, the base background for the fade
+// wash). It respects prefers-reduced-motion (renders a single static frame) and
+// is purely decorative (aria-hidden).
 export default function MatrixRain() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -64,7 +64,6 @@ export default function MatrixRain() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const reduceMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -75,16 +74,16 @@ export default function MatrixRain() {
     let drops: number[] = [];
     let speeds: number[] = [];
 
-    // Theme colors, read from CSS variables and refreshed on theme change.
-    let accent: RGB = [56, 139, 253];
-    let head: RGB = [230, 237, 243];
-    let panel: RGB = [22, 27, 34];
+    // Theme colors, read from the dashboard's CSS tokens.
+    let accent: RGB = [200, 163, 92];
+    let head: RGB = [246, 242, 232];
+    let base: RGB = [26, 26, 25];
 
     const readTheme = () => {
       const s = getComputedStyle(canvas);
       accent = resolveRGB(ctx, s.getPropertyValue("--accent"), accent);
-      head = resolveRGB(ctx, s.getPropertyValue("--text"), head);
-      panel = resolveRGB(ctx, s.getPropertyValue("--panel"), panel);
+      head = resolveRGB(ctx, s.getPropertyValue("--fg-strong"), head);
+      base = resolveRGB(ctx, s.getPropertyValue("--bg"), base);
     };
 
     const setup = () => {
@@ -106,13 +105,13 @@ export default function MatrixRain() {
       drops = Array.from({ length: columns }, () => Math.random() * -40);
       speeds = Array.from({ length: columns }, () => 0.55 + Math.random() * 0.9);
 
-      ctx.fillStyle = `rgb(${panel[0]}, ${panel[1]}, ${panel[2]})`;
+      ctx.fillStyle = `rgb(${base[0]}, ${base[1]}, ${base[2]})`;
       ctx.fillRect(0, 0, width, height);
     };
 
     const step = () => {
-      // Translucent panel-colored wash leaves a fading trail behind each head.
-      ctx.fillStyle = `rgba(${panel[0]}, ${panel[1]}, ${panel[2]}, 0.1)`;
+      // Translucent base-colored wash leaves a fading trail behind each head.
+      ctx.fillStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, 0.1)`;
       ctx.fillRect(0, 0, width, height);
 
       for (let i = 0; i < columns; i++) {
@@ -145,17 +144,11 @@ export default function MatrixRain() {
 
     const ro = new ResizeObserver(() => setup());
     ro.observe(parent);
-    // Re-theme (and repaint) when the OS color scheme flips.
-    const onScheme = () => setup();
-    darkQuery.addEventListener("change", onScheme);
 
     if (reduceMotion) {
       for (let pass = 0; pass < 24; pass++) step();
 
-      return () => {
-        ro.disconnect();
-        darkQuery.removeEventListener("change", onScheme);
-      };
+      return () => ro.disconnect();
     }
 
     let raf = 0;
@@ -171,7 +164,6 @@ export default function MatrixRain() {
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
-      darkQuery.removeEventListener("change", onScheme);
     };
   }, []);
 

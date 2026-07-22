@@ -1,31 +1,31 @@
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --border: #e2e5ea;
-  --text: #1c2024;
-  --muted: #6b7280;
-  --accent: #2563eb;
-  --accent-fg: #ffffff;
-  --danger: #dc2626;
-  --ok: #16a34a;
-  --code-bg: #f1f3f5;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
-}
+  color-scheme: dark;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --border: #2b313a;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #388bfd;
-    --accent-fg: #ffffff;
-    --danger: #f85149;
-    --ok: #3fb950;
-    --code-bg: #1c2128;
-    --shadow: none;
-  }
+  --bg: #1a1a19;
+  --surface: #2c2c2a;
+  --surface-2: #37372f;
+  --surface-3: #40403a;
+  --line: #50504f;
+  --line-soft: #3a3a37;
+  --fg: #ece8dd;
+  --fg-strong: #f6f2e8;
+  --muted: #a5a299;
+  --muted-2: #77756c;
+  --accent: #c8a35c;
+  --accent-dim: #6d5d38;
+  --accent-soft: rgba(200, 163, 92, 0.13);
+  --green: #8ca677;
+  --amber: #cf9a43;
+  --red: #c96a54;
+  --track: color-mix(in srgb, var(--muted) 26%, transparent);
+  --radius: 4px;
+  --radius-sm: 3px;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -40,17 +40,20 @@ body,
 }
 
 body {
-  font-family:
-    system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--sans);
   background: var(--bg);
-  color: var(--text);
+  color: var(--fg);
   font-size: 14px;
   line-height: 1.5;
 }
 
+::selection {
+  background: var(--accent-soft);
+}
+
 code,
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 0.92em;
 }
 
@@ -63,8 +66,8 @@ code,
 .sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
+  background: var(--surface);
+  border-right: 1px solid var(--line-soft);
   padding: 1.25rem 1rem;
   display: flex;
   flex-direction: column;
@@ -76,6 +79,7 @@ code,
   font-size: 1.1rem;
   margin-bottom: 1rem;
   letter-spacing: -0.01em;
+  color: var(--fg-strong);
 }
 
 .brand small {
@@ -88,18 +92,19 @@ code,
 .nav a {
   display: block;
   padding: 0.45rem 0.6rem;
-  border-radius: 6px;
-  color: var(--text);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
   text-decoration: none;
 }
 
 .nav a.active {
   background: var(--accent);
-  color: var(--accent-fg);
+  color: var(--bg);
+  font-weight: 600;
 }
 
 .nav a:not(.active):hover {
-  background: var(--code-bg);
+  background: var(--surface-2);
 }
 
 .sidebar-foot {
@@ -126,11 +131,13 @@ code,
 h1 {
   font-size: 1.4rem;
   margin: 0;
+  color: var(--fg-strong);
 }
 
 h2 {
   font-size: 1.05rem;
   margin: 0 0 0.75rem;
+  color: var(--fg-strong);
 }
 
 .muted {
@@ -139,9 +146,9 @@ h2 {
 
 /* Panels & tables */
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 1.1rem 1.2rem;
   margin-bottom: 1.25rem;
@@ -160,7 +167,7 @@ th,
 td {
   text-align: left;
   padding: 0.6rem 0.7rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line-soft);
   vertical-align: top;
 }
 
@@ -182,7 +189,7 @@ tr:last-child td {
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 600;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
 }
 
 .badge-config {
@@ -191,13 +198,14 @@ tr:last-child td {
 
 .badge-managed {
   color: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
 }
 
 .grant {
   display: inline-block;
-  background: var(--code-bg);
-  border-radius: 5px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
   padding: 0.05rem 0.4rem;
   margin: 0.1rem 0.2rem 0.1rem 0;
   font-size: 0.8rem;
@@ -207,21 +215,22 @@ tr:last-child td {
 button {
   font: inherit;
   cursor: pointer;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--fg);
   padding: 0.45rem 0.9rem;
 }
 
 button:hover {
-  background: var(--code-bg);
+  background: var(--surface-3);
 }
 
 button.primary {
   background: var(--accent);
-  color: var(--accent-fg);
+  color: var(--bg);
   border-color: var(--accent);
+  font-weight: 600;
 }
 
 button.primary:hover {
@@ -229,13 +238,14 @@ button.primary:hover {
 }
 
 button.danger {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  background: transparent;
 }
 
 button.danger:hover {
-  background: var(--danger);
-  color: #fff;
+  background: var(--red);
+  color: var(--fg-strong);
 }
 
 button:disabled {
@@ -247,11 +257,18 @@ input,
 select {
   font: inherit;
   padding: 0.45rem 0.6rem;
-  border-radius: 7px;
-  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
   background: var(--bg);
-  color: var(--text);
+  color: var(--fg);
   width: 100%;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 label {
@@ -293,19 +310,19 @@ label {
 
 .toast {
   padding: 0.6rem 0.9rem;
-  border-radius: 8px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
-  border: 1px solid var(--border);
-  background: var(--panel);
+  border: 1px solid var(--line);
+  background: var(--surface);
   max-width: 360px;
 }
 
 .toast-success {
-  border-left: 4px solid var(--ok);
+  border-left: 4px solid var(--green);
 }
 
 .toast-error {
-  border-left: 4px solid var(--danger);
+  border-left: 4px solid var(--red);
 }
 
 .toast-info {
@@ -328,16 +345,16 @@ label {
 
 /* Secret reveal */
 .secret-box {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 0.8rem;
   margin-top: 0.75rem;
   word-break: break-all;
 }
 
 .secret-box .warn {
-  color: var(--danger);
+  color: var(--amber);
   font-size: 0.8rem;
   margin-bottom: 0.4rem;
 }
@@ -368,17 +385,17 @@ label {
 
 /* Matrix digital-rain hero — a decorative top panel matching the panel shell
    (radius/border/shadow/spacing/type). The rain is drawn from the theme's own
-   tokens (accent trail, foreground head, panel-colored fade), so it tracks
-   light/dark like the rest of the dashboard. */
+   tokens: the accent for the trail, the strong foreground for the leading
+   glyph, and the base background for the fade wash. */
 .matrix-hero {
   position: relative;
   height: 150px;
   margin-bottom: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
   overflow: hidden;
-  background: var(--panel);
+  background: var(--bg);
   isolation: isolate;
 }
 
@@ -390,7 +407,7 @@ label {
   height: 100%;
 }
 
-/* Panel-colored left-to-right scrim keeps the title legible over the rain. */
+/* Base-colored left-to-right scrim keeps the title legible over the rain. */
 .matrix-hero__content {
   position: absolute;
   inset: 0;
@@ -402,26 +419,26 @@ label {
   padding: 0 1.5rem;
   background: linear-gradient(
     90deg,
-    var(--panel) 0%,
-    color-mix(in srgb, var(--panel) 60%, transparent) 45%,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 60%, transparent) 45%,
     transparent 100%
   );
   pointer-events: none;
 }
 
 .matrix-hero__title {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 1.9rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--text);
+  color: var(--fg-strong);
   text-shadow:
     0 0 6px color-mix(in srgb, var(--accent) 80%, transparent),
     0 0 16px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .matrix-hero__subtitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 0.85rem;
   letter-spacing: 0.04em;
   color: var(--muted);
