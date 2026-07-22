@@ -28,7 +28,10 @@ func newPeer(t *testing.T) *transport.Client {
 	srv := httptest.NewServer(transport.NewServer(store, secret))
 	t.Cleanup(srv.Close)
 
-	return transport.NewClient(srv.URL, secret, "node-a", srv.Client())
+	client, err := transport.NewClient(srv.URL, secret, "node-a", srv.Client())
+	require.NoError(t, err)
+
+	return client
 }
 
 func randBytes(n int) []byte {
@@ -88,9 +91,10 @@ func TestAuthWrongSecret(t *testing.T) {
 	srv := httptest.NewServer(transport.NewServer(store, secret))
 	t.Cleanup(srv.Close)
 
-	bad := transport.NewClient(srv.URL, transport.Secret("wrong"), "node-x", srv.Client())
+	bad, err := transport.NewClient(srv.URL, transport.Secret("wrong"), "node-x", srv.Client())
+	require.NoError(t, err)
 
-	err := bad.Put(context.Background(), "d0", "frag", 3, bytes.NewReader([]byte("abc")))
+	err = bad.Put(context.Background(), "d0", "frag", 3, bytes.NewReader([]byte("abc")))
 	require.ErrorIs(t, err, transport.ErrUnauthorized)
 
 	_, _, err = bad.Get(context.Background(), "d0", "frag")
@@ -167,7 +171,10 @@ func tamperingPeer(t *testing.T, flip bool, truncateAt int64) *transport.Client 
 	front := httptest.NewServer(proxy)
 	t.Cleanup(front.Close)
 
-	return transport.NewClient(front.URL, secret, "node-a", front.Client())
+	client, err := transport.NewClient(front.URL, secret, "node-a", front.Client())
+	require.NoError(t, err)
+
+	return client
 }
 
 // TestGetDetectsTamperedStream: a byte flipped in transit must fail the digest

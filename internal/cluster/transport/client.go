@@ -19,7 +19,7 @@ import (
 
 // Client talks to one peer's fragment server. It is safe for concurrent use.
 type Client struct {
-	base   string // peer base URL, e.g. http://10.0.0.2:7000
+	base   *url.URL // peer base URL, e.g. http://10.0.0.2:7000
 	secret Secret
 	node   cluster.NodeID // sender identity
 	http   *http.Client
@@ -28,28 +28,29 @@ type Client struct {
 
 // NewClient builds a client for the peer at baseURL, authenticating as node.
 // httpClient may be nil for http.DefaultClient.
-func NewClient(baseURL string, secret Secret, node cluster.NodeID, httpClient *http.Client) *Client {
+func NewClient(baseURL string, secret Secret, node cluster.NodeID, httpClient *http.Client) (*Client, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, errors.Wrap(err, "parse peer base URL")
+	}
+
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
-	return &Client{base: baseURL, secret: secret, node: node, http: httpClient, now: time.Now}
+	return &Client{base: base, secret: secret, node: node, http: httpClient, now: time.Now}, nil
 }
 
-// fragmentURL builds the peer URL for a fragment, escaping each name segment.
-func (c *Client) fragmentURL(disk cluster.DiskID, name string) string {
-	return c.base + "/v1/fragments/" + url.PathEscape(string(disk)) + "/" + escapeName(name)
-}
+// fragmentURL builds the peer URL for a fragment. The decoded path is set on a
+// copy of the base URL and net/url derives the wire encoding — no manual
+// escaping. Fragment name segments never contain '/' (ValidName + the slashes
+// in a name being real separators), so the decoded path is unambiguous.
+func (c *Client) fragmentURL(disk cluster.DiskID, name string) *url.URL {
+	u := *c.base
+	u.Path = strings.TrimSuffix(c.base.Path, "/") + "/v1/fragments/" + string(disk) + "/" + name
+	u.RawPath = "" // force re-encoding from the decoded Path
 
-// escapeName escapes a slash-separated fragment name segment by segment,
-// keeping the slashes routable.
-func escapeName(name string) string {
-	segs := strings.Split(name, "/")
-	for i, s := range segs {
-		segs[i] = url.PathEscape(s)
-	}
-
-	return strings.Join(segs, "/")
+	return &u
 }
 
 // Put streams size bytes from body to the peer as the named fragment. The
@@ -63,7 +64,7 @@ func (c *Client) Put(ctx context.Context, disk cluster.DiskID, name string, size
 
 	digester := sha256.New()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.fragmentURL(disk, name), io.TeeReader(body, digester))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.fragmentURL(disk, name).String(), io.TeeReader(body, digester))
 	if err != nil {
 		return errors.Wrap(err, "build request")
 	}
@@ -104,7 +105,7 @@ func (c *Client) Get(ctx context.Context, disk cluster.DiskID, name string) (io.
 		return nil, 0, errors.Errorf("invalid fragment name %q", name)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.fragmentURL(disk, name), http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.fragmentURL(disk, name).String(), http.NoBody)
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "build request")
 	}
@@ -143,7 +144,7 @@ func (c *Client) Stat(ctx context.Context, disk cluster.DiskID, name string) (in
 		return 0, errors.Errorf("invalid fragment name %q", name)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, c.fragmentURL(disk, name), http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, c.fragmentURL(disk, name).String(), http.NoBody)
 	if err != nil {
 		return 0, errors.Wrap(err, "build request")
 	}
@@ -180,7 +181,7 @@ func (c *Client) Delete(ctx context.Context, disk cluster.DiskID, name string) e
 		return errors.Errorf("invalid fragment name %q", name)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.fragmentURL(disk, name), http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.fragmentURL(disk, name).String(), http.NoBody)
 	if err != nil {
 		return errors.Wrap(err, "build request")
 	}
