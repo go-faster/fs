@@ -19,6 +19,13 @@
 bin/
 
 dist
+# The admin frontend's built SPA (internal/adminhandler/frontend/dist) is NOT
+# committed: it is produced by CI (the frontend workflow) and on release, and a
+# plain `go build` embeds only the placeholder. Keep just the .gitkeep so the
+# go:embed directive compiles on a fresh checkout.
+!/internal/adminhandler/frontend/dist/
+/internal/adminhandler/frontend/dist/*
+!/internal/adminhandler/frontend/dist/.gitkeep
 /fs
 
 helm/*.tgz

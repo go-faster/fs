@@ -9,8 +9,9 @@ import (
 
 // distFS holds the built admin single-page app produced by the frontend package
 // (internal/adminhandler/frontend, TypeScript + Vite + Orval + React). The build
-// output (dist/) is committed so a plain `go build` embeds the real UI. Rebuild
-// it with:
+// output (dist/) is NOT committed — it is produced by CI (the frontend workflow)
+// and on release — so a plain `go build` embeds only the placeholder and serves
+// notBuiltPage. Build the real UI with:
 //
 //	cd internal/adminhandler/frontend && npm install && npm run build
 //
