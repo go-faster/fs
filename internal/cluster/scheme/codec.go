@@ -13,8 +13,9 @@ import (
 // the object's two halves — so both schemes share one implementation and one
 // repair path (no bespoke XOR).
 type Codec struct {
-	k, m int
-	enc  reedsolomon.Encoder
+	k, m   int
+	enc    reedsolomon.Encoder
+	stream reedsolomon.StreamEncoder
 }
 
 // NewCodec builds a Reed-Solomon codec with k data and m parity shards.
@@ -32,7 +33,12 @@ func NewCodec(k, m int) (*Codec, error) {
 		return nil, errors.Wrap(err, "new reed-solomon")
 	}
 
-	return &Codec{k: k, m: m, enc: enc}, nil
+	stream, err := reedsolomon.NewStream(k, m)
+	if err != nil {
+		return nil, errors.Wrap(err, "new reed-solomon stream")
+	}
+
+	return &Codec{k: k, m: m, enc: enc, stream: stream}, nil
 }
 
 // Codec returns the Reed-Solomon codec for the scheme: RS(k,m) for EC and
