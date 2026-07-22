@@ -100,6 +100,14 @@ type Coordinator struct {
 	mu     sync.Mutex
 	closed bool
 	worker sync.WaitGroup
+
+	// inflight counts pending async remainder tasks per object, so mutating
+	// operations can wait for a key's remainder instead of racing it (e.g. a
+	// delete being outrun by the sidecar-extension task, resurrecting the
+	// object on the third target).
+	inflightMu   sync.Mutex
+	inflightCond *sync.Cond
+	inflight     map[string]int
 }
 
 // New builds a Coordinator and starts its async remainder worker.
@@ -133,7 +141,9 @@ func New(cfg Config) (*Coordinator, error) {
 		schemeFor: schemeFor,
 		onErr:     onErr,
 		queue:     make(chan func(), queueLen),
+		inflight:  make(map[string]int),
 	}
+	c.inflightCond = sync.NewCond(&c.inflightMu)
 
 	c.worker.Go(func() {
 		for task := range c.queue {
@@ -144,13 +154,35 @@ func New(cfg Config) (*Coordinator, error) {
 	return c, nil
 }
 
-// enqueue schedules an async remainder task, running it inline when the queue
-// is full (backpressure) or the coordinator is closed.
-func (c *Coordinator) enqueue(task func()) {
+// objectRef identifies an object across the async machinery.
+func objectRef(bucket, key string) string { return bucket + "\x00" + key }
+
+// enqueue schedules an async remainder task for an object, running it inline
+// when the queue is full (backpressure) or the coordinator is closed. The
+// task is tracked per key until it completes; see waitKey.
+func (c *Coordinator) enqueue(bucket, key string, task func()) {
+	ref := objectRef(bucket, key)
+
+	c.inflightMu.Lock()
+	c.inflight[ref]++
+	c.inflightMu.Unlock()
+
 	c.wg.Add(1)
 
 	wrapped := func() {
-		defer c.wg.Done()
+		defer func() {
+			c.inflightMu.Lock()
+
+			c.inflight[ref]--
+			if c.inflight[ref] <= 0 {
+				delete(c.inflight, ref)
+			}
+
+			c.inflightCond.Broadcast()
+			c.inflightMu.Unlock()
+
+			c.wg.Done()
+		}()
 
 		task()
 	}
@@ -170,6 +202,20 @@ func (c *Coordinator) enqueue(task func()) {
 		c.mu.Unlock()
 		wrapped()
 	}
+}
+
+// waitKey blocks until the object has no pending async remainder work. Every
+// mutating operation calls it first: a write, metadata update or delete must
+// never race the previous write's remainder (which would, e.g., re-extend a
+// deleted object's sidecar onto its third target).
+func (c *Coordinator) waitKey(bucket, key string) {
+	ref := objectRef(bucket, key)
+
+	c.inflightMu.Lock()
+	for c.inflight[ref] > 0 {
+		c.inflightCond.Wait()
+	}
+	c.inflightMu.Unlock()
 }
 
 // Flush blocks until every async task enqueued so far has completed. It is a
