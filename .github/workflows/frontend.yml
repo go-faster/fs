@@ -1,0 +1,62 @@
+name: frontend
+
+# Builds the admin dashboard SPA (internal/adminhandler/frontend) from the
+# OpenAPI spec: regenerates the typed Orval client, type-checks, and bundles it
+# with Vite. Gates on the generated client staying in sync with _oas/admin.yml,
+# and publishes the built dist/ as an artifact.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'internal/adminhandler/frontend/**'
+      - '_oas/admin.yml'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    paths:
+      - 'internal/adminhandler/frontend/**'
+      - '_oas/admin.yml'
+      - '.github/workflows/frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: internal/adminhandler/frontend
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: internal/adminhandler/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (orval + tsc + vite)
+        run: npm run build
+
+      - name: Verify the generated API client is in sync with the spec
+        run: |
+          if ! git diff --quiet -- src/api; then
+            echo "::error::The generated Orval client is out of date. Run 'npm run gen' in internal/adminhandler/frontend and commit src/api." >&2
+            git --no-pager diff -- src/api
+            exit 1
+          fi
+
+      - name: Upload built SPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-dashboard-dist
+          path: internal/adminhandler/frontend/dist
+          if-no-files-found: error
