@@ -8,12 +8,18 @@ import (
 	"github.com/go-faster/errors"
 	"gopkg.in/yaml.v3"
 
+	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/validate"
 	"github.com/go-faster/fs/server"
 )
 
-// StorageTypeFilesystem is the only currently supported storage backend type.
+// StorageTypeFilesystem is the single-node filesystem storage backend.
 const StorageTypeFilesystem = "filesystem"
+
+// StorageTypeCluster is the replicated cluster storage backend (M3): objects
+// are placed across the nodes registered in etcd, written at quorum and
+// served by any node.
+const StorageTypeCluster = "cluster"
 
 // DefaultStorageRoot is the default directory for filesystem storage.
 const DefaultStorageRoot = ".s3data"
@@ -31,6 +37,9 @@ type Config struct {
 
 	// Admin configuration
 	Admin AdminConfig `yaml:"admin,omitempty"`
+
+	// Cluster configuration (used when storage.type is "cluster")
+	Cluster ClusterConfig `yaml:"cluster,omitempty"`
 
 	// Integrity configuration
 	Integrity IntegrityConfig `yaml:"integrity"`
@@ -153,6 +162,127 @@ type StorageConfig struct {
 	Buckets []string `yaml:"buckets,omitempty"`
 }
 
+// DefaultClusterAddr is the default cluster (peer replication) listener
+// address.
+const DefaultClusterAddr = ":7080"
+
+// ClusterConfig configures cluster mode: this node's identity and disks, the
+// shared peer-auth secret, the replication scheme and the etcd control plane.
+type ClusterConfig struct {
+	// NodeID uniquely identifies this node in the cluster. Required.
+	NodeID string `yaml:"node_id"`
+
+	// Rack is this node's failure-domain label (nodes sharing a rack share
+	// fate); placement spreads copies across racks first. Empty means the node
+	// is its own failure domain.
+	Rack string `yaml:"rack,omitempty"`
+
+	// Addr is the cluster listener bind address for the peer replication API
+	// (default DefaultClusterAddr). Internal — never expose it publicly; peers
+	// authenticate with the cluster secret.
+	Addr string `yaml:"addr,omitempty"`
+
+	// AdvertiseAddr is the host:port peers dial to reach this node's cluster
+	// listener. Required (a bind address like ":7080" is not dialable).
+	AdvertiseAddr string `yaml:"advertise_addr"`
+
+	// Secret is the shared cluster secret authenticating peer traffic (HMAC,
+	// mutual). Required, min 16 characters; the FS_CLUSTER_SECRET environment
+	// variable takes precedence.
+	Secret string `yaml:"secret,omitempty"`
+
+	// Scheme is the default replication scheme for all buckets: "rf2.5"
+	// (default), "rf3" or "ec:k,m" (e.g. "ec:4,2").
+	Scheme string `yaml:"scheme,omitempty"`
+
+	// Disks are this node's storage devices. Default: a single disk "d0"
+	// under <storage.root>/cluster/d0 with weight 1.
+	Disks []ClusterDiskConfig `yaml:"disks,omitempty"`
+
+	// Etcd configures the control plane connection.
+	Etcd EtcdConfig `yaml:"etcd"`
+}
+
+// ClusterDiskConfig is one local disk exposed to the cluster.
+type ClusterDiskConfig struct {
+	// ID identifies the disk within this node. Required.
+	ID string `yaml:"id"`
+	// Path is the disk's root directory. Required.
+	Path string `yaml:"path"`
+	// Weight is the relative capacity weight for placement (default 1; 0 or
+	// negative drains the disk — no new data placed on it).
+	Weight float64 `yaml:"weight,omitempty"`
+}
+
+// EtcdConfig configures the etcd control-plane connection.
+type EtcdConfig struct {
+	// Endpoints are the etcd client URLs. Required in cluster mode.
+	Endpoints []string `yaml:"endpoints"`
+	// Prefix namespaces this cluster's keys (default "/fs").
+	Prefix string `yaml:"prefix,omitempty"`
+	// TTL is the node registration lease: how long a dead node lingers in the
+	// topology (default 10s, minimum 1s).
+	TTL time.Duration `yaml:"ttl,omitempty"`
+}
+
+// ClusterSecret resolves the effective cluster secret (FS_CLUSTER_SECRET
+// overrides the config value).
+func (c *Config) ClusterSecret() string {
+	if env := os.Getenv("FS_CLUSTER_SECRET"); env != "" {
+		return env
+	}
+
+	return c.Cluster.Secret
+}
+
+// validateCluster checks the cluster section (called when storage.type is
+// "cluster").
+func (c *Config) validateCluster() error {
+	cc := c.Cluster
+
+	if cc.NodeID == "" {
+		return errors.New("cluster.node_id is required")
+	}
+
+	if cc.AdvertiseAddr == "" {
+		return errors.New("cluster.advertise_addr is required (peers must be able to dial this node)")
+	}
+
+	if len(c.ClusterSecret()) < 16 {
+		return errors.New("cluster.secret (or FS_CLUSTER_SECRET) is required, min 16 characters")
+	}
+
+	if cc.Scheme != "" {
+		if _, err := scheme.Parse(cc.Scheme); err != nil {
+			return errors.Wrap(err, "cluster.scheme")
+		}
+	}
+
+	if len(cc.Etcd.Endpoints) == 0 {
+		return errors.New("cluster.etcd.endpoints is required")
+	}
+
+	if cc.Etcd.TTL != 0 && cc.Etcd.TTL < time.Second {
+		return errors.New("cluster.etcd.ttl must be at least 1s")
+	}
+
+	seen := make(map[string]struct{}, len(cc.Disks))
+
+	for i, d := range cc.Disks {
+		if d.ID == "" || d.Path == "" {
+			return fmt.Errorf("cluster.disks[%d]: id and path are required", i)
+		}
+
+		if _, dup := seen[d.ID]; dup {
+			return fmt.Errorf("cluster.disks[%d]: duplicate disk id %q", i, d.ID)
+		}
+
+		seen[d.ID] = struct{}{}
+	}
+
+	return nil
+}
+
 // ObservabilityConfig contains telemetry and observability settings.
 type ObservabilityConfig struct {
 	// ServiceName for telemetry
@@ -230,8 +360,14 @@ func (c *Config) Validate() error {
 		return errors.New("storage.root is required")
 	}
 
-	if c.Storage.Type != StorageTypeFilesystem {
-		return fmt.Errorf("unsupported storage type: %s (only 'filesystem' is supported)", c.Storage.Type)
+	switch c.Storage.Type {
+	case StorageTypeFilesystem:
+	case StorageTypeCluster:
+		if err := c.validateCluster(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported storage type: %s (want %q or %q)", c.Storage.Type, StorageTypeFilesystem, StorageTypeCluster)
 	}
 
 	if c.Server.ReadTimeout <= 0 {
