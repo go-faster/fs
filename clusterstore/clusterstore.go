@@ -154,6 +154,10 @@ func New(cfg Config) (*Coordinator, error) {
 	return c, nil
 }
 
+// Topology returns the coordinator's current topology snapshot (for status
+// reporting and readiness checks).
+func (c *Coordinator) Topology() *cluster.Topology { return c.topo.Topology() }
+
 // objectRef identifies an object across the async machinery.
 func objectRef(bucket, key string) string { return bucket + "\x00" + key }
 

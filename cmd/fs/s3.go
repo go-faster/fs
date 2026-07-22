@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/server"
 	"github.com/go-faster/fs/storagefs"
@@ -141,26 +142,45 @@ Command-line flags override YAML configuration values.`,
 					authStore = authManager.Store()
 				}
 
-				syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
-				if err != nil {
-					return errors.Wrap(err, "storage fsync policy")
-				}
-
-				storage, err := storagefs.New(absRoot,
-					storagefs.WithSyncPolicy(syncPolicy),
-					storagefs.WithVerifyReads(cfg.Integrity.VerifyOnRead),
+				var (
+					storage   fs.Storage
+					clusterRT *clusterRuntime
 				)
-				if err != nil {
-					return fmt.Errorf("failed to create storage: %w", err)
+
+				switch cfg.Storage.Type {
+				case StorageTypeCluster:
+					clusterRT, err = buildCluster(ctx, lg, cfg, absRoot)
+					if err != nil {
+						return errors.Wrap(err, "cluster mode")
+					}
+
+					storage = clusterRT.Storage
+				default: // StorageTypeFilesystem, enforced by Validate.
+					syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
+					if err != nil {
+						return errors.Wrap(err, "storage fsync policy")
+					}
+
+					fsStorage, err := storagefs.New(absRoot,
+						storagefs.WithSyncPolicy(syncPolicy),
+						storagefs.WithVerifyReads(cfg.Integrity.VerifyOnRead),
+					)
+					if err != nil {
+						return fmt.Errorf("failed to create storage: %w", err)
+					}
+
+					storage = fsStorage
+
+					// Background integrity scrubber (no-op unless an interval is
+					// set). Cluster-mode scrub/repair is the Phase 8 repair worker.
+					go runScrubber(ctx, lg, fsStorage, cfg.Integrity)
 				}
 
 				lg.Info("Durability",
 					zap.String("fsync", cfg.Storage.Fsync),
 					zap.Bool("verify_on_read", cfg.Integrity.VerifyOnRead),
+					zap.String("storage_type", cfg.Storage.Type),
 				)
-
-				// Background integrity scrubber (no-op unless an interval is set).
-				go runScrubber(ctx, lg, storage, cfg.Integrity)
 
 				// wrap injects OpenTelemetry instrumentation and optional request
 				// logging into the embeddable server's handler.
@@ -235,6 +255,12 @@ Command-line flags override YAML configuration values.`,
 
 					return nil
 				})
+
+				if clusterRT != nil {
+					grp.Go(func() error {
+						return clusterRT.Serve(grpCtx)
+					})
+				}
 
 				if cfg.Admin.Enabled {
 					if authManager == nil {

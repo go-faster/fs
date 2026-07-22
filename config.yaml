@@ -24,7 +24,7 @@ storage:
   # This directory will contain all buckets and objects
   root: ".s3data"
 
-  # Storage backend type (currently only "filesystem" is supported)
+  # Storage backend type: "filesystem" (single node) or "cluster" (replicated)
   type: "filesystem"
 
   # Pre-create these buckets on startup (optional)
@@ -32,6 +32,43 @@ storage:
   # buckets:
   #   - my-bucket
   #   - test-bucket
+
+# Cluster configuration (used when storage.type is "cluster").
+# Every node runs the same binary; objects are placed across the cluster's
+# failure domains (rack -> node -> disk), written at quorum, and served by any
+# node. Requires a reachable etcd.
+# cluster:
+#   # Unique node identity and its failure-domain label.
+#   node_id: "node-1"
+#   rack: "rack-a"
+#
+#   # Peer replication listener: bind address and the address peers dial.
+#   # Internal API - never expose it publicly.
+#   addr: ":7080"
+#   advertise_addr: "10.0.0.1:7080"
+#
+#   # Shared cluster secret (HMAC mutual auth between peers), min 16 chars.
+#   # The FS_CLUSTER_SECRET environment variable takes precedence.
+#   secret: "change-me-to-a-long-random-string"
+#
+#   # Default replication scheme: rf2.5 (default), rf3, or ec:k,m (e.g. ec:4,2).
+#   #   rf2.5 - 2 replicas + half-parity, 2.5x storage, survives 1 domain loss
+#   #   rf3   - 3 replicas, 3x storage, survives 2 domain losses
+#   #   ec:4,2 - Reed-Solomon, 1.5x storage, survives any 2 shard losses
+#   scheme: "rf2.5"
+#
+#   # This node's disks (default: one disk under <storage.root>/cluster/d0).
+#   # Weight is the relative capacity for placement; 0 drains a disk.
+#   disks:
+#     - id: "d0"
+#       path: "/data/d0"
+#       weight: 1
+#
+#   # etcd control plane: node registry and topology watch.
+#   etcd:
+#     endpoints: ["http://127.0.0.1:2379"]
+#     prefix: "/fs"
+#     ttl: 10s
 
 # Observability configuration
 observability:
