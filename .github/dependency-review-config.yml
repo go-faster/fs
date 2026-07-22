@@ -11,6 +11,7 @@ allow_licenses:
 # license allowlist (some, e.g. x/net, also report no detectable license).
 allow_dependencies_licenses:
   - 'pkg:golang/golang.org/x/crypto'
+  - 'pkg:golang/golang.org/x/exp'
   - 'pkg:golang/golang.org/x/mod'
   - 'pkg:golang/golang.org/x/net'
   - 'pkg:golang/golang.org/x/sync'

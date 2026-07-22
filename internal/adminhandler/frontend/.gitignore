@@ -1,0 +1,9 @@
+node_modules
+*.tsbuildinfo
+.vite
+
+# The built SPA is committed so `go build` embeds the real UI (the repo-root
+# .gitignore ignores "dist"; re-include this one). Re-include the directory
+# first, then its contents.
+!dist
+!dist/**
