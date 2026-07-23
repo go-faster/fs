@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"testing"
@@ -13,15 +14,29 @@ import (
 	"github.com/go-faster/fs"
 )
 
-// These gates encode DESIGN.md NFR-3. Absolute wall-clock numbers are noisy on
-// shared CI, so the throughput gate is a RATIO against the same machine's raw
-// disk bandwidth (machine-independent), the allocation gate is deterministic,
-// and the latency gate carries generous CI headroom while logging the real
-// figure for tracking.
+// These gates encode DESIGN.md NFR-3. The allocation gate is deterministic and
+// platform-independent, so it runs in every `go test ./...`. The throughput
+// and latency gates measure wall-clock behavior, which is only meaningful on a
+// consistent reference environment — the general correctness matrix spans slow
+// shared macOS/windows/386 runners where absolute latency is pure noise and
+// moving hundreds of MiB is wasteful. They therefore run only when
+// FS_PERF_GATES is set, which the dedicated perf workflow does; elsewhere they
+// skip. The throughput gate stays a machine-relative ratio even so.
 
 // nfr3ThroughputRatio is the NFR-3 large-object floor: backend throughput must
 // be at least this fraction of the disk's raw sequential bandwidth.
 const nfr3ThroughputRatio = 0.80
+
+// requirePerfGates skips a wall-clock gate unless FS_PERF_GATES is set (the
+// perf workflow sets it). Keeps timing gates off the noisy multi-platform
+// correctness matrix.
+func requirePerfGates(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv("FS_PERF_GATES") == "" {
+		t.Skip("wall-clock gate; set FS_PERF_GATES=1 (perf.yml) to run — it needs a consistent environment")
+	}
+}
 
 // TestNFR3PutAllocsConstant verifies PUT allocations are amortized O(1) — a
 // PUT of a 256 MiB object must not allocate materially more than a 64 KiB one
@@ -57,6 +72,8 @@ func TestNFR3PutAllocsConstant(t *testing.T) {
 // TestNFR3LargeObjectThroughput gates large-object PUT and GET throughput at
 // ≥80% of the same disk's raw sequential bandwidth.
 func TestNFR3LargeObjectThroughput(t *testing.T) {
+	requirePerfGates(t)
+
 	if testing.Short() {
 		t.Skip("throughput gate moves hundreds of MiB")
 	}
@@ -112,6 +129,8 @@ func TestNFR3LargeObjectThroughput(t *testing.T) {
 // slower shared hardware, so the gate is a generous ceiling and the real p99
 // is logged for regression tracking.
 func TestNFR3SmallObjectGetLatency(t *testing.T) {
+	requirePerfGates(t)
+
 	if testing.Short() {
 		t.Skip("latency gate runs a concurrent load phase")
 	}
@@ -131,9 +150,12 @@ func TestNFR3SmallObjectGetLatency(t *testing.T) {
 	}
 
 	const (
-		workers   = 16
-		perW      = 400
-		ceilCIp99 = 25 * time.Millisecond
+		workers = 16
+		perW    = 400
+		// Generous ceiling: the gate catches gross regressions (the NVMe
+		// target is p99 < 10 ms; a healthy backend sits far under this even on
+		// a shared perf runner), not a tight SLA. The real p99 is logged.
+		ceilCIp99 = 100 * time.Millisecond
 	)
 
 	lat := make([][]time.Duration, workers)

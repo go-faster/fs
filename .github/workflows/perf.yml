@@ -33,6 +33,8 @@ jobs:
           cache: true
 
       - name: NFR-3 performance gates
+        env:
+          FS_PERF_GATES: "1"
         run: go test ./bench -run NFR3 -v
 
       - name: Benchmark record (informational)

@@ -12,9 +12,10 @@ test_fast:
 .PHONY: test_fast
 
 # Performance gates from DESIGN.md NFR-3 (throughput ratio, O(1) PUT allocs,
-# 4 KiB GET p99). Fast and deterministic; runs in CI.
+# 4 KiB GET p99). FS_PERF_GATES enables the wall-clock gates (throughput,
+# latency); the deterministic allocation gate runs regardless.
 bench-gate:
-	go test ./bench -run NFR3 -v
+	FS_PERF_GATES=1 go test ./bench -run NFR3 -v
 .PHONY: bench-gate
 
 # Full benchmark run for benchstat tracking: ns/op, MB/s, allocs/op. Pipe to a
