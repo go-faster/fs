@@ -10,5 +10,9 @@ on:
 jobs:
   test:
     uses: go-faster/x/.github/workflows/test.yml@main
+    with:
+      go-version-file: go.mod
   lint:
     uses: go-faster/x/.github/workflows/lint.yml@main
+    with:
+      go-version-file: go.mod
