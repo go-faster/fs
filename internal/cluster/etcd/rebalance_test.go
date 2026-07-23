@@ -81,6 +81,46 @@ func TestRebalanceElectionSingleRunner(t *testing.T) {
 	require.NoError(t, b.lead.Close())
 }
 
+func TestRebalanceAppliedSignature(t *testing.T) {
+	client := startEtcd(t)
+	cfg := etcd.Config{Prefix: "/test", TTL: 2}
+
+	_, ok, err := etcd.LoadRebalanceApplied(t.Context(), client, cfg)
+	require.NoError(t, err)
+	assert.False(t, ok, "no signature before any completed run")
+
+	held, err := etcd.RebalanceLeaderExists(t.Context(), client, cfg)
+	require.NoError(t, err)
+	assert.False(t, held)
+
+	lead, err := etcd.CampaignRebalance(t.Context(), client, cfg, "runner")
+	require.NoError(t, err)
+
+	held, err = etcd.RebalanceLeaderExists(t.Context(), client, cfg)
+	require.NoError(t, err)
+	assert.True(t, held)
+
+	require.NoError(t, lead.SaveApplied(t.Context(), "sig-1"))
+
+	got, ok, err := etcd.LoadRebalanceApplied(t.Context(), client, cfg)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "sig-1", got)
+
+	require.NoError(t, lead.Close())
+
+	// Fenced: a released leadership cannot overwrite the signature.
+	require.Error(t, lead.SaveApplied(t.Context(), "stale"))
+
+	got, _, err = etcd.LoadRebalanceApplied(t.Context(), client, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "sig-1", got)
+
+	held, err = etcd.RebalanceLeaderExists(t.Context(), client, cfg)
+	require.NoError(t, err)
+	assert.False(t, held, "slot free after close")
+}
+
 func TestCampaignRebalanceContextCanceled(t *testing.T) {
 	client := startEtcd(t)
 	cfg := etcd.Config{Prefix: "/test", TTL: 2}

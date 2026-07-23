@@ -159,6 +159,10 @@ Command-line flags override YAML configuration values.`,
 
 					// Cluster-wide scrub/repair on the single-node scrub cadence.
 					go clusterRT.RunScrubber(ctx, cfg.Integrity.ScrubInterval)
+
+					// Auto rebalancing: converge placement after settled
+					// membership changes without operator action.
+					go clusterRT.RunAutoRebalancer(ctx, cfg.Cluster.Rebalance)
 				default: // StorageTypeFilesystem, enforced by Validate.
 					syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
 					if err != nil {

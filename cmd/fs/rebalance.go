@@ -176,6 +176,10 @@ func runRebalance(ctx context.Context, out io.Writer, cfg Config, params rebalan
 		_, _ = fmt.Fprintf(out, "resuming after %s/%s\n", resume.Bucket, resume.Key)
 	}
 
+	// Captured before the walk: a mid-run membership change must read as
+	// "another walk needed".
+	signature := cl.coord.Topology().Signature()
+
 	report, runErr := repairer.Rebalance(runCtx, clusterstore.RebalanceOptions{
 		Resume:      resume,
 		Concurrency: params.concurrency,
@@ -190,8 +194,13 @@ func runRebalance(ctx context.Context, out io.Writer, cfg Config, params rebalan
 	})
 	if runErr == nil {
 		// The walk completed: clear the cursor so the next rebalance starts
-		// fresh.
+		// fresh, and record the covered topology signature for the
+		// auto-rebalancer.
 		if err := lead.ClearCursor(ctx); err != nil {
+			_, _ = fmt.Fprintf(out, "warning: %v\n", err)
+		}
+
+		if err := lead.SaveApplied(ctx, signature); err != nil {
 			_, _ = fmt.Fprintf(out, "warning: %v\n", err)
 		}
 	}
