@@ -112,6 +112,10 @@ type Coordinator struct {
 	inflightMu   sync.Mutex
 	inflightCond *sync.Cond
 	inflight     map[string]int
+
+	// schemeCache holds per-bucket resolved schemes (see EffectiveScheme).
+	schemeMu    sync.Mutex
+	schemeCache map[string]cachedScheme
 }
 
 // New builds a Coordinator and starts its async remainder worker.

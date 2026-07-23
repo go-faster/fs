@@ -73,6 +73,8 @@ type RepairReport struct {
 	// CorruptReplicas counts replicas whose payload failed checksum
 	// verification (each is also rebuilt and counted in RebuiltFragments).
 	CorruptReplicas int
+	// Converted counts objects rewritten to their bucket's current scheme.
+	Converted int
 	// ECUnverified is set when the EC parity/data consistency check failed:
 	// without per-shard digests no victim can be identified, so nothing is
 	// rebuilt and the object needs attention.
@@ -81,7 +83,7 @@ type RepairReport struct {
 
 // Changed reports whether the pass modified anything.
 func (r *RepairReport) Changed() bool {
-	return r.RebuiltFragments > 0 || r.RewrittenSidecars > 0 || r.DeletedStale > 0
+	return r.RebuiltFragments > 0 || r.RewrittenSidecars > 0 || r.DeletedStale > 0 || r.Converted > 0
 }
 
 // add folds another report in.
@@ -90,6 +92,7 @@ func (r *RepairReport) add(o *RepairReport) {
 	r.RewrittenSidecars += o.RewrittenSidecars
 	r.DeletedStale += o.DeletedStale
 	r.CorruptReplicas += o.CorruptReplicas
+	r.Converted += o.Converted
 	r.ECUnverified = r.ECUnverified || o.ECUnverified
 }
 
@@ -167,6 +170,16 @@ func (r *Repairer) repair(ctx context.Context, bucket, key string, hint *Sidecar
 	// (copy → verify → delete: an object is never below its protection level
 	// mid-move).
 	r.relocationSweep(ctx, sc, plan, peers, sources, local, report)
+
+	// Scheme conversion (ROADMAP Phase 8): once the object is fully healthy
+	// at its recorded scheme, rewrite it under the bucket's current scheme.
+	// Requiring health first means the conversion source is complete and the
+	// object is never below the stronger of the two guarantees mid-convert.
+	if len(missing) == 0 && !report.ECUnverified {
+		if err := r.maybeConvert(ctx, sc, s, report); err != nil {
+			return report, err
+		}
+	}
 
 	return report, nil
 }
