@@ -250,11 +250,19 @@ func (n *node) kill() {
 	}
 }
 
+// healthTimeout bounds a node's startup. It is generous because the suite
+// runs several node processes plus embedded etcd under -race on shared CI
+// runners, where a restarting node contends for a couple of cores and can take
+// well over half a minute to bind its listener and register.
+const healthTimeout = 90 * time.Second
+
 // waitHealthy blocks until the node's S3 listener answers its health check.
+// On timeout it surfaces the tail of the node's log so a genuine crash is
+// diagnosable (the log file lives under t.TempDir() and is gone after the run).
 func (n *node) waitHealthy(t *testing.T) {
 	t.Helper()
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(healthTimeout)
 
 	for {
 		resp, err := http.Get("http://" + n.s3Addr + "/health")
@@ -267,11 +275,26 @@ func (n *node) waitHealthy(t *testing.T) {
 		}
 
 		if time.Now().After(deadline) {
-			t.Fatalf("node %s did not become healthy; log: %s", n.id, n.logPath)
+			t.Fatalf("node %s did not become healthy within %s; log tail:\n%s", n.id, healthTimeout, n.logTail())
 		}
 
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// logTail returns the last few KiB of the node's log for failure diagnosis.
+func (n *node) logTail() string {
+	data, err := os.ReadFile(n.logPath)
+	if err != nil {
+		return "(log unavailable: " + err.Error() + ")"
+	}
+
+	const tailBytes = 4096
+	if len(data) > tailBytes {
+		data = data[len(data)-tailBytes:]
+	}
+
+	return string(data)
 }
 
 // runCLI executes an fs subcommand (e.g. `cluster scheme`) against the
