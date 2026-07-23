@@ -27,15 +27,16 @@ type clusterRuntime struct {
 	// Storage is the replicated fs.Storage backend for the S3 server.
 	Storage fs.Storage
 
-	server   *http.Server
-	repairer *clusterstore.Repairer
-	listener net.Listener
-	addr     string
-	lg       *zap.Logger
-	closers  []func() error
-	coord    *clusterstore.Coordinator
-	nodeID   cluster.NodeID
-	schemeID string
+	server    *http.Server
+	repairer  *clusterstore.Repairer
+	rebalance *rebalanceController
+	listener  net.Listener
+	addr      string
+	lg        *zap.Logger
+	closers   []func() error
+	coord     *clusterstore.Coordinator
+	nodeID    cluster.NodeID
+	schemeID  string
 }
 
 // buildCluster wires a cluster node from config: disk stores, etcd
@@ -189,6 +190,11 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 		return nil, errors.Wrap(err, "cluster repairer")
 	}
+
+	// The admin API's rebalance runner: same elected, cursor-checkpointed walk
+	// as `fs cluster rebalance`, using this node's repairer. Its runs are
+	// bounded by ctx (the server lifetime).
+	rt.rebalance = newRebalanceController(ctx, lg, client, etcdCfg, coord, rt.repairer, string(rt.nodeID)+"/admin")
 
 	rt.server = &http.Server{
 		Handler:           transport.NewServer(store, secret),

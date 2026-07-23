@@ -162,6 +162,22 @@ func New(cfg Config) (*Coordinator, error) {
 // reporting and readiness checks).
 func (c *Coordinator) Topology() *cluster.Topology { return c.topo.Topology() }
 
+// QueueDepth reports the number of objects with pending async work: queued or
+// executing replication remainders plus held repair slots. A sustained
+// non-zero depth means the node is behind on producing its writes' trailing
+// replicas/parity — the repair backlog indicator surfaced by the admin API.
+func (c *Coordinator) QueueDepth() int {
+	c.inflightMu.Lock()
+	defer c.inflightMu.Unlock()
+
+	total := 0
+	for _, n := range c.inflight {
+		total += n
+	}
+
+	return total
+}
+
 // objectRef identifies an object across the async machinery.
 func objectRef(bucket, key string) string { return bucket + "\x00" + key }
 

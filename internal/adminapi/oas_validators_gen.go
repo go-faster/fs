@@ -239,6 +239,86 @@ func (s Permission) Validate() error {
 	}
 }
 
+func (s RebalanceAction) Validate() error {
+	switch s {
+	case "start":
+		return nil
+	case "pause":
+		return nil
+	case "resume":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *RebalanceControlRequest) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Action.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "action",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s RebalanceState) Validate() error {
+	switch s {
+	case "disabled":
+		return nil
+	case "idle":
+		return nil
+	case "waiting":
+		return nil
+	case "running":
+		return nil
+	case "paused":
+		return nil
+	case "done":
+		return nil
+	case "failed":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *RebalanceStatus) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.State.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "state",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s Source) Validate() error {
 	switch s {
 	case "config":

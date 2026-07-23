@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/internal/adminhandler"
 	"github.com/go-faster/fs/server"
 	"github.com/go-faster/fs/storagefs"
 )
@@ -270,8 +271,15 @@ Command-line flags override YAML configuration values.`,
 						return errors.New("admin API requires authentication; remove --insecure-no-auth / auth.disabled or disable admin")
 					}
 
+					// Avoid a non-nil interface around a nil controller outside
+					// cluster mode.
+					var rebalance adminhandler.RebalanceControl
+					if clusterRT != nil {
+						rebalance = clusterRT.rebalance
+					}
+
 					grp.Go(func() error {
-						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime)
+						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance)
 					})
 				}
 

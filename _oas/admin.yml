@@ -59,6 +59,47 @@ paths:
                 $ref: "#/components/schemas/CreatedAccessKey"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/rebalance:
+    get:
+      operationId: "getRebalanceStatus"
+      summary: "Cluster rebalance status"
+      description: >
+        State and progress of the cluster rebalance runner on this node, the
+        persisted resume cursor and the depth of the async repair queue. State
+        is "disabled" when the server is not in cluster mode.
+      responses:
+        200:
+          description: Rebalance status.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RebalanceStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: "controlRebalance"
+      summary: "Control the cluster rebalance"
+      description: >
+        Start, pause or resume the cluster-wide rebalance from this node. At
+        most one rebalance runs cluster-wide (etcd election); starting on
+        several nodes leaves the extras waiting as standby runners. Pausing
+        stops this node's runner and keeps the resume cursor, so a later
+        start/resume — on any node — continues where it left off.
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/RebalanceControlRequest"
+      responses:
+        200:
+          description: Status after applying the action.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RebalanceStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/access-keys/{accessKey}:
     delete:
       operationId: "deleteAccessKey"
@@ -203,6 +244,74 @@ components:
         created_at:
           type: string
           format: date-time
+    RebalanceState:
+      type: string
+      description: >
+        Runner state on this node: "disabled" (not cluster mode), "idle"
+        (never started since boot), "waiting" (campaigning for the
+        cluster-wide slot behind another runner), "running", "paused"
+        (stopped by an operator, resume cursor kept), "done" (last run
+        completed) or "failed" (last run aborted with an error).
+      enum:
+        - disabled
+        - idle
+        - waiting
+        - running
+        - paused
+        - done
+        - failed
+    RebalanceStatus:
+      type: object
+      required:
+        - state
+        - objects
+        - relocated
+        - failed
+        - repair_queue_depth
+      properties:
+        state:
+          $ref: "#/components/schemas/RebalanceState"
+        objects:
+          type: integer
+          description: "Objects processed by the current or last run on this node."
+        relocated:
+          type: integer
+          description: "Objects the run changed (fragments moved, sidecars rewritten, old copies retired)."
+        failed:
+          type: integer
+          description: "Objects whose repair errored; the run continues past them."
+        cursor_bucket:
+          type: string
+          description: "Persisted resume cursor: everything up to and including (bucket, key) is done."
+        cursor_key:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          description: "When the current or last run started on this node."
+        finished_at:
+          type: string
+          format: date-time
+          description: "When the last run ended on this node."
+        error_message:
+          type: string
+          description: "Why the last run failed, for state \"failed\"."
+        repair_queue_depth:
+          type: integer
+          description: "Pending async replication-remainder tasks on this node (repair backlog indicator)."
+    RebalanceAction:
+      type: string
+      enum:
+        - start
+        - pause
+        - resume
+    RebalanceControlRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          $ref: "#/components/schemas/RebalanceAction"
     Error:
       title: Structured error
       description: Error occurred while processing request
