@@ -1,0 +1,35 @@
+name: chaos
+
+# The ROADMAP Phase 9 chaos suite: a real multi-node fs cluster as OS
+# processes against an embedded etcd, with scripted node SIGKILL/restart,
+# disk wipe, node add and etcd restart under continuous mixed-scheme
+# (RF2.5/RF3/EC) S3 load. Gates on the durability invariants: no acked write
+# lost, no under-protected object after convergence.
+#
+# See chaos/chaos_test.go for the fault script.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run chaos suite
+        run: go test -tags chaos -race -v -run TestChaos -count=1 -timeout 20m ./chaos

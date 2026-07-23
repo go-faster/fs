@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,18 +149,71 @@ func TestRepairSweepsStaleGeneration(t *testing.T) {
 	require.NoError(t, w.Close())
 
 	r := newRepairer(t, c, plan[0].Target.Node, false)
+	r.sweepGrace = time.Nanosecond
 
+	// First pass: the generation is unattributed (no record names it) — it
+	// might be another node's write mid-commit, so it is only sighted.
 	rep, err := r.RepairObject(t.Context(), "b", "k")
+	require.NoError(t, err)
+	assert.Zero(t, rep.DeletedStale, "an unattributed generation gets a grace period")
+
+	_, err = fc.stores[plan[0].Target.Node].Stat(t.Context(), plan[0].Target.Disk, stale)
+	require.NoError(t, err)
+
+	// Second pass after the grace: still no record — reclaimed as garbage.
+	rep, err = r.RepairObject(t.Context(), "b", "k")
 	require.NoError(t, err)
 	assert.Equal(t, 1, rep.DeletedStale)
 
 	_, err = fc.stores[plan[0].Target.Node].Stat(t.Context(), plan[0].Target.Disk, stale)
-	require.Error(t, err, "stale generation must be swept")
+	require.Error(t, err, "expired stale generation must be swept")
 
 	// The committed generation is untouched.
 	name := fragmentName("b", "k", sc.Generation, 0)
 	_, err = fc.stores[plan[0].Target.Node].Stat(t.Context(), plan[0].Target.Disk, name)
 	require.NoError(t, err)
+}
+
+func TestRepairPassAbortsOnConcurrentOverwrite(t *testing.T) {
+	// Chaos-suite regression: a repair pass whose authoritative view predates
+	// a concurrent overwrite (committed by another node mid-pass) must abort
+	// with the newer record — never downgrade its sidecars or sweep its
+	// fragments (that destroyed an acked EC write).
+	fc := newFakeCluster(4, 1)
+	c := fc.coordinator(t, Config{})
+
+	sc1 := mustPut(t, c, "k", randBytes(2000))
+	c.Flush()
+
+	staleView := *sc1 // The repairer's outdated authoritative record.
+
+	data2 := randBytes(2500)
+	sc2 := mustPut(t, c, "k", data2)
+	c.Flush()
+
+	r := newRepairer(t, c, "n0", true)
+	r.sweepGrace = time.Nanosecond
+
+	report := &RepairReport{}
+	known := map[string]struct{}{staleView.Generation: {}}
+
+	err := r.repairPass(t.Context(), &staleView, known, nil, report)
+
+	var newer *newerRecordError
+	require.ErrorAs(t, err, &newer, "the pass must detect the concurrent overwrite")
+	assert.Equal(t, sc2.Generation, newer.sc.Generation)
+
+	// The newer write is fully intact: same content, sidecars not downgraded.
+	assert.True(t, bytes.Equal(data2, readObject(t, c, "k")))
+
+	got, err := c.Stat(t.Context(), "b", "k")
+	require.NoError(t, err)
+	assert.Equal(t, sc2.Generation, got.Generation)
+
+	// A full repair converges on the newer record without changes.
+	rep, err := r.RepairObject(t.Context(), "b", "k")
+	require.NoError(t, err)
+	assert.False(t, rep.Changed())
 }
 
 func TestRepairDetectsBitRot(t *testing.T) {
