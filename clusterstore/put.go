@@ -375,7 +375,15 @@ func (c *Coordinator) cleanupGeneration(ctx context.Context, _ *cluster.Topology
 			metaSeen[targetRef(item.Target)] = struct{}{}
 
 			// Target dropped out of the new placement: its old sidecar would
-			// keep serving the stale generation.
+			// keep serving the stale generation. Fence: only delete a record
+			// that does not supersede the one being cleaned up — an even
+			// newer write may have placed its replica here under another
+			// epoch.
+			cur, err := readSidecarFrom(ctx, p, item.Target.Disk, sidecarName(old.Bucket, old.Key))
+			if err != nil || cur == nil || (cur.Generation != old.Generation && cur.Supersedes(old)) {
+				continue
+			}
+
 			if err := p.Delete(ctx, item.Target.Disk, sidecarName(old.Bucket, old.Key)); err != nil && !errors.Is(err, transport.ErrNotFound) {
 				if firstErr == nil {
 					firstErr = err

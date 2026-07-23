@@ -8,6 +8,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -31,6 +33,16 @@ type Repairer struct {
 	// repair, catching at-rest bit-rot (costs a full read per replica).
 	verify bool
 	onErr  func(bucket, key string, err error)
+
+	// sweepGrace protects unattributed generations (no committed sidecar
+	// record names them — possibly another node's write mid-commit) from the
+	// sweep: they are deleted only when still present a grace period after
+	// first sighted.
+	sweepGrace time.Duration
+
+	// strayMu guards strays: objectRef → generation → first sighting.
+	strayMu sync.Mutex
+	strays  map[string]map[string]time.Time
 }
 
 // RepairerConfig configures a Repairer.
@@ -44,7 +56,16 @@ type RepairerConfig struct {
 	Verify bool
 	// OnError observes per-object scrub failures. May be nil.
 	OnError func(bucket, key string, err error)
+	// SweepGrace is how long an unattributed generation (fragments no
+	// committed record names — possibly another node's write mid-commit) is
+	// left alone before the sweep may delete it. Defaults to
+	// DefaultSweepGrace; only tests should lower it.
+	SweepGrace time.Duration
 }
+
+// DefaultSweepGrace is the default protection window for unattributed
+// generations — far beyond any write's commit latency.
+const DefaultSweepGrace = 10 * time.Minute
 
 // NewRepairer builds a repair worker over the coordinator.
 func NewRepairer(cfg RepairerConfig) (*Repairer, error) {
@@ -57,7 +78,19 @@ func NewRepairer(cfg RepairerConfig) (*Repairer, error) {
 		onErr = func(string, string, error) {}
 	}
 
-	return &Repairer{coord: cfg.Coordinator, self: cfg.Self, verify: cfg.Verify, onErr: onErr}, nil
+	grace := cfg.SweepGrace
+	if grace <= 0 {
+		grace = DefaultSweepGrace
+	}
+
+	return &Repairer{
+		coord:      cfg.Coordinator,
+		self:       cfg.Self,
+		verify:     cfg.Verify,
+		onErr:      onErr,
+		sweepGrace: grace,
+		strays:     make(map[string]map[string]time.Time),
+	}, nil
 }
 
 // RepairReport is what one RepairObject pass did.
@@ -115,30 +148,68 @@ func (r *Repairer) RepairObject(ctx context.Context, bucket, key string) (*Repai
 	return r.repair(ctx, bucket, key, nil, nil)
 }
 
+// newerRecordError aborts a repair pass: a target holds a sidecar record
+// superseding the pass's authoritative one — a concurrent overwrite from
+// another node committed mid-pass. The pass must restart with the newer
+// record; downgrading it (or sweeping its fragments) would destroy an
+// acknowledged write.
+type newerRecordError struct {
+	sc *Sidecar
+}
+
+func (e *newerRecordError) Error() string {
+	return "concurrent overwrite: generation " + e.sc.Generation + " supersedes the repair view"
+}
+
 // repair is RepairObject plus scrub-provided hints: a locally-read sidecar
 // and locally-present fragments (relocation sources).
 func (r *Repairer) repair(ctx context.Context, bucket, key string, hint *Sidecar, local *localFragments) (*RepairReport, error) {
 	release := r.coord.exclusiveKey(bucket, key)
 	defer release()
 
-	topo := r.coord.topo.Topology()
-
-	sc, err := r.authoritativeSidecar(ctx, bucket, key, hint)
-	if err != nil {
-		return nil, err
-	}
-
-	s, plan, peers, err := r.coord.planFor(topo, sc)
+	sc, known, err := r.authoritativeSidecar(ctx, bucket, key, hint)
 	if err != nil {
 		return nil, err
 	}
 
 	report := &RepairReport{}
 
+	// Bounded retries: a concurrent overwrite (from another node — the
+	// exclusive slot is process-local) restarts the pass with the newer
+	// record. A key hot enough to outrun the retries converges on a later
+	// scrub.
+	for range 3 {
+		err := r.repairPass(ctx, sc, known, local, report)
+
+		var newer *newerRecordError
+		if errors.As(err, &newer) {
+			known[sc.Generation] = struct{}{} // The old record is now positively superseded.
+			sc = newer.sc
+
+			continue
+		}
+
+		return report, err
+	}
+
+	return report, errors.Errorf("%s/%s: concurrent overwrites outran repair; next pass converges", bucket, key)
+}
+
+// repairPass runs one repair attempt against a fixed authoritative record.
+// known holds every generation positively attributed to a committed sidecar
+// record — the only generations the sweep may delete.
+func (r *Repairer) repairPass(ctx context.Context, sc *Sidecar, known map[string]struct{}, local *localFragments, report *RepairReport) error {
+	topo := r.coord.topo.Topology()
+
+	s, plan, peers, err := r.coord.planFor(topo, sc)
+	if err != nil {
+		return err
+	}
+
 	// Survey each target: sidecar state, committed fragment state, strays.
 	missing, err := r.survey(ctx, sc, plan, peers, report)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if r.verify {
@@ -159,7 +230,7 @@ func (r *Repairer) repair(ctx context.Context, bucket, key string, hint *Sidecar
 	}
 
 	if err := r.rebuild(ctx, sc, s, plan, peers, missing, report); err != nil {
-		return report, err
+		return err
 	}
 
 	if r.verify && s.Kind == scheme.EC && len(missing) == 0 {
@@ -169,7 +240,9 @@ func (r *Repairer) repair(ctx context.Context, bucket, key string, hint *Sidecar
 	// With the current placement fully healthy, retire old-placement copies
 	// (copy → verify → delete: an object is never below its protection level
 	// mid-move).
-	r.relocationSweep(ctx, sc, plan, peers, sources, local, report)
+	if err := r.relocationSweep(ctx, sc, known, plan, peers, sources, local, report); err != nil {
+		return err
+	}
 
 	// Scheme conversion (ROADMAP Phase 8): once the object is fully healthy
 	// at its recorded scheme, rewrite it under the bucket's current scheme.
@@ -177,11 +250,11 @@ func (r *Repairer) repair(ctx context.Context, bucket, key string, hint *Sidecar
 	// object is never below the stronger of the two guarantees mid-convert.
 	if len(missing) == 0 && !report.ECUnverified {
 		if err := r.maybeConvert(ctx, sc, s, report); err != nil {
-			return report, err
+			return err
 		}
 	}
 
-	return report, nil
+	return nil
 }
 
 // fragmentSources maps fragment index → old-placement copies to restore from:
@@ -324,12 +397,23 @@ func (r *Repairer) restoreFromCopies(ctx context.Context, sc *Sidecar, plan []fr
 // place. Deletion is strictly copy → verify → delete: an object is never
 // taken below its protection level mid-move, and an unhealthy object is
 // never swept at all.
-func (r *Repairer) relocationSweep(ctx context.Context, sc *Sidecar, plan []fragment.Item, peers []Peer, sources map[int][]candidateTarget, local *localFragments, report *RepairReport) {
+//
+// Two more guards protect concurrent overwrites from other nodes:
+//   - every target's sidecar is re-read right before its names are deleted,
+//     and a superseding record aborts the pass (newerRecordError) — the
+//     just-committed generation must not be swept as a stray;
+//   - only positively attributed generations are deleted: the authoritative
+//     one (outside its keep-set) and generations from committed-then-
+//     superseded records (known). An unknown generation may be another
+//     node's write racing between its fragment writes and its commit; it is
+//     left for a later pass (once its record commits it becomes known, and
+//     refused-write garbage is the mtime-sweep follow-up).
+func (r *Repairer) relocationSweep(ctx context.Context, sc *Sidecar, known map[string]struct{}, plan []fragment.Item, peers []Peer, sources map[int][]candidateTarget, local *localFragments, report *RepairReport) error {
 	// Cutover gate: every current-epoch fragment must be durably present.
 	for i := range plan {
 		name := fragmentName(sc.Bucket, sc.Key, sc.Generation, plan[i].Index)
 		if size, err := peers[i].Stat(ctx, plan[i].Target.Disk, name); err != nil || size != plan[i].Size {
-			return
+			return nil
 		}
 	}
 
@@ -377,6 +461,11 @@ func (r *Repairer) relocationSweep(ctx context.Context, sc *Sidecar, plan []frag
 			continue // Unreachable target: retired by a later pass.
 		}
 
+		// Overwrite fence: a record newer than the pass's view aborts.
+		if cur, err := readSidecarFrom(ctx, p, ct.target.Disk, metaName); err == nil && cur != nil && cur.Generation != sc.Generation && cur.Supersedes(sc) {
+			return &newerRecordError{sc: cur}
+		}
+
 		names, err := p.List(ctx, ct.target.Disk, base)
 		if err != nil {
 			continue
@@ -387,24 +476,89 @@ func (r *Repairer) relocationSweep(ctx context.Context, sc *Sidecar, plan []frag
 				continue
 			}
 
+			if gen, _, isFragment := parseFragmentFile(n[strings.LastIndex(n, "/")+1:]); isFragment {
+				if _, attributed := known[gen]; !attributed && gen != sc.Generation && !r.strayExpired(sc.Bucket, sc.Key, gen) {
+					continue // Possibly a racing write's fragment; not ours to delete yet.
+				}
+			}
+
 			if err := p.Delete(ctx, ct.target.Disk, n); err == nil {
 				report.DeletedStale++
 			}
 		}
 	}
+
+	r.forgetStrays(sc.Bucket, sc.Key, known, sc.Generation)
+
+	return nil
+}
+
+// strayExpired tracks an unattributed generation's first sighting and reports
+// whether it has outlived the sweep grace: garbage from refused writes is
+// reclaimed on a later pass, while a racing write commits (and becomes
+// attributed) long before its grace expires.
+func (r *Repairer) strayExpired(bucket, key, gen string) bool {
+	ref := objectRef(bucket, key)
+	now := time.Now()
+
+	r.strayMu.Lock()
+	defer r.strayMu.Unlock()
+
+	gens := r.strays[ref]
+	if gens == nil {
+		gens = make(map[string]time.Time)
+		r.strays[ref] = gens
+	}
+
+	first, ok := gens[gen]
+	if !ok {
+		gens[gen] = now
+		return false
+	}
+
+	return now.Sub(first) >= r.sweepGrace
+}
+
+// forgetStrays drops sighting state for generations that are now attributed
+// (their record committed) — and, when nothing unattributed remains, the
+// object's entry.
+func (r *Repairer) forgetStrays(bucket, key string, known map[string]struct{}, current string) {
+	ref := objectRef(bucket, key)
+
+	r.strayMu.Lock()
+	defer r.strayMu.Unlock()
+
+	gens := r.strays[ref]
+
+	for gen := range gens {
+		if _, attributed := known[gen]; attributed || gen == current {
+			delete(gens, gen)
+		}
+	}
+
+	if len(gens) == 0 {
+		delete(r.strays, ref)
+	}
 }
 
 // authoritativeSidecar gathers every readable sidecar replica for the object
 // — across all remembered topology epochs, plus the scrubber's locally-read
-// hint — and returns the newest (same ordering as list-merge: Modified, then
-// generation).
-func (r *Repairer) authoritativeSidecar(ctx context.Context, bucket, key string, hint *Sidecar) (*Sidecar, error) {
+// hint — and returns the newest (same ordering as list-merge: Seq, Modified,
+// then generation), along with the set of every generation seen in a
+// committed record. Superseded generations in that set are the only ones the
+// sweep may positively retire.
+func (r *Repairer) authoritativeSidecar(ctx context.Context, bucket, key string, hint *Sidecar) (*Sidecar, map[string]struct{}, error) {
 	name := sidecarName(bucket, key)
 
 	var (
 		best    = hint
 		lastErr error
 	)
+
+	known := make(map[string]struct{})
+	if hint != nil {
+		known[hint.Generation] = struct{}{}
+	}
 
 	for _, ct := range r.coord.allSidecarCandidates(bucket, key) {
 		p, err := r.coord.dial(ct.topo, ct.target.Node)
@@ -435,20 +589,22 @@ func (r *Repairer) authoritativeSidecar(ctx context.Context, bucket, key string,
 			continue // A corrupt replica; others decide.
 		}
 
+		known[sc.Generation] = struct{}{}
+
 		if best == nil || sc.Supersedes(best) {
 			best = sc
 		}
 	}
 
 	if best != nil {
-		return best, nil
+		return best, known, nil
 	}
 
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, nil, lastErr
 	}
 
-	return nil, errors.Wrapf(ErrNotFound, "%s/%s", bucket, key)
+	return nil, nil, errors.Wrapf(ErrNotFound, "%s/%s", bucket, key)
 }
 
 // survey inspects every target: rewrites missing/stale sidecars, sweeps stray
@@ -467,8 +623,19 @@ func (r *Repairer) survey(ctx context.Context, sc *Sidecar, plan []fragment.Item
 		disk := plan[i].Target.Disk
 		fragName := fragmentName(sc.Bucket, sc.Key, sc.Generation, plan[i].Index)
 
-		// Sidecar replica present and current?
-		if cur, err := readSidecarFrom(ctx, peers[i], disk, metaName); err != nil || cur == nil || cur.Generation != sc.Generation {
+		// Sidecar replica present and current? Never overwrite a SUPERSEDING
+		// record — that would downgrade a write that committed after this
+		// pass's view was gathered; restart with the newer record instead.
+		cur, err := readSidecarFrom(ctx, peers[i], disk, metaName)
+		if err != nil {
+			return nil, errors.Wrapf(err, "read sidecar on %s/%s", plan[i].Target.Node, disk)
+		}
+
+		if cur != nil && cur.Generation != sc.Generation && cur.Supersedes(sc) {
+			return nil, &newerRecordError{sc: cur}
+		}
+
+		if cur == nil || cur.Generation != sc.Generation {
 			if err := putBytes(ctx, peers[i], disk, metaName, data); err != nil {
 				return nil, errors.Wrapf(err, "rewrite sidecar on %s/%s", plan[i].Target.Node, disk)
 			}
