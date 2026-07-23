@@ -28,6 +28,12 @@ type Disk struct {
 	// with weight <= 0 is drained: it is never chosen for new placement (used
 	// when decommissioning or when a disk is full/faulted).
 	Weight float64
+	// TotalBytes/FreeBytes are the disk's reported filesystem capacity,
+	// refreshed by its node's registration; 0/0 means unknown. Observability
+	// input only — placement uses Weight, and Signature ignores capacity so
+	// usage churn never reads as a membership change.
+	TotalBytes uint64
+	FreeBytes  uint64
 }
 
 // Node is a cluster member and the disks it exposes. Rack is its coarsest

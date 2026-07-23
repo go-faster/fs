@@ -22,24 +22,52 @@ const maxRememberedEpochs = 4
 // local fragments (repair sources) cover what the memory would have.
 type epochMemory struct {
 	mu     sync.Mutex
-	epochs map[uint64]*cluster.Topology
+	epochs map[uint64]rememberedEpoch
+
+	// memoTopo/memoSig memoize the last snapshot's placement signature:
+	// observe runs on every read/repair, usually with the same pointer.
+	memoTopo *cluster.Topology
+	memoSig  string
+}
+
+// rememberedEpoch pairs a snapshot with its placement signature.
+type rememberedEpoch struct {
+	topo *cluster.Topology
+	sig  string
 }
 
 // observe records a topology snapshot, evicting the oldest epoch beyond the
 // bound, and returns all remembered snapshots newest-epoch first.
+//
+// Epochs are deduplicated by placement signature: registry churn that moves
+// no placement — capacity refreshes, address changes, lease re-acquisition —
+// bumps the etcd revision (epoch) constantly, and remembering each would
+// flush the genuinely distinct placements out of the bound. Two epochs with
+// equal signatures place every object identically, so dropping the older one
+// loses no relocation source.
 func (m *epochMemory) observe(topo *cluster.Topology) []*cluster.Topology {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.epochs == nil {
-		m.epochs = make(map[uint64]*cluster.Topology)
+		m.epochs = make(map[uint64]rememberedEpoch)
 	}
 
-	m.epochs[topo.Epoch] = topo
+	if m.memoTopo != topo {
+		m.memoTopo, m.memoSig = topo, topo.Signature()
+	}
+
+	for e, r := range m.epochs {
+		if r.sig == m.memoSig && e != topo.Epoch {
+			delete(m.epochs, e)
+		}
+	}
+
+	m.epochs[topo.Epoch] = rememberedEpoch{topo: topo, sig: m.memoSig}
 
 	out := make([]*cluster.Topology, 0, len(m.epochs))
-	for _, t := range m.epochs {
-		out = append(out, t)
+	for _, r := range m.epochs {
+		out = append(out, r.topo)
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Epoch > out[j].Epoch })

@@ -22,9 +22,14 @@ type Registration struct {
 	cancel context.CancelFunc
 	done   sync.WaitGroup
 
+	key string
+
 	mu      sync.Mutex
 	client  *clientv3.Client
 	leaseID clientv3.LeaseID
+	// value is the current registry payload; Update replaces it (disk usage
+	// refresh) and lease re-acquisition re-publishes the latest.
+	value string
 }
 
 // Register announces a node in the registry and keeps it alive until Close.
@@ -39,18 +44,42 @@ func Register(ctx context.Context, client *clientv3.Client, cfg Config, node clu
 	}
 
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	r := &Registration{cancel: cancel, client: client}
-	key := cfg.nodeKey(node.ID)
+	r := &Registration{cancel: cancel, client: client, value: string(value), key: cfg.nodeKey(node.ID)}
+	key := r.key
 
-	keepalive, err := r.acquire(ctx, runCtx, cfg, key, string(value))
+	keepalive, err := r.acquire(ctx, runCtx, cfg, key)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
-	r.done.Go(func() { r.run(runCtx, cfg, key, string(value), keepalive) })
+	r.done.Go(func() { r.run(runCtx, cfg, key, keepalive) })
 
 	return r, nil
+}
+
+// Update replaces the node's registry payload in place (same lease) — used to
+// refresh per-disk capacity without touching membership. Lease re-acquisition
+// after a loss republishes the latest value.
+func (r *Registration) Update(ctx context.Context, node cluster.Node) error {
+	value, err := encodeNode(node)
+	if err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	r.value = string(value)
+	leaseID := r.leaseID
+	key := r.key
+	r.mu.Unlock()
+
+	if _, err := r.client.Put(ctx, key, string(value), clientv3.WithLease(leaseID)); err != nil {
+		// The background loop re-publishes the value when it re-acquires the
+		// lease; an update racing a lease loss is not fatal.
+		return errors.Wrap(err, "update registry key")
+	}
+
+	return nil
 }
 
 // acquire grants a lease, writes the registry key under it and starts the
@@ -58,11 +87,15 @@ func Register(ctx context.Context, client *clientv3.Client, cfg Config, node clu
 // deadline on Register); the keepalive stream binds to streamCtx — the
 // registration's lifetime — so Close reliably ends it (a stream on the
 // caller's ctx would outlive Close and deadlock the drain loop).
-func (r *Registration) acquire(ctx, streamCtx context.Context, cfg Config, key, value string) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+func (r *Registration) acquire(ctx, streamCtx context.Context, cfg Config, key string) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
 	lease, err := r.client.Grant(ctx, cfg.TTL)
 	if err != nil {
 		return nil, errors.Wrap(err, "grant registration lease")
 	}
+
+	r.mu.Lock()
+	value := r.value
+	r.mu.Unlock()
 
 	if _, err := r.client.Put(ctx, key, value, clientv3.WithLease(lease.ID)); err != nil {
 		return nil, errors.Wrap(err, "write registry key")
@@ -82,7 +115,7 @@ func (r *Registration) acquire(ctx, streamCtx context.Context, cfg Config, key, 
 
 // run consumes keepalives and re-acquires the lease whenever the stream ends,
 // until Close cancels the context.
-func (r *Registration) run(ctx context.Context, cfg Config, key, value string, keepalive <-chan *clientv3.LeaseKeepAliveResponse) {
+func (r *Registration) run(ctx context.Context, cfg Config, key string, keepalive <-chan *clientv3.LeaseKeepAliveResponse) {
 	for {
 		if keepalive != nil {
 			for range keepalive { //nolint:revive // Draining; responses carry nothing actionable.
@@ -101,7 +134,7 @@ func (r *Registration) run(ctx context.Context, cfg Config, key, value string, k
 		case <-time.After(reRegisterBackoff):
 		}
 
-		next, err := r.acquire(ctx, ctx, cfg, key, value)
+		next, err := r.acquire(ctx, ctx, cfg, key)
 		if err != nil {
 			// Land back on the backoff next round.
 			keepalive = nil

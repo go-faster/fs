@@ -68,13 +68,17 @@ type nodeRecord struct {
 type diskRecord struct {
 	ID     cluster.DiskID `json:"id"`
 	Weight float64        `json:"weight"`
+	// Total/Free report the disk's filesystem capacity (0 = unknown),
+	// refreshed by Registration.Update.
+	Total uint64 `json:"total,omitempty"`
+	Free  uint64 `json:"free,omitempty"`
 }
 
 // encodeNode marshals a node for its registry key.
 func encodeNode(n cluster.Node) ([]byte, error) {
 	rec := nodeRecord{ID: n.ID, Addr: n.Addr, Rack: n.Rack, Disks: make([]diskRecord, 0, len(n.Disks))}
 	for _, d := range n.Disks {
-		rec.Disks = append(rec.Disks, diskRecord{ID: d.ID, Weight: d.Weight})
+		rec.Disks = append(rec.Disks, diskRecord{ID: d.ID, Weight: d.Weight, Total: d.TotalBytes, Free: d.FreeBytes})
 	}
 
 	data, err := json.Marshal(rec)
@@ -94,7 +98,7 @@ func decodeNode(data []byte) (cluster.Node, error) {
 
 	n := cluster.Node{ID: rec.ID, Addr: rec.Addr, Rack: rec.Rack, Disks: make([]cluster.Disk, 0, len(rec.Disks))}
 	for _, d := range rec.Disks {
-		n.Disks = append(n.Disks, cluster.Disk{ID: d.ID, Weight: d.Weight})
+		n.Disks = append(n.Disks, cluster.Disk{ID: d.ID, Weight: d.Weight, TotalBytes: d.Total, FreeBytes: d.Free})
 	}
 
 	if n.ID == "" {
