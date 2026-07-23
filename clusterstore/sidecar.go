@@ -38,8 +38,15 @@ type Sidecar struct {
 	Size int64 `json:"size"`
 	// Generation names the fragment set this sidecar commits.
 	Generation string `json:"generation"`
-	// Modified orders concurrent writers during list-merge and repair
-	// reconciliation (newest wins).
+	// Seq is a per-object write sequence (previous committed Seq + 1): the
+	// primary "newest wins" ordering for list-merge and repair
+	// reconciliation. Wall clocks are too coarse to order two writes of the
+	// same key (observed on Windows), so time is only the cross-writer
+	// tie-break.
+	Seq int64 `json:"seq,omitempty"`
+	// Modified is the write time; orders records with equal Seq (concurrent
+	// writers that read the same previous state), with the generation string
+	// as the final deterministic tie-break.
 	Modified time.Time `json:"modified"`
 
 	ETag string `json:"etag,omitempty"`
@@ -70,6 +77,20 @@ func (sc *Sidecar) ObjectMetadata() fs.ObjectMetadata {
 // ParseScheme returns the scheme the object was written with.
 func (sc *Sidecar) ParseScheme() (scheme.Scheme, error) {
 	return scheme.Parse(sc.Scheme)
+}
+
+// Supersedes reports whether this record is newer than other: Seq first,
+// then Modified, then Generation — a total, deterministic order.
+func (sc *Sidecar) Supersedes(other *Sidecar) bool {
+	if sc.Seq != other.Seq {
+		return sc.Seq > other.Seq
+	}
+
+	if !sc.Modified.Equal(other.Modified) {
+		return sc.Modified.After(other.Modified)
+	}
+
+	return sc.Generation > other.Generation
 }
 
 // encode marshals the sidecar for storage.

@@ -34,11 +34,7 @@ func (c *Coordinator) ListObjects(ctx context.Context, bucket, prefix string) ([
 			return sc.Key, sc, nil
 		},
 		func(existing, candidate *Sidecar) bool {
-			if !candidate.Modified.Equal(existing.Modified) {
-				return candidate.Modified.After(existing.Modified)
-			}
-
-			return candidate.Generation > existing.Generation
+			return candidate.Supersedes(existing)
 		},
 	)
 	if err != nil {

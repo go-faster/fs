@@ -69,7 +69,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 
 	// The previous committed state, for stale-generation cleanup and sidecar
 	// rollback. Best-effort: an unreachable sidecar must not block the write.
-	oldSC, _ := c.fetchSidecar(ctx, topo, req.Bucket, req.Key)
+	oldSC, _ := c.fetchSidecar(ctx, req.Bucket, req.Key)
 
 	sink := func(item fragment.Item) (io.WriteCloser, error) {
 		name := fragmentName(req.Bucket, req.Key, gen, item.Index)
@@ -106,6 +106,11 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		etag = checksum
 	}
 
+	var seq int64 = 1
+	if oldSC != nil {
+		seq = oldSC.Seq + 1
+	}
+
 	sc := &Sidecar{
 		Version:            sidecarVersion,
 		Bucket:             req.Bucket,
@@ -113,6 +118,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		Scheme:             s.String(),
 		Size:               req.Size,
 		Generation:         gen,
+		Seq:                seq,
 		Modified:           time.Now().UTC(),
 		ETag:               etag,
 		Checksum:           checksum,
@@ -155,7 +161,7 @@ func (c *Coordinator) UpdateSidecar(ctx context.Context, bucket, key string, mut
 
 	topo := c.topo.Topology()
 
-	sc, err := c.fetchSidecar(ctx, topo, bucket, key)
+	sc, err := c.fetchSidecar(ctx, bucket, key)
 	if err != nil {
 		return err
 	}
@@ -307,53 +313,73 @@ func (c *Coordinator) completeWrite(ctx context.Context, topo *cluster.Topology,
 	}
 }
 
-// cleanupGeneration removes a superseded generation's fragments, and — on old
-// targets no longer covered by the new placement (a scheme change shrank or
-// moved the target set) — its sidecar, so no phantom copy survives.
-func (c *Coordinator) cleanupGeneration(ctx context.Context, topo *cluster.Topology, newPlan []fragment.Item, old *Sidecar) error {
+// cleanupGeneration removes a superseded generation's fragments across every
+// remembered epoch's placement, and — on old targets no longer covered by the
+// new placement (a scheme or topology change moved the target set) — its
+// sidecar, so no phantom copy survives.
+func (c *Coordinator) cleanupGeneration(ctx context.Context, _ *cluster.Topology, newPlan []fragment.Item, old *Sidecar) error {
 	oldScheme, err := old.ParseScheme()
 	if err != nil {
 		return err
 	}
 
-	oldPlan, err := fragment.Plan(topo, oldScheme, placement.ObjectKey(old.Bucket, old.Key), old.Size)
-	if err != nil {
-		return err
-	}
-
-	covered := make(map[placement.Target]struct{}, len(newPlan))
+	covered := make(map[diskRef]struct{}, len(newPlan))
 	for _, item := range newPlan {
-		covered[item.Target] = struct{}{}
+		covered[targetRef(item.Target)] = struct{}{}
 	}
 
 	var firstErr error
 
-	for _, item := range oldPlan {
-		p, err := c.dial(topo, item.Target.Node)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
+	// NB: dedup fragment deletes by (disk, index) — the same disk can hold a
+	// DIFFERENT index of the object under another epoch's placement, and a
+	// disk-only dedup would leave that fragment behind.
+	type fragRef struct {
+		ref diskRef
+		idx int
+	}
+
+	fragSeen := make(map[fragRef]struct{})
+	metaSeen := make(map[diskRef]struct{})
+
+	for _, ep := range c.epochPlans(oldScheme, old.Bucket, old.Key, old.Size) {
+		for _, item := range ep.plan {
+			p, err := c.dial(ep.topo, item.Target.Node)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+
+				continue
 			}
 
-			continue
-		}
+			fr := fragRef{ref: targetRef(item.Target), idx: item.Index}
+			if _, done := fragSeen[fr]; !done {
+				fragSeen[fr] = struct{}{}
 
-		name := fragmentName(old.Bucket, old.Key, old.Generation, item.Index)
-		if err := p.Delete(ctx, item.Target.Disk, name); err != nil && !errors.Is(err, transport.ErrNotFound) {
-			if firstErr == nil {
-				firstErr = err
+				name := fragmentName(old.Bucket, old.Key, old.Generation, item.Index)
+				if err := p.Delete(ctx, item.Target.Disk, name); err != nil && !errors.Is(err, transport.ErrNotFound) {
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
 			}
-		}
 
-		if _, ok := covered[item.Target]; ok {
-			continue
-		}
+			if _, ok := covered[targetRef(item.Target)]; ok {
+				continue
+			}
 
-		// Target dropped out of the new placement: its old sidecar would keep
-		// serving the stale generation.
-		if err := p.Delete(ctx, item.Target.Disk, sidecarName(old.Bucket, old.Key)); err != nil && !errors.Is(err, transport.ErrNotFound) {
-			if firstErr == nil {
-				firstErr = err
+			if _, done := metaSeen[targetRef(item.Target)]; done {
+				continue
+			}
+
+			metaSeen[targetRef(item.Target)] = struct{}{}
+
+			// Target dropped out of the new placement: its old sidecar would
+			// keep serving the stale generation.
+			if err := p.Delete(ctx, item.Target.Disk, sidecarName(old.Bucket, old.Key)); err != nil && !errors.Is(err, transport.ErrNotFound) {
+				if firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
 	}

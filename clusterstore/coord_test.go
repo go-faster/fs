@@ -173,10 +173,48 @@ func (fc *fakeCluster) allNames() []string {
 	return out
 }
 
+// fakeTopoSource reads the cluster's current (mutable) topology.
+type fakeTopoSource struct{ fc *fakeCluster }
+
+func (s fakeTopoSource) Topology() *cluster.Topology {
+	s.fc.mu.Lock()
+	defer s.fc.mu.Unlock()
+
+	return s.fc.topo
+}
+
+// setTopology swaps the cluster topology (a new epoch).
+func (fc *fakeCluster) setTopology(topo *cluster.Topology) {
+	fc.mu.Lock()
+	fc.topo = topo
+	fc.mu.Unlock()
+}
+
+// addNodes grows the cluster by three single-disk nodes (each its own rack),
+// bumping the epoch. New nodes get stores; existing state is untouched.
+func (fc *fakeCluster) addNodes() {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+
+	next := &cluster.Topology{Epoch: fc.topo.Epoch + 1, Nodes: append([]cluster.Node(nil), fc.topo.Nodes...)}
+
+	for i := range 3 {
+		id := cluster.NodeID("x" + strconv.Itoa(len(fc.topo.Nodes)+i))
+		node := cluster.Node{ID: id, Rack: "rx" + strconv.Itoa(i)}
+
+		node.Disks = append(node.Disks, cluster.Disk{ID: "d0", Weight: 1})
+
+		next.Nodes = append(next.Nodes, node)
+		fc.stores[id] = newTrackingStore()
+	}
+
+	fc.topo = next
+}
+
 func (fc *fakeCluster) coordinator(t *testing.T, cfg Config) *Coordinator {
 	t.Helper()
 
-	cfg.Topology = StaticTopology{T: fc.topo}
+	cfg.Topology = fakeTopoSource{fc: fc}
 	cfg.Peers = fc
 
 	c, err := New(cfg)
