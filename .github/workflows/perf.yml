@@ -35,7 +35,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: stable
+          go-version-file: 'go.mod'
           # No GitHub-hosted module/build cache: this runner is self-hosted with
           # a persistent local $GOCACHE/$GOMODCACHE that stays warm between runs,
           # and its link to GitHub is slow (~20-30 Mbps), so round-tripping the
