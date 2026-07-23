@@ -219,6 +219,11 @@ type RebalanceConfig struct {
 	// Cooldown is the minimum gap between this node's automatic trigger
 	// attempts. Default 15m.
 	Cooldown time.Duration `yaml:"cooldown,omitempty"`
+	// FullWatermark is the disk-fullness fraction (0,1] beyond which the node
+	// warns that the disk should be drained (weight lowered) — with
+	// deterministic weighted placement, a weight change is what moves data
+	// off a full disk, and the auto-rebalancer converges it. Default 0.9.
+	FullWatermark float64 `yaml:"full_watermark,omitempty"`
 }
 
 // ClusterDiskConfig is one local disk exposed to the cluster.
@@ -286,6 +291,10 @@ func (c *Config) validateCluster() error {
 
 	if cc.Rebalance.Settle < 0 || cc.Rebalance.Cooldown < 0 {
 		return errors.New("cluster.rebalance.settle and .cooldown must not be negative")
+	}
+
+	if w := cc.Rebalance.FullWatermark; w < 0 || w > 1 {
+		return errors.New("cluster.rebalance.full_watermark must be in (0,1]")
 	}
 
 	seen := make(map[string]struct{}, len(cc.Disks))

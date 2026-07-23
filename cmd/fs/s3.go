@@ -163,6 +163,14 @@ Command-line flags override YAML configuration values.`,
 					// Auto rebalancing: converge placement after settled
 					// membership changes without operator action.
 					go clusterRT.RunAutoRebalancer(ctx, cfg.Cluster.Rebalance)
+
+					// Per-disk capacity into the registry + fullness watermark
+					// warnings; cluster metrics for the telemetry pipeline.
+					go clusterRT.RunUsageReporter(ctx, cfg.Cluster.Rebalance.FullWatermark)
+
+					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {
+						return errors.Wrap(err, "register cluster metrics")
+					}
 				default: // StorageTypeFilesystem, enforced by Validate.
 					syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
 					if err != nil {
