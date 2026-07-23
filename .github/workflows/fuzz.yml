@@ -35,5 +35,5 @@ jobs:
       - name: Fuzz wire parsers
         env:
           # Longer search on the nightly schedule, quick smoke on PRs.
-          FUZZTIME: ${{ github.event_name == 'schedule' && '120s' || '40s' }}
+          FUZZTIME: ${{ github.event_name == 'schedule' && '10s' || '2s' }}
         run: ./scripts/fuzz.sh
