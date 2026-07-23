@@ -65,8 +65,8 @@ about HTTP or S3; don't import upward.
 - **Style:** Uber Go style; blank lines around blocks and before `return`.
 - **Logging:** `zctx.From(ctx)` (zap). Library packages stay quiet; logging
   belongs to the binary or injected middleware.
-- **Commits:** Conventional Commits (`type(scope): subject`) — commitlint
-  gates CI. Split unrelated changes into separate commits.
+- **Commits:** Conventional Commits (`type(scope): subject`). Split unrelated
+  changes into separate commits.
 
 ## When adding a storage operation
 
