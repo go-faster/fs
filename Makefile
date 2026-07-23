@@ -11,6 +11,19 @@ test_fast:
 	go test ./...
 .PHONY: test_fast
 
+# Performance gates from DESIGN.md NFR-3 (throughput ratio, O(1) PUT allocs,
+# 4 KiB GET p99). FS_PERF_GATES enables the wall-clock gates (throughput,
+# latency); the deterministic allocation gate runs regardless.
+bench-gate:
+	FS_PERF_GATES=1 go test ./bench -run NFR3 -v
+.PHONY: bench-gate
+
+# Full benchmark run for benchstat tracking: ns/op, MB/s, allocs/op. Pipe to a
+# file and compare across commits with `go tool benchstat old.txt new.txt`.
+bench:
+	go test ./bench -run '^$$' -bench . -benchmem -count 6
+.PHONY: bench
+
 tidy:
 	go mod tidy
 .PHONY: tidy
