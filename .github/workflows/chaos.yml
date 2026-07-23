@@ -1,12 +1,16 @@
 name: chaos
 
-# The ROADMAP Phase 9 chaos suite: a real multi-node fs cluster as OS
-# processes against an embedded etcd, with scripted node SIGKILL/restart,
-# disk wipe, node add and etcd restart under continuous mixed-scheme
-# (RF2.5/RF3/EC) S3 load. Gates on the durability invariants: no acked write
-# lost, no under-protected object after convergence.
+# Resilience suite: a real multi-node fs cluster as OS processes against an
+# embedded etcd, under continuous mixed-scheme (RF2.5/RF3/EC) S3 load.
 #
-# See chaos/chaos_test.go for the fault script.
+#   - TestChaos (Phase 9): scripted node SIGKILL/restart, disk wipe, node add
+#     and etcd restart. Invariants: no acked write lost, no under-protected
+#     object after convergence.
+#   - TestRollingUpgrade (Phase 10): graceful node-by-node in-place upgrade
+#     drill. Invariants: zero failed requests, no data loss, reconvergence
+#     between steps.
+#
+# See chaos/chaos_test.go and chaos/rolling_upgrade_test.go.
 
 on:
   push:
@@ -32,4 +36,4 @@ jobs:
           cache: true
 
       - name: Run chaos suite
-        run: go test -tags chaos -race -v -run TestChaos -count=1 -timeout 20m ./chaos
+        run: go test -tags chaos -race -v -count=1 -timeout 20m ./chaos

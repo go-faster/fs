@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -241,6 +242,41 @@ func (n *node) kill() {
 
 	_ = n.cmd.Process.Kill()
 	_ = n.cmd.Wait()
+
+	n.cmd = nil
+
+	if n.log != nil {
+		_ = n.log.Close()
+		n.log = nil
+	}
+}
+
+// stopGraceful sends SIGTERM and waits for a clean exit (the upgrade/operator
+// stop path: the node drains in-flight requests and deregisters from etcd
+// before exiting, so the topology shrinks promptly rather than after the lease
+// TTL). SIGTERM exercises the bridgeSIGTERM handler. Falls back to SIGKILL if
+// the process does not exit within the deadline.
+func (n *node) stopGraceful(t *testing.T) {
+	t.Helper()
+
+	if n.cmd == nil {
+		return
+	}
+
+	require.NoError(t, n.cmd.Process.Signal(syscall.SIGTERM))
+
+	done := make(chan error, 1)
+	go func() { done <- n.cmd.Wait() }()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Logf("node %s did not exit on SIGTERM within 30s; killing", n.id)
+
+		_ = n.cmd.Process.Kill()
+
+		<-done
+	}
 
 	n.cmd = nil
 
