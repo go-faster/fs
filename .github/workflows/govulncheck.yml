@@ -1,0 +1,23 @@
+name: govulncheck
+
+# Scans the module and the standard library for known vulnerabilities
+# reachable from the code we build (the dependency-audit gate of the security
+# pass). Uses the module's declared Go version via go-version-file.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  govulncheck:
+    uses: go-faster/x/.github/workflows/govulncheck.yml@main
+    with:
+      go-version-file: go.mod
