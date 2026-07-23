@@ -19,6 +19,7 @@ func Root() *cobra.Command {
 	// Add subcommands
 	cmd.AddCommand(S3())
 	cmd.AddCommand(Systemd())
+	cmd.AddCommand(Cluster())
 
 	return cmd
 }

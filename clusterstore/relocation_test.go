@@ -3,6 +3,7 @@ package clusterstore
 import (
 	"bytes"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,7 +84,15 @@ func verifyPlacement(t *testing.T, fc *fakeCluster, s scheme.Scheme, payload map
 	}
 
 	for id, store := range fc.stores {
-		got := store.list()
+		var got []string
+
+		for _, n := range store.list() {
+			if strings.Contains(n, "\x00bkt/") {
+				continue // Bucket records live outside object placement.
+			}
+
+			got = append(got, n)
+		}
 
 		want := expected[string(id)]
 		assert.Len(t, got, len(want), "node %s name count", id)
