@@ -11,6 +11,12 @@ test_fast:
 	go test ./...
 .PHONY: test_fast
 
+# Actively fuzz the untrusted-input wire parsers (SigV4, aws-chunked framing,
+# XML bodies). FUZZTIME overrides the per-target budget, e.g. FUZZTIME=5m.
+fuzz:
+	./scripts/fuzz.sh
+.PHONY: fuzz
+
 # Performance gates from DESIGN.md NFR-3 (throughput ratio, O(1) PUT allocs,
 # 4 KiB GET p99). FS_PERF_GATES enables the wall-clock gates (throughput,
 # latency); the deterministic allocation gate runs regardless.

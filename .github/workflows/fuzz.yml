@@ -1,0 +1,39 @@
+name: fuzz
+
+# Actively fuzzes the untrusted-input wire parsers (SigV4 authorization and
+# credential parsing, aws-chunked framing, and the XML request-body decoders)
+# for a bounded time, searching for panics and DoS inputs. The seed corpora
+# also run as ordinary unit tests in the main test suite, so known crashers
+# are permanent regressions independent of this search.
+#
+# Runs on PRs (short) and nightly (longer) via scripts/fuzz.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Fuzz wire parsers
+        env:
+          # Longer search on the nightly schedule, quick smoke on PRs.
+          FUZZTIME: ${{ github.event_name == 'schedule' && '10s' || '2s' }}
+        run: ./scripts/fuzz.sh

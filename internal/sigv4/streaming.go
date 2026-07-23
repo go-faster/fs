@@ -15,6 +15,13 @@ import (
 // per-chunk signatures.
 const chunkStringToSignAlgorithm = "AWS4-HMAC-SHA256-PAYLOAD"
 
+// maxChunkSize bounds a single aws-chunked chunk's declared payload length.
+// The size is read from untrusted framing before the chunk signature is
+// checked, so an unbounded value would let a client force a huge up-front
+// allocation. 64 MiB is far above any real streaming chunk (AWS SDKs use
+// 64 KiB–8 MiB) while capping the per-chunk buffer.
+const maxChunkSize = 64 << 20
+
 // ErrChunkSignature reports a streaming upload chunk whose signature does not
 // chain correctly from the seed.
 var ErrChunkSignature = errors.New("chunk signature mismatch")
@@ -105,6 +112,15 @@ func (c *chunkVerifyingReader) nextChunk() error {
 	size, err := strconv.ParseInt(sizeStr, 16, 64)
 	if err != nil {
 		return errors.Wrap(err, "parse chunk size")
+	}
+
+	// The size is attacker-controlled and reached before any signature check.
+	// Reject a negative size (make([]byte, size) would panic) and one past the
+	// per-chunk ceiling (a huge declared size would pre-allocate gigabytes and
+	// exhaust memory). Real aws-chunked clients use KB-to-few-MB chunks, well
+	// under the cap.
+	if size < 0 || size > maxChunkSize {
+		return errors.Wrapf(ErrChunkSignature, "chunk size %d out of range", size)
 	}
 
 	chunkSig := strings.TrimPrefix(sig, "chunk-signature=")

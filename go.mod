@@ -1,6 +1,6 @@
 module github.com/go-faster/fs
 
-go 1.26
+go 1.26.5
 
 tool (
 	github.com/matryer/moq
