@@ -5,6 +5,14 @@
 // live in sibling packages.
 package cluster
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strconv"
+	"strings"
+)
+
 // NodeID uniquely identifies a cluster member.
 type NodeID string
 
@@ -60,6 +68,35 @@ func (t *Topology) DiskCount() int {
 	}
 
 	return n
+}
+
+// Signature is a stable digest of everything placement depends on: node IDs,
+// racks, disk IDs and weights — sorted, so registration order does not matter.
+// Addresses and the epoch are excluded: a node re-registering at a new address
+// (or any registry churn that bumps the epoch without changing membership)
+// moves no data and must not read as a placement change. Equal signatures ⇒
+// identical placement for every object.
+func (t *Topology) Signature() string {
+	lines := make([]string, 0, len(t.Nodes))
+
+	for i := range t.Nodes {
+		n := &t.Nodes[i]
+
+		disks := make([]string, 0, len(n.Disks))
+		for _, d := range n.Disks {
+			disks = append(disks, string(d.ID)+"="+strconv.FormatFloat(d.Weight, 'g', -1, 64))
+		}
+
+		sort.Strings(disks)
+
+		lines = append(lines, string(n.ID)+"\x00"+n.Rack+"\x00"+strings.Join(disks, ","))
+	}
+
+	sort.Strings(lines)
+
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+
+	return hex.EncodeToString(sum[:])
 }
 
 // FailureDomain returns the node's coarsest failure-domain key: its rack, or a

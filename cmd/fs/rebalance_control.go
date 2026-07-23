@@ -219,6 +219,11 @@ func (c *rebalanceController) runElected(ctx context.Context, cancel context.Can
 		}
 	}
 
+	// The signature of the topology this walk covers: captured before the
+	// walk, so a mid-run membership change (current signature ≠ applied)
+	// correctly reads as "another walk needed".
+	signature := c.coord.Topology().Signature()
+
 	c.mu.Lock()
 	if c.gen == gen && !c.pauseRequested {
 		c.state = adminhandler.RebalanceRunning
@@ -259,8 +264,14 @@ func (c *rebalanceController) runElected(ctx context.Context, cancel context.Can
 		return err
 	}
 
-	if err := lead.ClearCursor(context.WithoutCancel(ctx)); err != nil {
+	done := context.WithoutCancel(ctx)
+
+	if err := lead.ClearCursor(done); err != nil {
 		c.lg.Warn("Clearing rebalance cursor failed", zap.Error(err))
+	}
+
+	if err := lead.SaveApplied(done, signature); err != nil {
+		c.lg.Warn("Recording rebalanced topology signature failed", zap.Error(err))
 	}
 
 	return nil

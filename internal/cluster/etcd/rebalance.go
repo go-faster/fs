@@ -16,6 +16,11 @@ func (c Config) rebalanceElectionPrefix() string { return c.Prefix + "/rebalance
 // rebalanceCursorKey holds the rebalance resume cursor.
 func (c Config) rebalanceCursorKey() string { return c.Prefix + "/rebalance/cursor" }
 
+// rebalanceAppliedKey holds the topology signature the last completed
+// rebalance ran against — the auto-rebalancer's cluster-wide dedup: when the
+// current signature matches, no node re-walks a converged cluster.
+func (c Config) rebalanceAppliedKey() string { return c.Prefix + "/rebalance/applied" }
+
 // closeTimeout bounds the etcd calls made while releasing leadership.
 const closeTimeout = 5 * time.Second
 
@@ -27,6 +32,7 @@ type RebalanceLeadership struct {
 	session  *concurrency.Session
 	election *concurrency.Election
 	cursor   string
+	applied  string
 }
 
 // CampaignRebalance blocks until this candidate holds the cluster-wide
@@ -50,7 +56,12 @@ func CampaignRebalance(ctx context.Context, client *clientv3.Client, cfg Config,
 		return nil, errors.Wrap(err, "campaign rebalance leadership")
 	}
 
-	return &RebalanceLeadership{session: session, election: election, cursor: cfg.rebalanceCursorKey()}, nil
+	return &RebalanceLeadership{
+		session:  session,
+		election: election,
+		cursor:   cfg.rebalanceCursorKey(),
+		applied:  cfg.rebalanceAppliedKey(),
+	}, nil
 }
 
 // Done is closed when leadership is lost involuntarily (the session lease
@@ -94,6 +105,25 @@ func (l *RebalanceLeadership) ClearCursor(ctx context.Context) error {
 	return nil
 }
 
+// SaveApplied records the topology signature this completed run covered,
+// fenced like SaveCursor. The auto-rebalancer compares it to the current
+// signature to decide whether the cluster still needs a walk.
+func (l *RebalanceLeadership) SaveApplied(ctx context.Context, signature string) error {
+	resp, err := l.session.Client().Txn(ctx).
+		If(clientv3.Compare(clientv3.CreateRevision(l.election.Key()), "=", l.election.Rev())).
+		Then(clientv3.OpPut(l.applied, signature)).
+		Commit()
+	if err != nil {
+		return errors.Wrap(err, "save rebalance applied signature")
+	}
+
+	if !resp.Succeeded {
+		return errors.New("rebalance leadership lost")
+	}
+
+	return nil
+}
+
 // Close resigns leadership and ends the session, letting the next candidate
 // win immediately instead of after the TTL.
 func (l *RebalanceLeadership) Close() error {
@@ -116,11 +146,33 @@ func (l *RebalanceLeadership) Close() error {
 // LoadRebalanceCursor reads the persisted resume cursor; ok is false when no
 // rebalance is in progress.
 func LoadRebalanceCursor(ctx context.Context, client *clientv3.Client, cfg Config) (value string, ok bool, err error) {
+	return loadKey(ctx, client, cfg.withDefaults().rebalanceCursorKey(), "rebalance cursor")
+}
+
+// LoadRebalanceApplied reads the topology signature of the last completed
+// rebalance; ok is false when none completed yet.
+func LoadRebalanceApplied(ctx context.Context, client *clientv3.Client, cfg Config) (signature string, ok bool, err error) {
+	return loadKey(ctx, client, cfg.withDefaults().rebalanceAppliedKey(), "rebalance applied signature")
+}
+
+// RebalanceLeaderExists reports whether some runner currently holds the
+// cluster-wide rebalance slot.
+func RebalanceLeaderExists(ctx context.Context, client *clientv3.Client, cfg Config) (bool, error) {
 	cfg = cfg.withDefaults()
 
-	resp, err := client.Get(ctx, cfg.rebalanceCursorKey())
+	resp, err := client.Get(ctx, cfg.rebalanceElectionPrefix(), clientv3.WithPrefix(), clientv3.WithCountOnly())
 	if err != nil {
-		return "", false, errors.Wrap(err, "load rebalance cursor")
+		return false, errors.Wrap(err, "check rebalance leader")
+	}
+
+	return resp.Count > 0, nil
+}
+
+// loadKey reads one optional key.
+func loadKey(ctx context.Context, client *clientv3.Client, key, what string) (value string, ok bool, err error) {
+	resp, err := client.Get(ctx, key)
+	if err != nil {
+		return "", false, errors.Wrapf(err, "load %s", what)
 	}
 
 	if len(resp.Kvs) == 0 {

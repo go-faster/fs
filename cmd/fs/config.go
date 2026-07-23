@@ -201,6 +201,24 @@ type ClusterConfig struct {
 
 	// Etcd configures the control plane connection.
 	Etcd EtcdConfig `yaml:"etcd"`
+
+	// Rebalance tunes the automatic rebalancer.
+	Rebalance RebalanceConfig `yaml:"rebalance,omitempty"`
+}
+
+// RebalanceConfig tunes automatic rebalancing: on a settled membership change
+// (node/disk/weight/rack), one node starts the elected rebalance walk without
+// operator action. Manual control (CLI, admin API) always wins.
+type RebalanceConfig struct {
+	// AutoDisabled turns automatic rebalancing off; relocation then happens
+	// only via periodic scrubs and manual runs.
+	AutoDisabled bool `yaml:"auto_disabled,omitempty"`
+	// Settle is how long the membership must be stable before data moves
+	// (hysteresis against flapping nodes and rolling restarts). Default 1m.
+	Settle time.Duration `yaml:"settle,omitempty"`
+	// Cooldown is the minimum gap between this node's automatic trigger
+	// attempts. Default 15m.
+	Cooldown time.Duration `yaml:"cooldown,omitempty"`
 }
 
 // ClusterDiskConfig is one local disk exposed to the cluster.
@@ -264,6 +282,10 @@ func (c *Config) validateCluster() error {
 
 	if cc.Etcd.TTL != 0 && cc.Etcd.TTL < time.Second {
 		return errors.New("cluster.etcd.ttl must be at least 1s")
+	}
+
+	if cc.Rebalance.Settle < 0 || cc.Rebalance.Cooldown < 0 {
+		return errors.New("cluster.rebalance.settle and .cooldown must not be negative")
 	}
 
 	seen := make(map[string]struct{}, len(cc.Disks))
