@@ -149,7 +149,13 @@ func TestRepairSweepsStaleGeneration(t *testing.T) {
 	require.NoError(t, w.Close())
 
 	r := newRepairer(t, c, plan[0].Target.Node, false)
-	r.sweepGrace = time.Nanosecond
+	// Grace 0: the first sighting still defers (strayExpired always defers a
+	// generation it has never seen), and any later pass sweeps it. Using a
+	// tiny positive grace instead would rely on the monotonic clock advancing
+	// between two sub-millisecond in-memory passes, which the coarse Windows
+	// clock granularity does not guarantee (both passes can read the same
+	// instant → 0 elapsed → not yet expired).
+	r.sweepGrace = 0
 
 	// First pass: the generation is unattributed (no record names it) — it
 	// might be another node's write mid-commit, so it is only sighted.
