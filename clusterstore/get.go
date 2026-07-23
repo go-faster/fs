@@ -298,12 +298,17 @@ func (c *Coordinator) fetchSidecar(ctx context.Context, bucket, key string) (*Si
 }
 
 // sidecarCandidates lists the targets that may hold the object's sidecar
-// under one topology, in placement order: the bucket's configured scheme
-// first, then the 3-target replica layout and the default EC layout for
-// objects written under an earlier bucket scheme.
+// under one topology, in placement order: the bucket's known scheme first
+// (the cached per-bucket override when one was resolved, the configured
+// default otherwise), then the 3-target replica layout and the default EC
+// layout for objects written under an earlier bucket scheme.
 func (c *Coordinator) sidecarCandidates(topo *cluster.Topology, bucket, key string) []placement.Target {
 	pkey := placement.ObjectKey(bucket, key)
 	counts := []int{c.schemeFor(bucket).Copies(), scheme.Default.Copies(), scheme.DefaultEC.Copies()}
+
+	if s, ok := c.cachedBucketScheme(bucket); ok {
+		counts = append(counts, s.Copies())
+	}
 
 	seen := make(map[placement.Target]struct{})
 

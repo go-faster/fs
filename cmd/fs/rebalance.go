@@ -8,18 +8,14 @@ import (
 	"os/signal"
 	"slices"
 	"syscall"
-	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/spf13/cobra"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/time/rate"
 
 	"github.com/go-faster/fs/clusterstore"
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/etcd"
-	"github.com/go-faster/fs/internal/cluster/scheme"
-	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
 // Cluster groups cluster operations.
@@ -30,6 +26,7 @@ func Cluster() *cobra.Command {
 	}
 
 	cmd.AddCommand(ClusterRebalance())
+	cmd.AddCommand(ClusterScheme())
 
 	return cmd
 }
@@ -77,12 +74,8 @@ that reaches them.`,
 				return err
 			}
 
-			if len(cfg.Cluster.Etcd.Endpoints) == 0 {
-				return errors.New("cluster.etcd.endpoints is required (pass the node config via --config)")
-			}
-
-			if len(cfg.ClusterSecret()) < 16 {
-				return errors.New("cluster.secret (or FS_CLUSTER_SECRET) is required, min 16 characters")
+			if err := validateClusterClientConfig(cfg); err != nil {
+				return err
 			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -104,66 +97,31 @@ that reaches them.`,
 // runRebalance builds a disk-less cluster client and runs the plan or the
 // elected rebalance pass.
 func runRebalance(ctx context.Context, out io.Writer, cfg Config, params rebalanceParams) error {
-	cc := cfg.Cluster
-
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   cc.Etcd.Endpoints,
-		DialTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		return errors.Wrap(err, "etcd client")
-	}
-	defer func() { _ = client.Close() }()
-
-	etcdCfg := etcd.Config{Prefix: cc.Etcd.Prefix}
-	if cc.Etcd.TTL > 0 {
-		etcdCfg.TTL = int64(cc.Etcd.TTL / time.Second)
-	}
-
-	source, err := etcd.NewSource(ctx, client, etcdCfg)
-	if err != nil {
-		return errors.Wrap(err, "watch topology")
-	}
-	defer func() { _ = source.Close() }()
-
-	defaultScheme := scheme.Default
-	if cc.Scheme != "" {
-		if defaultScheme, err = scheme.Parse(cc.Scheme); err != nil {
-			return errors.Wrap(err, "cluster.scheme")
-		}
-	}
-
-	// The runner is a pure client: it authenticates to peers under a synthetic
-	// node ID (never registered, so it can't collide with a topology node and
-	// never resolves to the nil local store) and moves data between them.
-	host, _ := os.Hostname()
-	self := cluster.NodeID(fmt.Sprintf("rebalance/%s/%d", host, os.Getpid()))
-
-	secret := transport.Secret(cfg.ClusterSecret())
-
-	var dialer clusterstore.PeerDialer = clusterstore.NewHTTPPeers(self, nil, secret, nil)
+	// The runner is a pure client moving data between the nodes; --rate wraps
+	// its peer dialer with the bandwidth cap.
+	var wrap func(clusterstore.PeerDialer) clusterstore.PeerDialer
 
 	if params.rateMiB > 0 {
 		bytesPerSec := params.rateMiB * float64(1<<20)
-		dialer = &clusterstore.ThrottledPeers{
-			Dialer: dialer,
-			// One second of burst keeps large reads smooth at the cap.
-			Limiter: rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec)),
+		wrap = func(d clusterstore.PeerDialer) clusterstore.PeerDialer {
+			return &clusterstore.ThrottledPeers{
+				Dialer: d,
+				// One second of burst keeps large reads smooth at the cap.
+				Limiter: rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec)),
+			}
 		}
 	}
 
-	coord, err := clusterstore.New(clusterstore.Config{
-		Topology: source,
-		Peers:    dialer,
-		Scheme:   func(string) scheme.Scheme { return defaultScheme },
-	})
+	cl, err := dialClusterClient(ctx, cfg, "rebalance", wrap)
 	if err != nil {
-		return errors.Wrap(err, "cluster coordinator")
+		return err
 	}
-	defer func() { _ = coord.Close() }()
+	defer func() { _ = cl.Close() }()
+
+	client, etcdCfg, self := cl.client, cl.etcdCfg, cl.self
 
 	repairer, err := clusterstore.NewRepairer(clusterstore.RepairerConfig{
-		Coordinator: coord,
+		Coordinator: cl.coord,
 		Self:        self,
 		Verify:      params.verify,
 		OnError: func(bucket, key string, err error) {

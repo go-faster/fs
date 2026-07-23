@@ -49,7 +49,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 	c.waitKey(req.Bucket, req.Key)
 
 	topo := c.topo.Topology()
-	s := c.schemeFor(req.Bucket)
+	s := c.EffectiveScheme(ctx, req.Bucket)
 	pkey := placement.ObjectKey(req.Bucket, req.Key)
 
 	plan, err := fragment.Plan(topo, s, pkey, req.Size)

@@ -13,7 +13,9 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/cluster/fragment"
 	"github.com/go-faster/fs/internal/cluster/placement"
+	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
@@ -37,6 +39,11 @@ type BucketInfo struct {
 	Name    string    `json:"name"`
 	ACL     fs.ACL    `json:"acl,omitempty"`
 	Created time.Time `json:"created"`
+	// Scheme overrides the cluster default replication scheme for this
+	// bucket's objects ("rf2.5", "rf3", "ec:k,m"); empty applies the default.
+	// Changing it affects new writes immediately; existing objects follow
+	// through scheme conversion in repair/rebalance (ROADMAP Phase 8).
+	Scheme string `json:"scheme,omitempty"`
 }
 
 // bucketRecordName is the store name of a bucket's record; like objects, the
@@ -189,6 +196,45 @@ func (c *Coordinator) SetBucketACL(ctx context.Context, bucket string, acl fs.AC
 	info.ACL = acl
 
 	return c.writeBucket(ctx, topo, info)
+}
+
+// SetBucketScheme rewrites the bucket record with a new object scheme
+// override; empty restores the cluster default. The scheme must parse and the
+// current topology must be able to host it (a bucket must never be switched
+// into a scheme its cluster cannot write). Existing objects converge to the
+// new scheme through repair/rebalance conversion.
+func (c *Coordinator) SetBucketScheme(ctx context.Context, bucket, schemeID string) error {
+	topo := c.topo.Topology()
+
+	if schemeID != "" {
+		s, err := scheme.Parse(schemeID)
+		if err != nil {
+			return errors.Wrap(err, "bucket scheme")
+		}
+
+		schemeID = s.String() // Normalized form.
+
+		if _, err := fragment.Plan(topo, s, placement.ObjectKey(bucket, "\x00scheme-probe"), 1); err != nil {
+			return errors.Wrapf(err, "topology cannot host scheme %s", schemeID)
+		}
+	}
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.Scheme = schemeID
+
+	if err := c.writeBucket(ctx, topo, info); err != nil {
+		return err
+	}
+
+	// This node's writes and conversions see the change immediately; peers
+	// converge within the scheme cache TTL.
+	c.cacheBucketScheme(bucket, c.parseBucketScheme(info))
+
+	return nil
 }
 
 // fetchBucket reads the bucket record from the first reachable target. Like
