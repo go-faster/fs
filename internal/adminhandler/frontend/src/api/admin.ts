@@ -30,7 +30,9 @@ import type {
   CreateAccessKeyRequest,
   CreatedAccessKey,
   ErrorResponse,
-  InstanceInfo
+  InstanceInfo,
+  RebalanceControlRequest,
+  RebalanceStatus
 } from './model';
 
 import { customFetch } from '../lib/fetcher';
@@ -289,6 +291,168 @@ export const useCreateAccessKey = <TError = ErrorResponse,
       > => {
 
       const mutationOptions = getCreateAccessKeyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the depth of the async repair queue. State is "disabled" when the server is not in cluster mode.
+
+ * @summary Cluster rebalance status
+ */
+export const getRebalanceStatus = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<RebalanceStatus>(
+      {url: `/api/v1/cluster/rebalance`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetRebalanceStatusQueryKey = () => {
+    return [
+    `/api/v1/cluster/rebalance`
+    ] as const;
+    }
+
+    
+export const getGetRebalanceStatusQueryOptions = <TData = Awaited<ReturnType<typeof getRebalanceStatus>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRebalanceStatus>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRebalanceStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRebalanceStatus>>> = ({ signal }) => getRebalanceStatus(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRebalanceStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRebalanceStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getRebalanceStatus>>>
+export type GetRebalanceStatusQueryError = ErrorResponse
+
+
+export function useGetRebalanceStatus<TData = Awaited<ReturnType<typeof getRebalanceStatus>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRebalanceStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRebalanceStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getRebalanceStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRebalanceStatus<TData = Awaited<ReturnType<typeof getRebalanceStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRebalanceStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRebalanceStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getRebalanceStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRebalanceStatus<TData = Awaited<ReturnType<typeof getRebalanceStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRebalanceStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Cluster rebalance status
+ */
+
+export function useGetRebalanceStatus<TData = Awaited<ReturnType<typeof getRebalanceStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRebalanceStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRebalanceStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs cluster-wide (etcd election); starting on several nodes leaves the extras waiting as standby runners. Pausing stops this node's runner and keeps the resume cursor, so a later start/resume — on any node — continues where it left off.
+
+ * @summary Control the cluster rebalance
+ */
+export const controlRebalance = (
+    rebalanceControlRequest: RebalanceControlRequest,
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<RebalanceStatus>(
+      {url: `/api/v1/cluster/rebalance`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: rebalanceControlRequest, signal
+    },
+      );
+    }
+  
+
+
+export const getControlRebalanceMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof controlRebalance>>, TError,{data: RebalanceControlRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof controlRebalance>>, TError,{data: RebalanceControlRequest}, TContext> => {
+
+const mutationKey = ['controlRebalance'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof controlRebalance>>, {data: RebalanceControlRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  controlRebalance(data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ControlRebalanceMutationResult = NonNullable<Awaited<ReturnType<typeof controlRebalance>>>
+    export type ControlRebalanceMutationBody = RebalanceControlRequest
+    export type ControlRebalanceMutationError = ErrorResponse
+
+    /**
+ * @summary Control the cluster rebalance
+ */
+export const useControlRebalance = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof controlRebalance>>, TError,{data: RebalanceControlRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof controlRebalance>>,
+        TError,
+        {data: RebalanceControlRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getControlRebalanceMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

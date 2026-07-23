@@ -16,4 +16,8 @@ export * from './errorResponse';
 export * from './grant';
 export * from './instanceInfo';
 export * from './permission';
+export * from './rebalanceAction';
+export * from './rebalanceControlRequest';
+export * from './rebalanceState';
+export * from './rebalanceStatus';
 export * from './source';

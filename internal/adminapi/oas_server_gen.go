@@ -8,6 +8,15 @@ import (
 
 // Handler handles operations described by OpenAPI v3 specification.
 type Handler interface {
+	// ControlRebalance implements controlRebalance operation.
+	//
+	// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
+	// cluster-wide (etcd election); starting on several nodes leaves the extras waiting as standby
+	// runners. Pausing stops this node's runner and keeps the resume cursor, so a later start/resume —
+	// on any node — continues where it left off.
+	//
+	// POST /api/v1/cluster/rebalance
+	ControlRebalance(ctx context.Context, req *RebalanceControlRequest) (*RebalanceStatus, error)
 	// CreateAccessKey implements createAccessKey operation.
 	//
 	// Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -27,6 +36,13 @@ type Handler interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetRebalanceStatus implements getRebalanceStatus operation.
+	//
+	// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
+	// depth of the async repair queue. State is "disabled" when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/rebalance
+	GetRebalanceStatus(ctx context.Context) (*RebalanceStatus, error)
 	// ListAccessKeys implements listAccessKeys operation.
 	//
 	// Every credential the server accepts, secrets omitted.

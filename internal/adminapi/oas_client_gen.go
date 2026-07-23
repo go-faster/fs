@@ -28,6 +28,15 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// ControlRebalance invokes controlRebalance operation.
+	//
+	// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
+	// cluster-wide (etcd election); starting on several nodes leaves the extras waiting as standby
+	// runners. Pausing stops this node's runner and keeps the resume cursor, so a later start/resume —
+	// on any node — continues where it left off.
+	//
+	// POST /api/v1/cluster/rebalance
+	ControlRebalance(ctx context.Context, request *RebalanceControlRequest) (*RebalanceStatus, error)
 	// CreateAccessKey invokes createAccessKey operation.
 	//
 	// Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -47,6 +56,13 @@ type Invoker interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetRebalanceStatus invokes getRebalanceStatus operation.
+	//
+	// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
+	// depth of the async repair queue. State is "disabled" when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/rebalance
+	GetRebalanceStatus(ctx context.Context) (*RebalanceStatus, error)
 	// ListAccessKeys invokes listAccessKeys operation.
 	//
 	// Every credential the server accepts, secrets omitted.
@@ -92,6 +108,92 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// ControlRebalance invokes controlRebalance operation.
+//
+// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
+// cluster-wide (etcd election); starting on several nodes leaves the extras waiting as standby
+// runners. Pausing stops this node's runner and keeps the resume cursor, so a later start/resume —
+// on any node — continues where it left off.
+//
+// POST /api/v1/cluster/rebalance
+func (c *Client) ControlRebalance(ctx context.Context, request *RebalanceControlRequest) (*RebalanceStatus, error) {
+	res, err := c.sendControlRebalance(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendControlRebalance(ctx context.Context, request *RebalanceControlRequest) (res *RebalanceStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("controlRebalance"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/rebalance"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ControlRebalanceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/rebalance"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeControlRebalanceRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeControlRebalanceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // CreateAccessKey invokes createAccessKey operation.
@@ -349,6 +451,87 @@ func (c *Client) sendGetInfo(ctx context.Context) (res *InstanceInfo, err error)
 
 	stage = "DecodeResponse"
 	result, err := decodeGetInfoResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetRebalanceStatus invokes getRebalanceStatus operation.
+//
+// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
+// depth of the async repair queue. State is "disabled" when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/rebalance
+func (c *Client) GetRebalanceStatus(ctx context.Context) (*RebalanceStatus, error) {
+	res, err := c.sendGetRebalanceStatus(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetRebalanceStatus(ctx context.Context) (res *RebalanceStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getRebalanceStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/rebalance"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetRebalanceStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/rebalance"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetRebalanceStatusResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

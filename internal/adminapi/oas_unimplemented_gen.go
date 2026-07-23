@@ -13,6 +13,18 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// ControlRebalance implements controlRebalance operation.
+//
+// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
+// cluster-wide (etcd election); starting on several nodes leaves the extras waiting as standby
+// runners. Pausing stops this node's runner and keeps the resume cursor, so a later start/resume —
+// on any node — continues where it left off.
+//
+// POST /api/v1/cluster/rebalance
+func (UnimplementedHandler) ControlRebalance(ctx context.Context, req *RebalanceControlRequest) (r *RebalanceStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateAccessKey implements createAccessKey operation.
 //
 // Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -38,6 +50,16 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 //
 // GET /api/v1/info
 func (UnimplementedHandler) GetInfo(ctx context.Context) (r *InstanceInfo, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetRebalanceStatus implements getRebalanceStatus operation.
+//
+// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
+// depth of the async repair queue. State is "disabled" when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/rebalance
+func (UnimplementedHandler) GetRebalanceStatus(ctx context.Context) (r *RebalanceStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

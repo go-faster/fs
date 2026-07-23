@@ -11,6 +11,9 @@ import (
 )
 
 var (
+	rn3AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
+	}
 	rn1AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
@@ -84,7 +87,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					default:
 						s.notAllowed(w, r, notAllowedParams{
 							allowedMethods: "GET,POST",
-							allowedHeaders: rn1AllowedHeaders,
+							allowedHeaders: rn3AllowedHeaders,
 							acceptPost:     "application/json",
 							acceptPatch:    "",
 						})
@@ -129,6 +132,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 
+				}
+
+			case 'c': // Prefix: "cluster/rebalance"
+
+				if l := len("cluster/rebalance"); len(elem) >= l && elem[0:l] == "cluster/rebalance" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch r.Method {
+					case "GET":
+						s.handleGetRebalanceStatusRequest([0]string{}, elemIsEscaped, w, r)
+					case "POST":
+						s.handleControlRebalanceRequest([0]string{}, elemIsEscaped, w, r)
+					default:
+						s.notAllowed(w, r, notAllowedParams{
+							allowedMethods: "GET,POST",
+							allowedHeaders: rn1AllowedHeaders,
+							acceptPost:     "application/json",
+							acceptPatch:    "",
+						})
+					}
+
+					return
 				}
 
 			case 'i': // Prefix: "info"
@@ -323,6 +353,40 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						}
 					}
 
+				}
+
+			case 'c': // Prefix: "cluster/rebalance"
+
+				if l := len("cluster/rebalance"); len(elem) >= l && elem[0:l] == "cluster/rebalance" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch method {
+					case "GET":
+						r.name = GetRebalanceStatusOperation
+						r.summary = "Cluster rebalance status"
+						r.operationID = "getRebalanceStatus"
+						r.operationGroup = ""
+						r.pathPattern = "/api/v1/cluster/rebalance"
+						r.args = args
+						r.count = 0
+						return r, true
+					case "POST":
+						r.name = ControlRebalanceOperation
+						r.summary = "Control the cluster rebalance"
+						r.operationID = "controlRebalance"
+						r.operationGroup = ""
+						r.pathPattern = "/api/v1/cluster/rebalance"
+						r.args = args
+						r.count = 0
+						return r, true
+					default:
+						return
+					}
 				}
 
 			case 'i': // Prefix: "info"

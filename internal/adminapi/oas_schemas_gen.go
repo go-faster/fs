@@ -472,6 +472,273 @@ func (s *Permission) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/RebalanceAction
+type RebalanceAction string
+
+const (
+	RebalanceActionStart  RebalanceAction = "start"
+	RebalanceActionPause  RebalanceAction = "pause"
+	RebalanceActionResume RebalanceAction = "resume"
+)
+
+// AllValues returns all RebalanceAction values.
+func (RebalanceAction) AllValues() []RebalanceAction {
+	return []RebalanceAction{
+		RebalanceActionStart,
+		RebalanceActionPause,
+		RebalanceActionResume,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s RebalanceAction) MarshalText() ([]byte, error) {
+	switch s {
+	case RebalanceActionStart:
+		return []byte(s), nil
+	case RebalanceActionPause:
+		return []byte(s), nil
+	case RebalanceActionResume:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *RebalanceAction) UnmarshalText(data []byte) error {
+	switch RebalanceAction(data) {
+	case RebalanceActionStart:
+		*s = RebalanceActionStart
+		return nil
+	case RebalanceActionPause:
+		*s = RebalanceActionPause
+		return nil
+	case RebalanceActionResume:
+		*s = RebalanceActionResume
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/RebalanceControlRequest
+type RebalanceControlRequest struct {
+	Action RebalanceAction `json:"action"`
+}
+
+// GetAction returns the value of Action.
+func (s *RebalanceControlRequest) GetAction() RebalanceAction {
+	return s.Action
+}
+
+// SetAction sets the value of Action.
+func (s *RebalanceControlRequest) SetAction(val RebalanceAction) {
+	s.Action = val
+}
+
+// Runner state on this node: "disabled" (not cluster mode), "idle" (never started since boot),
+// "waiting" (campaigning for the cluster-wide slot behind another runner), "running", "paused"
+// (stopped by an operator, resume cursor kept), "done" (last run completed) or "failed" (last run
+// aborted with an error).
+// Ref: #/components/schemas/RebalanceState
+type RebalanceState string
+
+const (
+	RebalanceStateDisabled RebalanceState = "disabled"
+	RebalanceStateIdle     RebalanceState = "idle"
+	RebalanceStateWaiting  RebalanceState = "waiting"
+	RebalanceStateRunning  RebalanceState = "running"
+	RebalanceStatePaused   RebalanceState = "paused"
+	RebalanceStateDone     RebalanceState = "done"
+	RebalanceStateFailed   RebalanceState = "failed"
+)
+
+// AllValues returns all RebalanceState values.
+func (RebalanceState) AllValues() []RebalanceState {
+	return []RebalanceState{
+		RebalanceStateDisabled,
+		RebalanceStateIdle,
+		RebalanceStateWaiting,
+		RebalanceStateRunning,
+		RebalanceStatePaused,
+		RebalanceStateDone,
+		RebalanceStateFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s RebalanceState) MarshalText() ([]byte, error) {
+	switch s {
+	case RebalanceStateDisabled:
+		return []byte(s), nil
+	case RebalanceStateIdle:
+		return []byte(s), nil
+	case RebalanceStateWaiting:
+		return []byte(s), nil
+	case RebalanceStateRunning:
+		return []byte(s), nil
+	case RebalanceStatePaused:
+		return []byte(s), nil
+	case RebalanceStateDone:
+		return []byte(s), nil
+	case RebalanceStateFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *RebalanceState) UnmarshalText(data []byte) error {
+	switch RebalanceState(data) {
+	case RebalanceStateDisabled:
+		*s = RebalanceStateDisabled
+		return nil
+	case RebalanceStateIdle:
+		*s = RebalanceStateIdle
+		return nil
+	case RebalanceStateWaiting:
+		*s = RebalanceStateWaiting
+		return nil
+	case RebalanceStateRunning:
+		*s = RebalanceStateRunning
+		return nil
+	case RebalanceStatePaused:
+		*s = RebalanceStatePaused
+		return nil
+	case RebalanceStateDone:
+		*s = RebalanceStateDone
+		return nil
+	case RebalanceStateFailed:
+		*s = RebalanceStateFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/RebalanceStatus
+type RebalanceStatus struct {
+	State RebalanceState `json:"state"`
+	// Objects processed by the current or last run on this node.
+	Objects int `json:"objects"`
+	// Objects the run changed (fragments moved, sidecars rewritten, old copies retired).
+	Relocated int `json:"relocated"`
+	// Objects whose repair errored; the run continues past them.
+	Failed int `json:"failed"`
+	// Persisted resume cursor: everything up to and including (bucket, key) is done.
+	CursorBucket OptString `json:"cursor_bucket"`
+	CursorKey    OptString `json:"cursor_key"`
+	// When the current or last run started on this node.
+	StartedAt OptDateTime `json:"started_at"`
+	// When the last run ended on this node.
+	FinishedAt OptDateTime `json:"finished_at"`
+	// Why the last run failed, for state "failed".
+	ErrorMessage OptString `json:"error_message"`
+	// Pending async replication-remainder tasks on this node (repair backlog indicator).
+	RepairQueueDepth int `json:"repair_queue_depth"`
+}
+
+// GetState returns the value of State.
+func (s *RebalanceStatus) GetState() RebalanceState {
+	return s.State
+}
+
+// GetObjects returns the value of Objects.
+func (s *RebalanceStatus) GetObjects() int {
+	return s.Objects
+}
+
+// GetRelocated returns the value of Relocated.
+func (s *RebalanceStatus) GetRelocated() int {
+	return s.Relocated
+}
+
+// GetFailed returns the value of Failed.
+func (s *RebalanceStatus) GetFailed() int {
+	return s.Failed
+}
+
+// GetCursorBucket returns the value of CursorBucket.
+func (s *RebalanceStatus) GetCursorBucket() OptString {
+	return s.CursorBucket
+}
+
+// GetCursorKey returns the value of CursorKey.
+func (s *RebalanceStatus) GetCursorKey() OptString {
+	return s.CursorKey
+}
+
+// GetStartedAt returns the value of StartedAt.
+func (s *RebalanceStatus) GetStartedAt() OptDateTime {
+	return s.StartedAt
+}
+
+// GetFinishedAt returns the value of FinishedAt.
+func (s *RebalanceStatus) GetFinishedAt() OptDateTime {
+	return s.FinishedAt
+}
+
+// GetErrorMessage returns the value of ErrorMessage.
+func (s *RebalanceStatus) GetErrorMessage() OptString {
+	return s.ErrorMessage
+}
+
+// GetRepairQueueDepth returns the value of RepairQueueDepth.
+func (s *RebalanceStatus) GetRepairQueueDepth() int {
+	return s.RepairQueueDepth
+}
+
+// SetState sets the value of State.
+func (s *RebalanceStatus) SetState(val RebalanceState) {
+	s.State = val
+}
+
+// SetObjects sets the value of Objects.
+func (s *RebalanceStatus) SetObjects(val int) {
+	s.Objects = val
+}
+
+// SetRelocated sets the value of Relocated.
+func (s *RebalanceStatus) SetRelocated(val int) {
+	s.Relocated = val
+}
+
+// SetFailed sets the value of Failed.
+func (s *RebalanceStatus) SetFailed(val int) {
+	s.Failed = val
+}
+
+// SetCursorBucket sets the value of CursorBucket.
+func (s *RebalanceStatus) SetCursorBucket(val OptString) {
+	s.CursorBucket = val
+}
+
+// SetCursorKey sets the value of CursorKey.
+func (s *RebalanceStatus) SetCursorKey(val OptString) {
+	s.CursorKey = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *RebalanceStatus) SetStartedAt(val OptDateTime) {
+	s.StartedAt = val
+}
+
+// SetFinishedAt sets the value of FinishedAt.
+func (s *RebalanceStatus) SetFinishedAt(val OptDateTime) {
+	s.FinishedAt = val
+}
+
+// SetErrorMessage sets the value of ErrorMessage.
+func (s *RebalanceStatus) SetErrorMessage(val OptString) {
+	s.ErrorMessage = val
+}
+
+// SetRepairQueueDepth sets the value of RepairQueueDepth.
+func (s *RebalanceStatus) SetRepairQueueDepth(val int) {
+	s.RepairQueueDepth = val
+}
+
 // Where the credential is defined.
 // Ref: #/components/schemas/Source
 type Source string

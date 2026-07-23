@@ -30,6 +30,9 @@ type Options struct {
 	AuthEnabled bool
 	// StartTime is the process start, for uptime. Defaults to now.
 	StartTime time.Time
+	// Rebalance drives the cluster rebalance runner; nil outside cluster mode
+	// (the endpoints then report "disabled" / refuse control).
+	Rebalance RebalanceControl
 	// now overrides the clock in tests.
 	now func() time.Time
 }
