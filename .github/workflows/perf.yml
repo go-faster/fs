@@ -4,10 +4,13 @@ name: perf
 # (bench/nfr3_test.go): large-object throughput ≥ 80% of the same machine's
 # raw sequential bandwidth, PUT allocations O(1) in object size, and 4 KiB GET
 # p99 latency under concurrent load. The throughput gate is a machine-relative
-# ratio and the allocation gate is deterministic, so both are stable on shared
-# CI runners; the latency gate carries CI headroom and logs the real figure.
+# ratio and the allocation gate is deterministic; the latency gate carries
+# headroom and logs the real figure. FS_PERF_GATES enables the two wall-clock
+# gates (skipped in the general test matrix).
 #
-# `make bench` produces the ns/op / MB/s / allocs numbers for benchstat.
+# Runs on a dedicated self-hosted runner labeled `bench` so the wall-clock
+# numbers and the benchstat record are stable across runs. `make bench`
+# reproduces the ns/op / MB/s / allocs numbers locally.
 
 on:
   push:
@@ -20,8 +23,11 @@ permissions:
 
 jobs:
   nfr3:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Dedicated benchmark hardware. Same-repo events only: never run untrusted
+    # fork-PR code on the self-hosted machine.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, bench]
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -38,4 +44,4 @@ jobs:
         run: go test ./bench -run NFR3 -v
 
       - name: Benchmark record (informational)
-        run: go test ./bench -run '^$' -bench . -benchmem -count 1
+        run: go test ./bench -run '^$' -bench . -benchmem -count 6
