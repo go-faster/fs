@@ -36,7 +36,11 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: stable
-          cache: true
+          # No GitHub-hosted module/build cache: this runner is self-hosted with
+          # a persistent local $GOCACHE/$GOMODCACHE that stays warm between runs,
+          # and its link to GitHub is slow (~20-30 Mbps), so round-tripping the
+          # cache through GitHub's cache service is slower than a warm local one.
+          cache: false
 
       - name: NFR-3 performance gates
         env:
