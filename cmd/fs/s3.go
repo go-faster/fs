@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -113,6 +115,13 @@ Command-line flags override YAML configuration values.`,
 			insecureNoAuth, _ := cmd.Flags().GetBool("insecure-no-auth")
 
 			startTime := time.Now()
+
+			// app.Run triggers graceful shutdown on SIGINT only, but process
+			// managers (systemd, Kubernetes, docker stop) send SIGTERM. Bridge
+			// SIGTERM to SIGINT so an operator stop — or a rolling upgrade —
+			// drains in-flight requests and deregisters the node cleanly
+			// instead of being abruptly terminated.
+			bridgeSIGTERM()
 
 			app.Run(func(ctx context.Context, lg *zap.Logger, t *app.Telemetry) error {
 				// Log configuration
@@ -311,6 +320,23 @@ Command-line flags override YAML configuration values.`,
 	cmd.Flags().Bool("generate-config", false, "Generate example configuration file and print to stdout")
 
 	return cmd
+}
+
+// bridgeSIGTERM converts the first SIGTERM into a SIGINT to this process, so
+// the app framework's SIGINT-based graceful shutdown fires for the SIGTERM
+// that systemd/Kubernetes/docker send on stop. Idempotent enough for a single
+// server process; called once before app.Run.
+func bridgeSIGTERM() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM)
+
+	go func() {
+		<-ch
+
+		if p, err := os.FindProcess(os.Getpid()); err == nil {
+			_ = p.Signal(os.Interrupt)
+		}
+	}()
 }
 
 // loggingMiddleware logs HTTP requests
