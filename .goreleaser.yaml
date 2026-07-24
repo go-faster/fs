@@ -1,5 +1,11 @@
 version: 2
 project_name: fs
+
+# NB: the admin dashboard SPA embedded via go:embed
+# (internal/adminhandler/frontend/dist) must be built BEFORE goreleaser runs —
+# the release and snapshot workflows do this with npm. goreleaser does not build
+# it, so a bare `goreleaser release` embeds whatever dist is already on disk.
+
 builds:
   - env:
       - CGO_ENABLED=0
@@ -51,7 +57,11 @@ release:
 dockers_v2:
   - images:
       - "ghcr.io/go-faster/fs"
-    dockerfile: build.Dockerfile
+    dockerfile: release.Dockerfile
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/riscv64
     tags:
       - "v{{ .Version }}"
       - "{{ if .IsNightly }}nightly{{ end }}"

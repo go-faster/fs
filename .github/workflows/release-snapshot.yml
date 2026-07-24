@@ -1,0 +1,78 @@
+name: release-snapshot
+
+# Validates the goreleaser release pipeline on pull requests by running it in
+# --snapshot mode with signing and publishing skipped: it builds the binaries,
+# archives, Linux packages and multi-arch Docker images locally but pushes and
+# releases nothing. Catches config/Dockerfile/platform breakage before a tag.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: git fetch --force --tags
+
+      - uses: anchore/sbom-action/download-syft@v0
+
+      # QEMU binfmt so buildx can cross-build the arm64 and riscv64 images.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
+
+      # Build the admin dashboard SPA so the snapshot binaries embed the real UI
+      # (goreleaser does not build it).
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: internal/adminhandler/frontend/package-lock.json
+
+      - name: Build admin dashboard
+        working-directory: internal/adminhandler/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Get Go environment
+        id: go-env
+        run: |
+          echo "cache=$(go env GOCACHE)" >> $GITHUB_ENV
+          echo "modcache=$(go env GOMODCACHE)" >> $GITHUB_ENV
+          echo "goversion=$(go env GOVERSION)" >> $GITHUB_ENV
+
+      - name: Set up cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.cache }}
+            ${{ env.modcache }}
+          key: release-snapshot-${{ runner.os }}-go-${{ env.goversion }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            release-snapshot-${{ runner.os }}-go-${{ env.goversion }}
+
+      - name: goreleaser-install
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          install-only: true
+
+      - name: goreleaser-snapshot
+        run: goreleaser release --snapshot --clean --skip=publish,sign --timeout 30m
