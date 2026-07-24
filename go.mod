@@ -22,7 +22,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	go.etcd.io/etcd/client/v3 v3.7.1
-	go.etcd.io/etcd/server/v3 v3.7.0
+	go.etcd.io/etcd/server/v3 v3.7.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/metric v1.44.0
@@ -106,7 +106,7 @@ require (
 	go.etcd.io/bbolt v1.5.0 // indirect
 	go.etcd.io/etcd/api/v3 v3.7.1 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.7.1 // indirect
-	go.etcd.io/etcd/pkg/v3 v3.7.0 // indirect
+	go.etcd.io/etcd/pkg/v3 v3.7.1 // indirect
 	go.etcd.io/raft/v3 v3.7.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.19.0 // indirect
