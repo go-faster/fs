@@ -19,6 +19,21 @@ import (
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
+// ErrSchemeRejected matches (via errors.Is) any error SetBucketScheme returns
+// because the requested scheme does not parse or the current topology cannot
+// host it. It is a client error: the request named a scheme this cluster
+// cannot serve, not a control-plane failure.
+var ErrSchemeRejected = errors.New("scheme rejected")
+
+// schemeRejected tags an error as a scheme rejection while keeping the
+// underlying reason (an unparseable scheme, or a placement error such as
+// ErrInsufficientTargets) in the chain for errors.Is.
+type schemeRejected struct{ err error }
+
+func (e schemeRejected) Error() string        { return e.err.Error() }
+func (e schemeRejected) Unwrap() error        { return e.err }
+func (e schemeRejected) Is(target error) bool { return target == ErrSchemeRejected }
+
 // bucketCopies is how many targets hold a bucket record. Bucket records are
 // tiny and rarely written, so they always use 3-way replication regardless of
 // the bucket's object scheme.
@@ -209,13 +224,13 @@ func (c *Coordinator) SetBucketScheme(ctx context.Context, bucket, schemeID stri
 	if schemeID != "" {
 		s, err := scheme.Parse(schemeID)
 		if err != nil {
-			return errors.Wrap(err, "bucket scheme")
+			return schemeRejected{errors.Wrap(err, "parse bucket scheme")}
 		}
 
 		schemeID = s.String() // Normalized form.
 
 		if _, err := fragment.Plan(topo, s, placement.ObjectKey(bucket, "\x00scheme-probe"), 1); err != nil {
-			return errors.Wrapf(err, "topology cannot host scheme %s", schemeID)
+			return schemeRejected{errors.Wrapf(err, "topology cannot host scheme %s", schemeID)}
 		}
 	}
 

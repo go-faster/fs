@@ -79,3 +79,135 @@ func decodeDeleteAccessKeyParams(args [1]string, argsEscaped bool, r *http.Reque
 	}
 	return params, nil
 }
+
+// GetBucketSchemeParams is parameters of getBucketScheme operation.
+type GetBucketSchemeParams struct {
+	// The bucket name.
+	Bucket string
+}
+
+func unpackGetBucketSchemeParams(packed middleware.Parameters) (params GetBucketSchemeParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetBucketSchemeParams(args [1]string, argsEscaped bool, r *http.Request) (params GetBucketSchemeParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// SetBucketSchemeParams is parameters of setBucketScheme operation.
+type SetBucketSchemeParams struct {
+	// The bucket name.
+	Bucket string
+}
+
+func unpackSetBucketSchemeParams(packed middleware.Parameters) (params SetBucketSchemeParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeSetBucketSchemeParams(args [1]string, argsEscaped bool, r *http.Request) (params SetBucketSchemeParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}

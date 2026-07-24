@@ -45,6 +45,13 @@ type Options struct {
 	// ConfigRevision returns the config revision currently in effect, reported
 	// by GetInfo; nil reports none.
 	ConfigRevision func() string
+	// BucketSchemes reads and writes per-bucket replication-scheme overrides
+	// via the control plane; nil outside cluster mode (the scheme endpoints
+	// then return 501).
+	BucketSchemes BucketSchemeStore
+	// ClusterDefaultScheme is the scheme applied to buckets without an override,
+	// echoed by the scheme endpoints. Empty when unknown.
+	ClusterDefaultScheme string
 	// now overrides the clock in tests.
 	now func() time.Time
 }

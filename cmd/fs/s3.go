@@ -299,15 +299,19 @@ Command-line flags override YAML configuration values.`,
 					var (
 						rebalance     adminhandler.RebalanceControl
 						clusterStatus adminhandler.ClusterStatusSource
+						bucketSchemes adminhandler.BucketSchemeStore
+						defaultScheme string
 					)
 
 					if clusterRT != nil {
 						rebalance = clusterRT.rebalance
 						clusterStatus = clusterRT.status
+						bucketSchemes = newBucketSchemeSource(clusterRT.coord)
+						defaultScheme = clusterRT.schemeID
 					}
 
 					grp.Go(func() error {
-						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance, clusterStatus, rel)
+						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance, clusterStatus, bucketSchemes, defaultScheme, rel)
 					})
 				}
 

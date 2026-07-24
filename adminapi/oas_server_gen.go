@@ -30,6 +30,14 @@ type Handler interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// GetBucketScheme implements getBucketScheme operation.
+	//
+	// The bucket's effective replication scheme, its explicit override (empty when the bucket follows the
+	// cluster default) and the cluster default. Returns 404 when the bucket does not exist and 501 when
+	// the server is not in cluster mode (a single-node server has no per-bucket schemes).
+	//
+	// GET /api/v1/buckets/{bucket}/scheme
+	GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (*BucketScheme, error)
 	// GetClusterStatus implements getClusterStatus operation.
 	//
 	// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
@@ -68,6 +76,17 @@ type Handler interface {
 	//
 	// POST /api/v1/reload
 	ReloadConfig(ctx context.Context) (*ReloadResult, error)
+	// SetBucketScheme implements setBucketScheme operation.
+	//
+	// Override the bucket's replication scheme, or clear the override to restore the cluster default. The
+	// scheme must parse ("rf2.5", "rf3" or "ec:k,m") and the current topology must be able to host it. The
+	// change affects new writes cluster-wide within seconds; existing objects convert through
+	// repair/rebalance. Returns the effective scheme after applying. Returns 400 when the scheme is
+	// invalid or the topology cannot host it, 404 when the bucket does not exist and 501 when the server
+	// is not in cluster mode.
+	//
+	// PUT /api/v1/buckets/{bucket}/scheme
+	SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (*BucketScheme, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.
