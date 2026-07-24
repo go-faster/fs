@@ -75,6 +75,17 @@ func (UnimplementedHandler) GetInfo(ctx context.Context) (r *InstanceInfo, _ err
 	return r, ht.ErrNotImplemented
 }
 
+// GetPublicReadBuckets implements getPublicReadBuckets operation.
+//
+// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with
+// cluster-wide credentials (auth.source: etcd); returns 501 otherwise, where public-read buckets are
+// managed in the config file per node.
+//
+// GET /api/v1/public-read-buckets
+func (UnimplementedHandler) GetPublicReadBuckets(ctx context.Context) (r *PublicReadBuckets, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetRebalanceStatus implements getRebalanceStatus operation.
 //
 // State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
@@ -119,6 +130,17 @@ func (UnimplementedHandler) ReloadConfig(ctx context.Context) (r *ReloadResult, 
 //
 // PUT /api/v1/buckets/{bucket}/scheme
 func (UnimplementedHandler) SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (r *BucketScheme, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetPublicReadBuckets implements setPublicReadBuckets operation.
+//
+// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds
+// with no restart. Returns the stored list. Returns 400 on an invalid bucket name and 501 when not
+// using cluster-wide credentials.
+//
+// PUT /api/v1/public-read-buckets
+func (UnimplementedHandler) SetPublicReadBuckets(ctx context.Context, req *SetPublicReadBucketsRequest) (r *PublicReadBuckets, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

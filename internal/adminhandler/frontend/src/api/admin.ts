@@ -33,10 +33,12 @@ import type {
   CreatedAccessKey,
   ErrorResponse,
   InstanceInfo,
+  PublicReadBuckets,
   RebalanceControlRequest,
   RebalanceStatus,
   ReloadResult,
-  SetBucketSchemeRequest
+  SetBucketSchemeRequest,
+  SetPublicReadBucketsRequest
 } from './model';
 
 import { customFetch } from '../lib/fetcher';
@@ -842,6 +844,167 @@ export const useSetBucketScheme = <TError = ErrorResponse,
       > => {
 
       const mutationOptions = getSetBucketSchemeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with cluster-wide credentials (auth.source: etcd); returns 501 otherwise, where public-read buckets are managed in the config file per node.
+
+ * @summary List public-read buckets
+ */
+export const getPublicReadBuckets = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<PublicReadBuckets>(
+      {url: `/api/v1/public-read-buckets`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetPublicReadBucketsQueryKey = () => {
+    return [
+    `/api/v1/public-read-buckets`
+    ] as const;
+    }
+
+    
+export const getGetPublicReadBucketsQueryOptions = <TData = Awaited<ReturnType<typeof getPublicReadBuckets>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPublicReadBuckets>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicReadBucketsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicReadBuckets>>> = ({ signal }) => getPublicReadBuckets(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicReadBuckets>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPublicReadBucketsQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicReadBuckets>>>
+export type GetPublicReadBucketsQueryError = ErrorResponse
+
+
+export function useGetPublicReadBuckets<TData = Awaited<ReturnType<typeof getPublicReadBuckets>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPublicReadBuckets>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPublicReadBuckets>>,
+          TError,
+          Awaited<ReturnType<typeof getPublicReadBuckets>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPublicReadBuckets<TData = Awaited<ReturnType<typeof getPublicReadBuckets>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPublicReadBuckets>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPublicReadBuckets>>,
+          TError,
+          Awaited<ReturnType<typeof getPublicReadBuckets>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPublicReadBuckets<TData = Awaited<ReturnType<typeof getPublicReadBuckets>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPublicReadBuckets>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List public-read buckets
+ */
+
+export function useGetPublicReadBuckets<TData = Awaited<ReturnType<typeof getPublicReadBuckets>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPublicReadBuckets>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPublicReadBucketsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds with no restart. Returns the stored list. Returns 400 on an invalid bucket name and 501 when not using cluster-wide credentials.
+
+ * @summary Replace the public-read bucket list
+ */
+export const setPublicReadBuckets = (
+    setPublicReadBucketsRequest: SetPublicReadBucketsRequest,
+ ) => {
+      
+      
+      return customFetch<PublicReadBuckets>(
+      {url: `/api/v1/public-read-buckets`, method: 'PUT',
+      headers: {'Content-Type': 'application/json', },
+      data: setPublicReadBucketsRequest
+    },
+      );
+    }
+  
+
+
+export const getSetPublicReadBucketsMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPublicReadBuckets>>, TError,{data: SetPublicReadBucketsRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof setPublicReadBuckets>>, TError,{data: SetPublicReadBucketsRequest}, TContext> => {
+
+const mutationKey = ['setPublicReadBuckets'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPublicReadBuckets>>, {data: SetPublicReadBucketsRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setPublicReadBuckets(data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPublicReadBucketsMutationResult = NonNullable<Awaited<ReturnType<typeof setPublicReadBuckets>>>
+    export type SetPublicReadBucketsMutationBody = SetPublicReadBucketsRequest
+    export type SetPublicReadBucketsMutationError = ErrorResponse
+
+    /**
+ * @summary Replace the public-read bucket list
+ */
+export const useSetPublicReadBuckets = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPublicReadBuckets>>, TError,{data: SetPublicReadBucketsRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setPublicReadBuckets>>,
+        TError,
+        {data: SetPublicReadBucketsRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getSetPublicReadBucketsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

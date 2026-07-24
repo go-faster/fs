@@ -52,6 +52,14 @@ type Handler interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetPublicReadBuckets implements getPublicReadBuckets operation.
+	//
+	// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with
+	// cluster-wide credentials (auth.source: etcd); returns 501 otherwise, where public-read buckets are
+	// managed in the config file per node.
+	//
+	// GET /api/v1/public-read-buckets
+	GetPublicReadBuckets(ctx context.Context) (*PublicReadBuckets, error)
 	// GetRebalanceStatus implements getRebalanceStatus operation.
 	//
 	// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
@@ -87,6 +95,14 @@ type Handler interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/scheme
 	SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (*BucketScheme, error)
+	// SetPublicReadBuckets implements setPublicReadBuckets operation.
+	//
+	// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds
+	// with no restart. Returns the stored list. Returns 400 on an invalid bucket name and 501 when not
+	// using cluster-wide credentials.
+	//
+	// PUT /api/v1/public-read-buckets
+	SetPublicReadBuckets(ctx context.Context, req *SetPublicReadBucketsRequest) (*PublicReadBuckets, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.

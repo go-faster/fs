@@ -20,6 +20,9 @@ var (
 	rn1AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
+	rn12AllowedHeaders = map[string]string{
+		"PUT": "Content-Type",
+	}
 )
 
 func (s *Server) cutPrefix(path string) (string, bool) {
@@ -274,6 +277,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						s.notAllowed(w, r, notAllowedParams{
 							allowedMethods: "GET",
 							allowedHeaders: nil,
+							acceptPost:     "",
+							acceptPatch:    "",
+						})
+					}
+
+					return
+				}
+
+			case 'p': // Prefix: "public-read-buckets"
+
+				if l := len("public-read-buckets"); len(elem) >= l && elem[0:l] == "public-read-buckets" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch r.Method {
+					case "GET":
+						s.handleGetPublicReadBucketsRequest([0]string{}, elemIsEscaped, w, r)
+					case "PUT":
+						s.handleSetPublicReadBucketsRequest([0]string{}, elemIsEscaped, w, r)
+					default:
+						s.notAllowed(w, r, notAllowedParams{
+							allowedMethods: "GET,PUT",
+							allowedHeaders: rn12AllowedHeaders,
 							acceptPost:     "",
 							acceptPatch:    "",
 						})
@@ -623,6 +653,40 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						r.operationID = "getInfo"
 						r.operationGroup = ""
 						r.pathPattern = "/api/v1/info"
+						r.args = args
+						r.count = 0
+						return r, true
+					default:
+						return
+					}
+				}
+
+			case 'p': // Prefix: "public-read-buckets"
+
+				if l := len("public-read-buckets"); len(elem) >= l && elem[0:l] == "public-read-buckets" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch method {
+					case "GET":
+						r.name = GetPublicReadBucketsOperation
+						r.summary = "List public-read buckets"
+						r.operationID = "getPublicReadBuckets"
+						r.operationGroup = ""
+						r.pathPattern = "/api/v1/public-read-buckets"
+						r.args = args
+						r.count = 0
+						return r, true
+					case "PUT":
+						r.name = SetPublicReadBucketsOperation
+						r.summary = "Replace the public-read bucket list"
+						r.operationID = "setPublicReadBuckets"
+						r.operationGroup = ""
+						r.pathPattern = "/api/v1/public-read-buckets"
 						r.args = args
 						r.count = 0
 						return r, true
