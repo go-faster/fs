@@ -38,6 +38,13 @@ type Options struct {
 	// ClusterStatus assembles the cluster-wide status; nil outside cluster mode
 	// (the endpoint then reports "disabled").
 	ClusterStatus ClusterStatusSource
+	// Reloader applies hot-reloadable configuration on demand (POST
+	// /api/v1/reload); nil on a listener with nothing to reload (the headless
+	// cluster admin), where the endpoint returns 501.
+	Reloader Reloader
+	// ConfigRevision returns the config revision currently in effect, reported
+	// by GetInfo; nil reports none.
+	ConfigRevision func() string
 	// now overrides the clock in tests.
 	now func() time.Time
 }
@@ -62,9 +69,9 @@ func NewAdminAPI(opts Options) *AdminAPI {
 	return &AdminAPI{opts: opts}
 }
 
-// GetInfo returns build info and uptime.
+// GetInfo returns build info, uptime and the loaded config revision.
 func (a *AdminAPI) GetInfo(_ context.Context) (*adminapi.InstanceInfo, error) {
-	return &adminapi.InstanceInfo{
+	info := &adminapi.InstanceInfo{
 		Version:       a.opts.Build.Version,
 		Commit:        a.opts.Build.Commit,
 		GoVersion:     runtime.Version(),
@@ -73,7 +80,15 @@ func (a *AdminAPI) GetInfo(_ context.Context) (*adminapi.InstanceInfo, error) {
 		StartTime:     a.opts.StartTime,
 		UptimeSeconds: a.opts.now().Sub(a.opts.StartTime).Seconds(),
 		AuthEnabled:   a.opts.AuthEnabled,
-	}, nil
+	}
+
+	if a.opts.ConfigRevision != nil {
+		if rev := a.opts.ConfigRevision(); rev != "" {
+			info.ConfigRevision = adminapi.NewOptString(rev)
+		}
+	}
+
+	return info, nil
 }
 
 // errNoCredentialStore reports that credential management is unavailable

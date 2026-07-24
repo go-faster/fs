@@ -99,6 +99,7 @@ func runHeadlessAdmin(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg
 
 	// No local credential store (Manager nil): the access-key endpoints report
 	// 501 here. authEnabled is reported false — this process is not an S3
-	// server; the data nodes carry their own auth.
-	return runAdminServer(t.ShutdownContext(), lg, t, cfg.Admin, nil, false, start, controller, status)
+	// server; the data nodes carry their own auth. No reloader either: there is
+	// no S3 config to hot-reload, so the reload endpoint reports 501.
+	return runAdminServer(t.ShutdownContext(), lg, t, cfg.Admin, nil, false, start, controller, status, nil)
 }

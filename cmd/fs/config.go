@@ -46,6 +46,14 @@ type Config struct {
 
 	// Observability configuration
 	Observability ObservabilityConfig `yaml:"observability"`
+
+	// Revision is an opaque marker for orchestrators. fs never acts on it; it
+	// only echoes the value through the admin API — InstanceInfo.config_revision
+	// and the reload result — and refreshes it on reload. A controller that
+	// renders configs can stamp each one with a revision and read it back to
+	// confirm which config a node has actually loaded (e.g. after a hot
+	// reload), without shelling into the process.
+	Revision string `yaml:"revision,omitempty"`
 }
 
 // IntegrityConfig configures object integrity checking.

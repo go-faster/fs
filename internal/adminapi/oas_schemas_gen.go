@@ -545,6 +545,10 @@ type InstanceInfo struct {
 	UptimeSeconds float64   `json:"uptime_seconds"`
 	// Whether SigV4 authentication is enabled.
 	AuthEnabled bool `json:"auth_enabled"`
+	// Opaque marker echoed from the loaded config file's "revision" field, updated on reload. Empty when
+	// the config sets none. An orchestrator writes a revision into each node's config and reads it back
+	// here to confirm the node has applied that revision.
+	ConfigRevision OptString `json:"config_revision"`
 }
 
 // GetVersion returns the value of Version.
@@ -587,6 +591,11 @@ func (s *InstanceInfo) GetAuthEnabled() bool {
 	return s.AuthEnabled
 }
 
+// GetConfigRevision returns the value of ConfigRevision.
+func (s *InstanceInfo) GetConfigRevision() OptString {
+	return s.ConfigRevision
+}
+
 // SetVersion sets the value of Version.
 func (s *InstanceInfo) SetVersion(val string) {
 	s.Version = val
@@ -625,6 +634,11 @@ func (s *InstanceInfo) SetUptimeSeconds(val float64) {
 // SetAuthEnabled sets the value of AuthEnabled.
 func (s *InstanceInfo) SetAuthEnabled(val bool) {
 	s.AuthEnabled = val
+}
+
+// SetConfigRevision sets the value of ConfigRevision.
+func (s *InstanceInfo) SetConfigRevision(val OptString) {
+	s.ConfigRevision = val
 }
 
 // NewOptDateTime returns new OptDateTime with value set to v.
@@ -1126,6 +1140,34 @@ func (s *RebalanceStatus) SetErrorMessage(val OptString) {
 // SetRepairQueueDepth sets the value of RepairQueueDepth.
 func (s *RebalanceStatus) SetRepairQueueDepth(val int) {
 	s.RepairQueueDepth = val
+}
+
+// Ref: #/components/schemas/ReloadResult
+type ReloadResult struct {
+	// What the reload applied: any of "credentials", "tls".
+	Reloaded []string `json:"reloaded"`
+	// The config revision in effect after the reload (see InstanceInfo.config_revision).
+	ConfigRevision OptString `json:"config_revision"`
+}
+
+// GetReloaded returns the value of Reloaded.
+func (s *ReloadResult) GetReloaded() []string {
+	return s.Reloaded
+}
+
+// GetConfigRevision returns the value of ConfigRevision.
+func (s *ReloadResult) GetConfigRevision() OptString {
+	return s.ConfigRevision
+}
+
+// SetReloaded sets the value of Reloaded.
+func (s *ReloadResult) SetReloaded(val []string) {
+	s.Reloaded = val
+}
+
+// SetConfigRevision sets the value of ConfigRevision.
+func (s *ReloadResult) SetConfigRevision(val OptString) {
+	s.ConfigRevision = val
 }
 
 // Where the credential is defined.

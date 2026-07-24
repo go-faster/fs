@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/internal/adminapi"
@@ -115,6 +117,55 @@ func TestAdminServer_CRUDViaClient(t *testing.T) {
 
 	_, ok = mgr.Store().Secret(created.AccessKey)
 	assert.False(t, ok)
+}
+
+// TestAdminServer_ReloadViaClient drives the reload endpoint the way an
+// orchestrator does: read the loaded config revision, rewrite the config,
+// reload through the API, and confirm the node reports the new revision — no
+// SIGHUP, no shelling in.
+func TestAdminServer_ReloadViaClient(t *testing.T) {
+	token := "s3cr3t"
+	mgr := managerWithKeyA(t)
+	cfgPath := writeConfig(t, "revision: cfg-live\n"+configKeyB)
+	rel := newReloader(zap.NewNop(), cfgPath, false, mgr, emptyServer(t))
+
+	handler := adminhandler.NewAdminAPI(adminhandler.Options{
+		Manager:        mgr,
+		AuthEnabled:    true,
+		Reloader:       rel,
+		ConfigRevision: rel.CurrentRevision,
+	})
+
+	s, err := adminapi.NewServer(handler)
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(adminhandler.UIMiddleware()(bearerAuth(token, s)))
+	t.Cleanup(srv.Close)
+
+	client, err := adminapi.NewClient(srv.URL, adminapi.WithClient(&http.Client{
+		Transport: bearerTransport{token: token, base: http.DefaultTransport},
+	}))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// The node reports the revision it loaded at startup.
+	info, err := client.GetInfo(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "cfg-live", info.ConfigRevision.Or(""))
+
+	// Rewrite the config to a new revision and reload through the API.
+	require.NoError(t, os.WriteFile(cfgPath, []byte("revision: cfg-next\n"+configKeyB), 0o600))
+
+	res, err := client.ReloadConfig(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, res.Reloaded, "credentials")
+	assert.Equal(t, "cfg-next", res.ConfigRevision.Or(""))
+
+	// GetInfo now reports the advanced revision.
+	info, err = client.GetInfo(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "cfg-next", info.ConfigRevision.Or(""))
 }
 
 // bearerTransport injects a bearer token on every request.

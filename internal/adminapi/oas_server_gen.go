@@ -57,6 +57,17 @@ type Handler interface {
 	//
 	// GET /api/v1/access-keys
 	ListAccessKeys(ctx context.Context) (*AccessKeyList, error)
+	// ReloadConfig implements reloadConfig operation.
+	//
+	// Re-read the configuration file and apply the parts that change without a restart — the
+	// config-defined credentials and grants, the anonymously readable buckets and the TLS certificate —
+	// exactly as SIGHUP does. Runtime credentials created through this API are preserved. Returns what was
+	// reloaded and the config revision now in effect, so an orchestrator can confirm a config change
+	// landed without shelling into the process. Returns 501 on a listener with nothing to reload (the
+	// headless cluster admin serves no S3 data).
+	//
+	// POST /api/v1/reload
+	ReloadConfig(ctx context.Context) (*ReloadResult, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.

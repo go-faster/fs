@@ -225,6 +225,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+			case 'r': // Prefix: "reload"
+
+				if l := len("reload"); len(elem) >= l && elem[0:l] == "reload" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch r.Method {
+					case "POST":
+						s.handleReloadConfigRequest([0]string{}, elemIsEscaped, w, r)
+					default:
+						s.notAllowed(w, r, notAllowedParams{
+							allowedMethods: "POST",
+							allowedHeaders: nil,
+							acceptPost:     "",
+							acceptPatch:    "",
+						})
+					}
+
+					return
+				}
+
 			}
 
 		}
@@ -484,6 +509,31 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						r.operationID = "getInfo"
 						r.operationGroup = ""
 						r.pathPattern = "/api/v1/info"
+						r.args = args
+						r.count = 0
+						return r, true
+					default:
+						return
+					}
+				}
+
+			case 'r': // Prefix: "reload"
+
+				if l := len("reload"); len(elem) >= l && elem[0:l] == "reload" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch method {
+					case "POST":
+						r.name = ReloadConfigOperation
+						r.summary = "Reload hot-reloadable configuration"
+						r.operationID = "reloadConfig"
+						r.operationGroup = ""
+						r.pathPattern = "/api/v1/reload"
 						r.args = args
 						r.count = 0
 						return r, true

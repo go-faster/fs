@@ -140,8 +140,8 @@ cluster:
   root credential via `FS_ROOT_ACCESS_KEY` / `FS_ROOT_SECRET_KEY`). The compose
   and default Helm setups are insecure/anonymous for convenience — override for
   anything real.
-- **TLS**: set `server.tls.cert_file` / `key_file` (hot-reloaded on SIGHUP), or
-  terminate TLS at an ingress.
+- **TLS**: set `server.tls.cert_file` / `key_file` (hot-reloaded on SIGHUP or
+  `POST /api/v1/reload`), or terminate TLS at an ingress.
 - **Admin API** (credential management + rebalance control) listens separately
   (`admin.addr`, default `localhost:8090`) and requires a bearer token
   (`admin.token` or `FS_ADMIN_TOKEN`). Keep it bound to localhost or behind a
@@ -152,6 +152,14 @@ cluster:
   (no S3 data) that reads cluster status from etcd and drives rebalancing
   through the cluster-wide election. Credential management is not available on
   the headless listener (manage access keys on a data node's admin API).
+- **Hot reload without a signal**: `POST /api/v1/reload` re-applies the same
+  hot-reloadable configuration SIGHUP does — the config-defined credentials and
+  grants and the TLS certificate, preserving runtime-created keys — and returns
+  what it reloaded and the config revision now in effect. Set an opaque
+  `revision:` marker at the top of the config and read it back from
+  `GET /api/v1/info` (`config_revision`) or the reload response to confirm a
+  node has loaded a specific config, e.g. after an orchestrator rewrites it. The
+  endpoint returns 501 on the headless admin, which serves no S3 data.
 - **Cluster secret** authenticates all peer traffic (HMAC). Treat it like a
   password; supply it via `FS_CLUSTER_SECRET` / a Kubernetes Secret, not in a
   committed file.

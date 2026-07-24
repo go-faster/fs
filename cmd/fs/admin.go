@@ -62,7 +62,7 @@ func resolveAdminKeysFile(cfg Config, absRoot string) string {
 // runAdminServer serves the admin API and its embedded web dashboard on a
 // separate listener until ctx is canceled. It requires a bearer token on every
 // API request. It returns an error only on a fatal serve failure.
-func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr *auth.Manager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl, clusterStatus adminhandler.ClusterStatusSource) error {
+func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr *auth.Manager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl, clusterStatus adminhandler.ClusterStatusSource, rel *reloader) error {
 	addr := cfg.Addr
 	if addr == "" {
 		addr = DefaultAdminAddr
@@ -79,14 +79,24 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg A
 
 	build, _ := buildInfo()
 
-	handler := adminhandler.NewAdminAPI(adminhandler.Options{
+	opts := adminhandler.Options{
 		Manager:       mgr,
 		Build:         adminhandler.BuildInfo{Version: build.Version, Commit: build.Commit},
 		AuthEnabled:   authEnabled,
 		StartTime:     start,
 		Rebalance:     rebalance,
 		ClusterStatus: clusterStatus,
-	})
+	}
+
+	// Set the reload interface only when there is a reloader: a nil *reloader
+	// stored in the interface would read as non-nil and defeat the endpoint's
+	// "nothing to reload" guard.
+	if rel != nil {
+		opts.Reloader = rel
+		opts.ConfigRevision = rel.CurrentRevision
+	}
+
+	handler := adminhandler.NewAdminAPI(opts)
 
 	s, err := adminapi.NewServer(handler,
 		adminapi.WithAttributes(attribute.String("fs.api", "admin")),

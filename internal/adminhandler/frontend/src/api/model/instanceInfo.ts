@@ -17,4 +17,7 @@ export interface InstanceInfo {
   uptime_seconds: number;
   /** Whether SigV4 authentication is enabled. */
   auth_enabled: boolean;
+  /** Opaque marker echoed from the loaded config file's "revision" field, updated on reload. Empty when the config sets none. An orchestrator writes a revision into each node's config and reads it back here to confirm the node has applied that revision.
+ */
+  config_revision?: string;
 }

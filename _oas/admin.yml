@@ -118,6 +118,28 @@ paths:
                 $ref: "#/components/schemas/ClusterStatus"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/reload:
+    post:
+      operationId: "reloadConfig"
+      summary: "Reload hot-reloadable configuration"
+      description: >
+        Re-read the configuration file and apply the parts that change without
+        a restart — the config-defined credentials and grants, the anonymously
+        readable buckets and the TLS certificate — exactly as SIGHUP does.
+        Runtime credentials created through this API are preserved. Returns
+        what was reloaded and the config revision now in effect, so an
+        orchestrator can confirm a config change landed without shelling into
+        the process. Returns 501 on a listener with nothing to reload (the
+        headless cluster admin serves no S3 data).
+      responses:
+        200:
+          description: Reload applied.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ReloadResult"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/access-keys/{accessKey}:
     delete:
       operationId: "deleteAccessKey"
@@ -173,6 +195,26 @@ components:
         auth_enabled:
           type: boolean
           description: "Whether SigV4 authentication is enabled."
+        config_revision:
+          type: string
+          description: >
+            Opaque marker echoed from the loaded config file's "revision"
+            field, updated on reload. Empty when the config sets none. An
+            orchestrator writes a revision into each node's config and reads it
+            back here to confirm the node has applied that revision.
+    ReloadResult:
+      type: object
+      required:
+        - reloaded
+      properties:
+        reloaded:
+          type: array
+          description: "What the reload applied: any of \"credentials\", \"tls\"."
+          items:
+            type: string
+        config_revision:
+          type: string
+          description: "The config revision in effect after the reload (see InstanceInfo.config_revision)."
     Permission:
       type: string
       description: "Access level; Admin includes Write includes Read."
