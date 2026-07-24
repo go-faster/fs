@@ -1,12 +1,55 @@
 # fs [![Go Reference](https://img.shields.io/badge/go-pkg-00ADD8)](https://pkg.go.dev/github.com/go-faster/fs#section-documentation) [![codecov](https://img.shields.io/codecov/c/github/go-faster/fs?label=cover)](https://codecov.io/gh/go-faster/fs) [![experimental](https://img.shields.io/badge/-experimental-blueviolet)](https://go-faster.org/docs/projects/status#experimental)
 
-Simple S3-compatible storage server for development and testing.
+S3-compatible object storage that scales from a single binary to a replicated
+cluster. It began as a lightweight server for development and testing, and now
+also runs as a distributed, failure-domain-aware object store — while staying a
+single static binary and an embeddable Go library.
+
+> **Status: experimental.** The single-node server is mature and heavily
+> conformance-tested; the distributed cluster mode (M3) is functional but still
+> hardening. Pin a version and read [COMPATIBILITY.md](COMPATIBILITY.md) and
+> [docs/FAILURE-MODEL.md](docs/FAILURE-MODEL.md) before trusting production data
+> to it.
 
 ## Features
 
-### S3-Compatible Storage Server
+### Core S3 server
 
-A lightweight S3-compatible storage server for development and testing.
+- Bucket operations (create, delete, list) and object operations (put, get,
+  delete, list, copy, tagging, metadata, `x-amz-meta-*`).
+- Multipart uploads, presigned URLs (≤7-day expiry) and streaming (chunked)
+  uploads.
+- **AWS Signature V4** auth by default: multiple credentials, per-bucket grants
+  (`read`/`write`/`admin`), public-read buckets and canned ACLs.
+- Hot-reloadable TLS; credential and certificate reload on `SIGHUP` with no
+  restart.
+- Crash-atomic writes, `fsync` policy control, a background bit-rot scrubber and
+  optional verify-on-read.
+- Compatible with the AWS CLI, MinIO client (`mc`), `s3cmd`, `rclone` and the
+  AWS SDKs; liveness/readiness endpoints and OpenTelemetry metrics/traces.
+
+### Distributed cluster mode (M3)
+
+- Objects placed across **failure domains** (rack → node → disk), written at
+  **quorum**, and served by **any node** (transparent proxying).
+- Pluggable **replication schemes**: `rf2.5` (2 replicas + half-parity), `rf3`
+  (3 replicas), or **Reed-Solomon erasure coding** `ec:k,m` (e.g. `ec:4,2` at
+  1.5× overhead) — configurable per cluster and **per bucket**.
+- **etcd control plane** for membership, topology, epochs and cluster config;
+  online **rebalancing** and background **repair/scrub** converge placement
+  after membership changes with no operator action.
+- Headless **`fs admin`** control-plane process: cluster-wide status dashboard
+  and rebalance control without being a data node.
+- **Cluster-wide runtime key management** (`auth.source: etcd`): credentials
+  live in etcd with secrets sealed by an HKDF key derived from the cluster
+  secret, and every node hot-reloads add/rotate/delete with no restart.
+
+### Operability
+
+- Admin API + web dashboard on a separate bearer-token listener (runtime
+  access-key CRUD, cluster status, rebalance control, per-bucket schemes).
+- `systemd` unit generation (`fs systemd`), commented config generation, and a
+  library core with **no forced observability stack**.
 
 **Quick Start:**
 ```bash
@@ -19,14 +62,6 @@ fs s3
 # Or with custom configuration
 fs s3 --addr :9000 --root /data/s3
 ```
-
-**Features:**
-- Bucket operations (create, delete, list)
-- Object operations (put, get, delete, list, copy, tagging, metadata)
-- Multipart uploads
-- File system-based storage
-- Compatible with AWS CLI, MinIO client, and other S3 clients
-- Health check endpoint
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for the full compatibility statement
 (what's implemented, what returns `NotImplemented`, what's planned, and the
@@ -72,9 +107,12 @@ bare handler stays anonymous unless you opt in.
 
 Multiple access-key/secret credentials can be managed **at runtime** — without a
 restart — through a separate admin listener that also serves a small web
-dashboard. Config-defined keys stay read-only; keys created through the admin API
-are persisted (`<root>/.access-keys.json`, mode `0600`) and survive restarts and
-`SIGHUP` reloads.
+dashboard. In single-node (`auth.source: file`) mode, config-defined keys stay
+read-only and keys created through the admin API are persisted
+(`<root>/.access-keys.json`, mode `0600`) and survive restarts and `SIGHUP`
+reloads. In cluster mode with `auth.source: etcd`, the same endpoints manage the
+**cluster-wide** credential store, and changes propagate to every node — and to
+the headless `fs admin` — with no restart.
 
 ```yaml
 admin:
@@ -119,6 +157,49 @@ fs systemd --user=false --config /etc/fs/config.yaml | sudo tee /etc/systemd/sys
 
 The unit wires `ExecReload` to `SIGHUP`, so `systemctl --user reload fs` performs
 the hot credential/TLS reload.
+
+## Distributed cluster mode (M3)
+
+Set `storage.type: cluster` and every node runs the same binary: objects are
+placed across the cluster's failure domains (rack → node → disk), written at
+quorum, and readable from any node. A cluster needs a reachable **etcd** for its
+control plane and a shared **cluster secret** for peer authentication.
+
+```yaml
+storage:
+  type: "cluster"
+
+cluster:
+  node_id: "node-1"            # unique per node (or FS_CLUSTER_NODE_ID)
+  rack: "rack-a"               # failure-domain label
+  addr: ":7080"               # internal peer listener — never expose publicly
+  advertise_addr: "10.0.0.1:7080"
+  secret: "change-me-to-a-long-random-string"   # or FS_CLUSTER_SECRET, min 16 chars
+  scheme: "rf2.5"              # rf2.5 | rf3 | ec:k,m (e.g. ec:4,2)
+  disks:
+    - { id: "d0", path: "/data/d0" }
+  etcd:
+    endpoints: ["http://10.0.0.9:2379"]
+```
+
+- **Replication schemes** trade storage overhead for fault tolerance: `rf2.5`
+  (2.5×, survives one domain loss), `rf3` (3×, survives two), or `ec:4,2`
+  (Reed-Solomon, 1.5×, survives any two shard losses). Override the scheme
+  per bucket through the admin API.
+- **Rebalancing & repair** run online: after a node joins or leaves, placement
+  converges automatically, and a background scrubber repairs missing or corrupt
+  fragments.
+- **`fs admin`** runs a headless, control-plane-only process (no data path) that
+  serves the cluster-wide status dashboard and drives rebalance through the same
+  etcd election a data node uses.
+- **Cluster-wide credentials** — set `auth.source: etcd` so access keys, grants
+  and the public-read bucket list live in the control plane (secrets sealed by an
+  HKDF key derived from the cluster secret) and every node hot-reloads any change
+  with no restart. The default `auth.source: file` keeps credentials node-local.
+
+See [findings/DESIGN.md](findings/DESIGN.md) for the design and
+[docs/FAILURE-MODEL.md](docs/FAILURE-MODEL.md) for the durability and failure
+model.
 
 ## Operations
 
@@ -305,6 +386,27 @@ func main() {
 
 See the [`server` package reference](https://pkg.go.dev/github.com/go-faster/fs/server)
 for the full API and runnable examples.
+
+## Roadmap
+
+Delivered so far: full SDK wire compatibility, exact S3 semantics and metadata,
+SigV4 auth/authorization/TLS, canned ACLs, durability & integrity operations,
+and the M3 distributed stack (etcd control plane, failure-domain placement,
+replication schemes + erasure coding, repair, auto-rebalancing, cluster
+observability, headless admin, and cluster-wide runtime key management).
+
+Planned and in progress (see [findings/ROADMAP.md](findings/ROADMAP.md) for the
+authoritative, detailed list):
+
+- **Object versioning** — per-object version chains, delete markers, per-version
+  tags/ACLs (the largest upcoming item).
+- **Server-side encryption (SSE-S3)** — envelope AES-256-GCM at rest.
+- **Lifecycle expiration** and, after versioning, noncurrent-version cleanup.
+- **Embedded etcd** — in-process etcd for all-in-one 1/3-node clusters.
+- **Virtual-host–style addressing**, **ACME / automatic TLS**, and **static
+  website hosting**.
+- **Geo-replication** — async bucket-level replication between clusters.
+- **Bucket-policy subset** — demand-gated, when canned ACLs are not enough.
 
 ## Development
 

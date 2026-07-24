@@ -139,17 +139,13 @@ Command-line flags override YAML configuration values.`,
 					return fmt.Errorf("failed to resolve root path: %w", err)
 				}
 
-				// The auth manager owns the credential store and adds runtime
-				// access-key management (used by the admin API); it persists
-				// runtime-created keys under the storage root.
-				authManager, err := buildAuthManager(cfg, insecureNoAuth, resolveAdminKeysFile(cfg, absRoot))
+				// Resolve the effective auth configuration now, but build the
+				// credential store after the storage backend: with auth.source:
+				// etcd the store lives in the cluster control plane and needs the
+				// cluster's etcd handle, which the storage switch below creates.
+				authConfig, authEnabled, err := buildAuthConfig(cfg, insecureNoAuth)
 				if err != nil {
 					return errors.Wrap(err, "configure auth")
-				}
-
-				var authStore *auth.Store
-				if authManager != nil {
-					authStore = authManager.Store()
 				}
 
 				var (
@@ -206,6 +202,48 @@ Command-line flags override YAML configuration values.`,
 					zap.Bool("verify_on_read", cfg.Integrity.VerifyOnRead),
 					zap.String("storage_type", cfg.Storage.Type),
 				)
+
+				// Build the credential store now that the storage backend (and,
+				// in cluster mode, its etcd handle) exists. With auth.source:
+				// etcd the store is cluster-wide — sealed by the cluster secret
+				// and hot-reloaded on every node; otherwise it is the local
+				// file-backed manager. authManager stays nil in etcd mode: there
+				// is no local keys file to reload.
+				var (
+					authStore   *auth.Store
+					authManager *auth.Manager
+					credentials adminhandler.CredentialManager
+				)
+
+				if authEnabled {
+					switch {
+					case cfg.AuthSourceValue() == AuthSourceEtcd:
+						if clusterRT == nil {
+							return errors.New("auth.source: etcd requires cluster storage")
+						}
+
+						clusterCreds, err := newClusterCredentials(ctx, lg, clusterRT.client, clusterRT.etcdCfg,
+							cfg.ClusterSecret(), authConfig.PublicReadBuckets, authConfig.Keys)
+						if err != nil {
+							return errors.Wrap(err, "cluster credentials")
+						}
+
+						defer func() { _ = clusterCreds.Close() }()
+
+						authStore = clusterCreds.Store()
+						credentials = clusterCreds
+					default:
+						authManager, err = buildAuthManager(cfg, insecureNoAuth, resolveAdminKeysFile(cfg, absRoot))
+						if err != nil {
+							return errors.Wrap(err, "configure auth")
+						}
+
+						authStore = authManager.Store()
+						credentials = authManager
+					}
+
+					lg.Info("Credentials", zap.String("source", cfg.AuthSourceValue()))
+				}
 
 				// wrap injects OpenTelemetry instrumentation and optional request
 				// logging into the embeddable server's handler.
@@ -290,7 +328,7 @@ Command-line flags override YAML configuration values.`,
 				}
 
 				if cfg.Admin.Enabled {
-					if authManager == nil {
+					if authStore == nil {
 						return errors.New("admin API requires authentication; remove --insecure-no-auth / auth.disabled or disable admin")
 					}
 
@@ -311,7 +349,7 @@ Command-line flags override YAML configuration values.`,
 					}
 
 					grp.Go(func() error {
-						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance, clusterStatus, bucketSchemes, defaultScheme, rel)
+						return runAdminServer(grpCtx, lg, t, cfg.Admin, credentials, authStore != nil, startTime, rebalance, clusterStatus, bucketSchemes, defaultScheme, rel)
 					})
 				}
 

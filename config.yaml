@@ -70,6 +70,43 @@ storage:
 #     prefix: "/fs"
 #     ttl: 10s
 
+# Authentication & authorization (AWS SigV4). Enabled by default; disable only
+# for trusted/dev setups. A root credential can also come from the
+# FS_ROOT_ACCESS_KEY / FS_ROOT_SECRET_KEY environment variables.
+# auth:
+#   # Turn off authentication entirely (anonymous access).
+#   disabled: false
+#
+#   # Where runtime credentials live:
+#   #   file - config/env keys + the local runtime keys file (default, single node)
+#   #   etcd - cluster-wide, sealed by the cluster secret and hot-reloaded on every
+#   #          node (requires storage.type: cluster). Keys, grants and the
+#   #          public-read list added, rotated or removed through any admin API
+#   #          propagate to all nodes with no restart. The config keys and
+#   #          public_read_buckets below seed an empty cluster once, then etcd is
+#   #          authoritative (never merged).
+#   source: "file"
+#
+#   # Static credentials and their per-bucket grants (permission: read|write|admin).
+#   keys:
+#     - access_key: "AKIAEXAMPLE"
+#       secret_key: "change-me"
+#       grants:
+#         - bucket: "*"
+#           permission: "admin"
+#
+#   # Buckets readable anonymously (unsigned GET/HEAD/list).
+#   public_read_buckets: []
+
+# Admin API + web dashboard, on a separate bearer-token-protected listener.
+# In cluster mode with auth.source: etcd, its access-key endpoints manage the
+# cluster-wide credential store.
+# admin:
+#   enabled: false
+#   addr: "localhost:8090"
+#   token: "change-me"                # or FS_ADMIN_TOKEN
+#   # keys_file: ".access-keys.json"  # file-source runtime keys (default under root)
+
 # Observability configuration
 observability:
   # Service name for telemetry (OpenTelemetry traces, metrics, logs)
