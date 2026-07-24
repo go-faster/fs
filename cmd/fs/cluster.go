@@ -164,6 +164,23 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		etcdCfg.TTL = int64(cc.Etcd.TTL / time.Second)
 	}
 
+	// Schema-compatibility gate: refuse to join a cluster whose on-disk/etcd
+	// schema is newer than this binary understands (a stale binary must not
+	// misread a migrated format). On an empty cluster this stamps the founding
+	// schema version.
+	clusterSchema, err := etcd.EnsureCompatible(ctx, client, etcdCfg, etcd.SchemaVersion)
+	if err != nil {
+		_ = listener.Close()
+		_ = rt.close()
+
+		return nil, errors.Wrap(err, "schema compatibility")
+	}
+
+	lg.Info("Cluster schema",
+		zap.Int("cluster_version", clusterSchema),
+		zap.Int("binary_version", etcd.SchemaVersion),
+	)
+
 	rt.store = store
 	rt.node = cluster.Node{
 		ID:    rt.nodeID,
