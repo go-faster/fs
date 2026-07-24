@@ -360,3 +360,42 @@ func TestSaveConfig_InvalidPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write config file")
 }
+
+func TestClusterIdentityEnvOverrides(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Cluster.NodeID = "from-config"
+	cfg.Cluster.AdvertiseAddr = "config-host:7080"
+	cfg.Cluster.Secret = "config-secret-0123456789abcdef"
+
+	// Without env, the config values apply.
+	assert.Equal(t, "from-config", cfg.ClusterNodeID())
+	assert.Equal(t, "config-host:7080", cfg.ClusterAdvertiseAddr())
+	assert.Equal(t, "config-secret-0123456789abcdef", cfg.ClusterSecret())
+
+	// Env overrides win (an orchestrator injecting per-pod identity).
+	t.Setenv("FS_CLUSTER_NODE_ID", "pod-2")
+	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", "pod-2.fs.ns.svc:7080")
+	t.Setenv("FS_CLUSTER_SECRET", "env-secret-0123456789abcdef")
+
+	assert.Equal(t, "pod-2", cfg.ClusterNodeID())
+	assert.Equal(t, "pod-2.fs.ns.svc:7080", cfg.ClusterAdvertiseAddr())
+	assert.Equal(t, "env-secret-0123456789abcdef", cfg.ClusterSecret())
+}
+
+func TestValidateClusterAcceptsEnvIdentity(t *testing.T) {
+	// node_id / advertise_addr may come from env instead of the file.
+	cfg := DefaultConfig()
+	cfg.Storage.Type = StorageTypeCluster
+	cfg.Cluster = ClusterConfig{
+		Secret: "0123456789abcdef0123456789abcdef",
+		Etcd:   EtcdConfig{Endpoints: []string{"http://127.0.0.1:2379"}},
+	}
+
+	// Missing identity fails.
+	require.ErrorContains(t, cfg.Validate(), "node_id")
+
+	t.Setenv("FS_CLUSTER_NODE_ID", "pod-0")
+	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", "pod-0.fs:7080")
+
+	require.NoError(t, cfg.Validate())
+}
