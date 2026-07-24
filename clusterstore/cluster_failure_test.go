@@ -2,6 +2,7 @@ package clusterstore
 
 import (
 	"bytes"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -44,9 +45,16 @@ func transportClusterStorage(tb testing.TB, s scheme.Scheme, nodeCount, disksPer
 		topo.Nodes = append(topo.Nodes, node)
 	}
 
+	// A dedicated client per ephemeral cluster with keep-alives off: storagetest
+	// builds a fresh cluster (new httptest servers on fresh ports) per case and
+	// tears it down, so a shared/pooled connection could be reused against a
+	// closed-then-reopened port and fail mid-request. No pooling, no such race.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	tb.Cleanup(client.CloseIdleConnections)
+
 	c, err := New(Config{
 		Topology: StaticTopology{T: topo},
-		Peers:    NewHTTPPeers("n0", stores["n0"], secret, nil),
+		Peers:    NewHTTPPeers("n0", stores["n0"], secret, client),
 		Scheme:   fixedScheme(s),
 	})
 	require.NoError(tb, err)
