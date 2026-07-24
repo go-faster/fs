@@ -134,31 +134,70 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 				}
 
-			case 'c': // Prefix: "cluster/rebalance"
+			case 'c': // Prefix: "cluster/"
 
-				if l := len("cluster/rebalance"); len(elem) >= l && elem[0:l] == "cluster/rebalance" {
+				if l := len("cluster/"); len(elem) >= l && elem[0:l] == "cluster/" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
 				if len(elem) == 0 {
-					// Leaf node.
-					switch r.Method {
-					case "GET":
-						s.handleGetRebalanceStatusRequest([0]string{}, elemIsEscaped, w, r)
-					case "POST":
-						s.handleControlRebalanceRequest([0]string{}, elemIsEscaped, w, r)
-					default:
-						s.notAllowed(w, r, notAllowedParams{
-							allowedMethods: "GET,POST",
-							allowedHeaders: rn1AllowedHeaders,
-							acceptPost:     "application/json",
-							acceptPatch:    "",
-						})
+					break
+				}
+				switch elem[0] {
+				case 'r': // Prefix: "rebalance"
+
+					if l := len("rebalance"); len(elem) >= l && elem[0:l] == "rebalance" {
+						elem = elem[l:]
+					} else {
+						break
 					}
 
-					return
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetRebalanceStatusRequest([0]string{}, elemIsEscaped, w, r)
+						case "POST":
+							s.handleControlRebalanceRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET,POST",
+								allowedHeaders: rn1AllowedHeaders,
+								acceptPost:     "application/json",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				case 's': // Prefix: "status"
+
+					if l := len("status"); len(elem) >= l && elem[0:l] == "status" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetClusterStatusRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
 				}
 
 			case 'i': // Prefix: "info"
@@ -355,38 +394,77 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 
 				}
 
-			case 'c': // Prefix: "cluster/rebalance"
+			case 'c': // Prefix: "cluster/"
 
-				if l := len("cluster/rebalance"); len(elem) >= l && elem[0:l] == "cluster/rebalance" {
+				if l := len("cluster/"); len(elem) >= l && elem[0:l] == "cluster/" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
 				if len(elem) == 0 {
-					// Leaf node.
-					switch method {
-					case "GET":
-						r.name = GetRebalanceStatusOperation
-						r.summary = "Cluster rebalance status"
-						r.operationID = "getRebalanceStatus"
-						r.operationGroup = ""
-						r.pathPattern = "/api/v1/cluster/rebalance"
-						r.args = args
-						r.count = 0
-						return r, true
-					case "POST":
-						r.name = ControlRebalanceOperation
-						r.summary = "Control the cluster rebalance"
-						r.operationID = "controlRebalance"
-						r.operationGroup = ""
-						r.pathPattern = "/api/v1/cluster/rebalance"
-						r.args = args
-						r.count = 0
-						return r, true
-					default:
-						return
+					break
+				}
+				switch elem[0] {
+				case 'r': // Prefix: "rebalance"
+
+					if l := len("rebalance"); len(elem) >= l && elem[0:l] == "rebalance" {
+						elem = elem[l:]
+					} else {
+						break
 					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetRebalanceStatusOperation
+							r.summary = "Cluster rebalance status"
+							r.operationID = "getRebalanceStatus"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/cluster/rebalance"
+							r.args = args
+							r.count = 0
+							return r, true
+						case "POST":
+							r.name = ControlRebalanceOperation
+							r.summary = "Control the cluster rebalance"
+							r.operationID = "controlRebalance"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/cluster/rebalance"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 's': // Prefix: "status"
+
+					if l := len("status"); len(elem) >= l && elem[0:l] == "status" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetClusterStatusOperation
+							r.summary = "Cluster-wide status"
+							r.operationID = "getClusterStatus"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/cluster/status"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
 				}
 
 			case 'i': // Prefix: "info"

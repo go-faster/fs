@@ -50,6 +50,14 @@ type Invoker interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// GetClusterStatus invokes getClusterStatus operation.
+	//
+	// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
+	// and reported capacity, aggregate capacity, placement skew and whether a rebalance is currently
+	// running. State is "disabled" when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/status
+	GetClusterStatus(ctx context.Context) (*ClusterStatus, error)
 	// GetInfo invokes getInfo operation.
 	//
 	// Build information, uptime and whether authentication is enabled.
@@ -371,6 +379,88 @@ func (c *Client) sendDeleteAccessKey(ctx context.Context, params DeleteAccessKey
 
 	stage = "DecodeResponse"
 	result, err := decodeDeleteAccessKeyResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetClusterStatus invokes getClusterStatus operation.
+//
+// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
+// and reported capacity, aggregate capacity, placement skew and whether a rebalance is currently
+// running. State is "disabled" when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/status
+func (c *Client) GetClusterStatus(ctx context.Context) (*ClusterStatus, error) {
+	res, err := c.sendGetClusterStatus(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetClusterStatus(ctx context.Context) (res *ClusterStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getClusterStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/status"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetClusterStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/status"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetClusterStatusResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

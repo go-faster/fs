@@ -100,6 +100,24 @@ paths:
                 $ref: "#/components/schemas/RebalanceStatus"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/status:
+    get:
+      operationId: "getClusterStatus"
+      summary: "Cluster-wide status"
+      description: >
+        Cluster-wide view read from the control plane: the agreed schema
+        version, every node with its disks and reported capacity, aggregate
+        capacity, placement skew and whether a rebalance is currently running.
+        State is "disabled" when the server is not in cluster mode.
+      responses:
+        200:
+          description: Cluster status.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ClusterStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/access-keys/{accessKey}:
     delete:
       operationId: "deleteAccessKey"
@@ -312,6 +330,102 @@ components:
       properties:
         action:
           $ref: "#/components/schemas/RebalanceAction"
+    ClusterDisk:
+      type: object
+      required:
+        - id
+        - weight
+      properties:
+        id:
+          type: string
+        weight:
+          type: number
+          format: double
+          description: "Relative placement weight (0 = drained)."
+        total_bytes:
+          type: integer
+          format: int64
+          description: "Reported filesystem size; 0 when the node has not reported capacity."
+        free_bytes:
+          type: integer
+          format: int64
+        fullness:
+          type: number
+          format: double
+          description: "Used fraction (0..1); omitted when capacity is unknown."
+    ClusterNode:
+      type: object
+      required:
+        - id
+        - disks
+      properties:
+        id:
+          type: string
+        addr:
+          type: string
+          description: "Peer address the node advertises."
+        rack:
+          type: string
+          description: "Failure-domain label."
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterDisk"
+    ClusterState:
+      type: string
+      enum:
+        - disabled
+        - ok
+      description: "\"disabled\" when the server is not in cluster mode."
+    ClusterStatus:
+      type: object
+      required:
+        - state
+        - schema_version
+        - binary_schema_version
+        - node_count
+        - disk_count
+        - total_bytes
+        - free_bytes
+        - placement_skew
+        - rebalance_running
+        - nodes
+      properties:
+        state:
+          $ref: "#/components/schemas/ClusterState"
+        schema_version:
+          type: integer
+          description: "Schema version the cluster has agreed on (etcd)."
+        binary_schema_version:
+          type: integer
+          description: "Schema version this binary implements."
+        node_count:
+          type: integer
+        disk_count:
+          type: integer
+        total_bytes:
+          type: integer
+          format: int64
+          description: "Sum of reported disk capacity across the cluster."
+        free_bytes:
+          type: integer
+          format: int64
+        placement_skew:
+          type: number
+          format: double
+          description: "Max minus min disk fullness across disks reporting capacity."
+        rebalance_running:
+          type: boolean
+          description: "Whether a rebalance runner currently holds the cluster-wide election."
+        rebalance_cursor_bucket:
+          type: string
+          description: "Resume cursor of an in-progress/last rebalance, if any."
+        rebalance_cursor_key:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterNode"
     Error:
       title: Structured error
       description: Error occurred while processing request

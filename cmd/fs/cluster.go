@@ -31,6 +31,7 @@ type clusterRuntime struct {
 	server    *http.Server
 	repairer  *clusterstore.Repairer
 	rebalance *rebalanceController
+	status    *clusterStatusSource
 	listener  net.Listener
 	addr      string
 	lg        *zap.Logger
@@ -256,6 +257,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// as `fs cluster rebalance`, using this node's repairer. Its runs are
 	// bounded by ctx (the server lifetime).
 	rt.rebalance = newRebalanceController(ctx, lg, client, etcdCfg, coord, rt.repairer, string(rt.nodeID)+"/admin")
+	rt.status = newClusterStatusSource(coord, client, etcdCfg)
 
 	rt.server = &http.Server{
 		Handler:           transport.NewServer(store, secret),

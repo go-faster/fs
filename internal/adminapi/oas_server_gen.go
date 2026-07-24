@@ -30,6 +30,14 @@ type Handler interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// GetClusterStatus implements getClusterStatus operation.
+	//
+	// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
+	// and reported capacity, aggregate capacity, placement skew and whether a rebalance is currently
+	// running. State is "disabled" when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/status
+	GetClusterStatus(ctx context.Context) (*ClusterStatus, error)
 	// GetInfo implements getInfo operation.
 	//
 	// Build information, uptime and whether authentication is enabled.

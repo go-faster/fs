@@ -660,3 +660,286 @@ select:focus {
     animation: none !important;
   }
 }
+
+/* ─── Cluster: failure-domain capacity map ──────────────────────────────────
+   The cluster page's hero is the physical fill topology — racks → nodes →
+   disks, each disk a fill gauge banded by fullness (sage/amber/brick) with a
+   tick at the drain watermark. Placement skew reads straight off the bars.
+   Everything reuses the console vocabulary (mono telemetry, brass, hairlines). */
+
+.cluster-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin: 2px 0 18px;
+}
+.pill.degraded {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 15%, transparent);
+}
+.pill.critical {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+}
+.pill.idle {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+/* Dense supporting readout strip — one hairline-divided row of figures. */
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: 22px;
+}
+.readout > div {
+  flex: 1 1 130px;
+  padding: 14px 18px;
+  border-right: 1px solid var(--line-soft);
+}
+.readout > div:last-child {
+  border-right: none;
+}
+.readout .n {
+  font-family: var(--mono);
+  font-size: 19px;
+  line-height: 1.1;
+  color: var(--fg-strong);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.readout .n small {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.readout .l {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-top: 6px;
+}
+/* Aggregate capacity bar sits under its figure. */
+.readout .capbar {
+  height: 5px;
+  border-radius: 2px;
+  background: var(--track);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.readout .capbar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--green);
+}
+.readout .capbar.degraded > span {
+  background: var(--amber);
+}
+.readout .capbar.critical > span {
+  background: var(--red);
+}
+
+/* Rack panel: header (id + aggregate fill) over stacked node blocks. */
+.rack {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.rack__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.rack__id {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--fg-strong);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.rack__id::before {
+  content: "▤";
+  color: var(--accent);
+  margin-right: 9px;
+  opacity: 0.85;
+}
+.rack__meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.rack__cap {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.node {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.node:last-child {
+  border-bottom: none;
+}
+.node__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 11px;
+}
+.node__id {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--fg-strong);
+  font-weight: 600;
+}
+.node__addr {
+  font-size: 11px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+}
+
+/* Disk gauge row — the signature mark. */
+.disk {
+  display: grid;
+  grid-template-columns: 32px 1fr 42px 44px 160px;
+  gap: 13px;
+  align-items: center;
+  padding: 4px 0;
+}
+.disk + .disk {
+  border-top: 1px solid color-mix(in srgb, var(--line-soft) 55%, transparent);
+}
+.disk__id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+}
+.gauge {
+  position: relative;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--track);
+  overflow: hidden;
+}
+.gauge__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  transition: width 0.55s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.gauge__mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--fg);
+  opacity: 0.28;
+}
+.gauge--healthy .gauge__fill {
+  background: var(--green);
+}
+.gauge--degraded .gauge__fill {
+  background: var(--amber);
+}
+.gauge--critical .gauge__fill {
+  background: var(--red);
+}
+/* Drained (weight 0): hatched track, no fill — never receives new data. */
+.gauge--drained {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--surface-3) 0 5px,
+    var(--surface-2) 5px 10px
+  );
+}
+/* Capacity unknown: flat, dim. */
+.gauge--unknown {
+  background: var(--surface-2);
+}
+.disk__pct {
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-strong);
+}
+.disk__pct.healthy {
+  color: var(--green);
+}
+.disk__pct.degraded {
+  color: var(--amber);
+}
+.disk__pct.critical {
+  color: var(--red);
+}
+.disk__pct.muted {
+  color: var(--muted-2);
+}
+.disk__w {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+.disk__w.drained {
+  color: var(--red);
+}
+.disk__cap {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Not-cluster-mode notice. */
+.notice {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 30px 26px;
+  max-width: 560px;
+}
+.notice h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--fg-strong);
+  font-weight: 700;
+}
+.notice p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.notice code {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+@media (max-width: 620px) {
+  .disk {
+    grid-template-columns: 30px 1fr 40px;
+  }
+  .disk__w,
+  .disk__cap {
+    display: none;
+  }
+}
