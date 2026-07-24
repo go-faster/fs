@@ -126,7 +126,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	rt := &clusterRuntime{
 		lg:       lg,
-		nodeID:   cluster.NodeID(cc.NodeID),
+		nodeID:   cluster.NodeID(cfg.ClusterNodeID()),
 		schemeID: defaultScheme.String(),
 	}
 

@@ -258,17 +258,40 @@ func (c *Config) ClusterSecret() string {
 	return c.Cluster.Secret
 }
 
+// ClusterNodeID resolves this node's ID (FS_CLUSTER_NODE_ID overrides the
+// config value). The env override lets an orchestrator inject a per-instance
+// identity — e.g. a Kubernetes StatefulSet setting it from the pod name — into
+// an otherwise shared config.
+func (c *Config) ClusterNodeID() string {
+	if env := os.Getenv("FS_CLUSTER_NODE_ID"); env != "" {
+		return env
+	}
+
+	return c.Cluster.NodeID
+}
+
+// ClusterAdvertiseAddr resolves the address peers dial to reach this node
+// (FS_CLUSTER_ADVERTISE_ADDR overrides the config value) — likewise
+// per-instance, e.g. a pod's stable DNS name.
+func (c *Config) ClusterAdvertiseAddr() string {
+	if env := os.Getenv("FS_CLUSTER_ADVERTISE_ADDR"); env != "" {
+		return env
+	}
+
+	return c.Cluster.AdvertiseAddr
+}
+
 // validateCluster checks the cluster section (called when storage.type is
 // "cluster").
 func (c *Config) validateCluster() error {
 	cc := c.Cluster
 
-	if cc.NodeID == "" {
-		return errors.New("cluster.node_id is required")
+	if c.ClusterNodeID() == "" {
+		return errors.New("cluster.node_id (or FS_CLUSTER_NODE_ID) is required")
 	}
 
-	if cc.AdvertiseAddr == "" {
-		return errors.New("cluster.advertise_addr is required (peers must be able to dial this node)")
+	if c.ClusterAdvertiseAddr() == "" {
+		return errors.New("cluster.advertise_addr (or FS_CLUSTER_ADVERTISE_ADDR) is required (peers must be able to dial this node)")
 	}
 
 	if len(c.ClusterSecret()) < 16 {
