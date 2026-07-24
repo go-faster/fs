@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,21 +14,39 @@ import (
 	"github.com/go-faster/fs/storagemem"
 )
 
-func TestReload_UpdatesCredentials(t *testing.T) {
-	// Start with a manager that knows key A.
+// managerWithKeyA builds a manager that already knows key A.
+func managerWithKeyA(t *testing.T) *auth.Manager {
+	t.Helper()
+
 	mgr, err := auth.NewManager(auth.Config{Keys: []auth.Key{
 		{AccessKey: "AKIAAAAAAAAAAAAAAAAA", SecretKey: "secret-a", Grants: []auth.Grant{{Pattern: "*", Permission: auth.Admin}}},
 	}}, "")
 	require.NoError(t, err)
 
-	store := mgr.Store()
+	return mgr
+}
 
-	_, ok := store.Secret("AKIAAAAAAAAAAAAAAAAA")
-	require.True(t, ok)
+// writeConfig writes cfg to a temp file and returns its path.
+func writeConfig(t *testing.T, cfg string) string {
+	t.Helper()
 
-	// Write a config that instead defines key B.
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(cfg), 0o600))
+
+	return path
+}
+
+// emptyServer builds a server over in-memory storage.
+func emptyServer(t *testing.T) *server.Server {
+	t.Helper()
+
+	srv, err := server.New(server.Config{Storage: storagemem.New()})
+	require.NoError(t, err)
+
+	return srv
+}
+
+const configKeyB = `
 auth:
   keys:
     - access_key: AKIABBBBBBBBBBBBBBBB
@@ -35,12 +54,21 @@ auth:
       grants:
         - bucket: "*"
           permission: admin
-`), 0o600))
+`
 
-	srv, err := server.New(server.Config{Storage: storagemem.New()})
+func TestReload_UpdatesCredentials(t *testing.T) {
+	mgr := managerWithKeyA(t)
+	store := mgr.Store()
+
+	_, ok := store.Secret("AKIAAAAAAAAAAAAAAAAA")
+	require.True(t, ok)
+
+	// The config instead defines key B.
+	rel := newReloader(zap.NewNop(), writeConfig(t, configKeyB), false, mgr, emptyServer(t))
+
+	res, err := rel.Reload(context.Background())
 	require.NoError(t, err)
-
-	reload(zap.NewNop(), cfgPath, false, mgr, srv)
+	require.Contains(t, res.Reloaded, "credentials")
 
 	// The store now knows B and no longer knows A.
 	secret, ok := store.Secret("AKIABBBBBBBBBBBBBBBB")
@@ -52,50 +80,29 @@ auth:
 }
 
 func TestReload_InvalidConfigKeepsCurrent(t *testing.T) {
-	mgr, err := auth.NewManager(auth.Config{Keys: []auth.Key{
-		{AccessKey: "AKIAAAAAAAAAAAAAAAAA", SecretKey: "secret-a", Grants: []auth.Grant{{Pattern: "*", Permission: auth.Admin}}},
-	}}, "")
-	require.NoError(t, err)
+	mgr := managerWithKeyA(t)
 
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("not: [valid: yaml"), 0o600))
+	rel := newReloader(zap.NewNop(), writeConfig(t, "not: [valid: yaml"), false, mgr, emptyServer(t))
 
-	srv, err := server.New(server.Config{Storage: storagemem.New()})
-	require.NoError(t, err)
-
-	// A bad reload must leave the working credentials in place.
-	reload(zap.NewNop(), cfgPath, false, mgr, srv)
+	// A bad reload reports the failure and leaves the working credentials.
+	_, err := rel.Reload(context.Background())
+	require.Error(t, err)
 
 	_, ok := mgr.Store().Secret("AKIAAAAAAAAAAAAAAAAA")
 	require.True(t, ok)
 }
 
 func TestReload_PreservesRuntimeKeys(t *testing.T) {
-	mgr, err := auth.NewManager(auth.Config{Keys: []auth.Key{
-		{AccessKey: "AKIAAAAAAAAAAAAAAAAA", SecretKey: "secret-a", Grants: []auth.Grant{{Pattern: "*", Permission: auth.Admin}}},
-	}}, "")
-	require.NoError(t, err)
+	mgr := managerWithKeyA(t)
 
 	// A key created at runtime through the admin API.
 	created, err := mgr.Create(auth.CreateInput{Grants: []auth.Grant{{Pattern: "*", Permission: auth.Read}}})
 	require.NoError(t, err)
 
-	// Reload swaps the config credential from A to B.
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(`
-auth:
-  keys:
-    - access_key: AKIABBBBBBBBBBBBBBBB
-      secret_key: secret-b
-      grants:
-        - bucket: "*"
-          permission: admin
-`), 0o600))
+	rel := newReloader(zap.NewNop(), writeConfig(t, configKeyB), false, mgr, emptyServer(t))
 
-	srv, err := server.New(server.Config{Storage: storagemem.New()})
+	_, err = rel.Reload(context.Background())
 	require.NoError(t, err)
-
-	reload(zap.NewNop(), cfgPath, false, mgr, srv)
 
 	// Config key rotated, but the runtime-created key survives.
 	_, ok := mgr.Store().Secret("AKIABBBBBBBBBBBBBBBB")
@@ -103,4 +110,23 @@ auth:
 
 	_, ok = mgr.Store().Secret(created.AccessKey)
 	require.True(t, ok, "runtime-created key must survive reload")
+}
+
+// TestReload_TracksRevision covers the config revision an orchestrator reads
+// back to confirm a node loaded the config it rendered: the reloader reports
+// the startup revision, and a reload advances it to the file's new value. The
+// configs carry credentials so the reload itself succeeds.
+func TestReload_TracksRevision(t *testing.T) {
+	mgr := managerWithKeyA(t)
+	cfgPath := writeConfig(t, "revision: cfg-1111\n"+configKeyB)
+
+	rel := newReloader(zap.NewNop(), cfgPath, false, mgr, emptyServer(t))
+	require.Equal(t, "cfg-1111", rel.CurrentRevision(), "startup revision")
+
+	require.NoError(t, os.WriteFile(cfgPath, []byte("revision: cfg-2222\n"+configKeyB), 0o600))
+
+	res, err := rel.Reload(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "cfg-2222", res.ConfigRevision)
+	require.Equal(t, "cfg-2222", rel.CurrentRevision(), "revision advances on reload")
 }

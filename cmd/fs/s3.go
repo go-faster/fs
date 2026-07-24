@@ -261,8 +261,10 @@ Command-line flags override YAML configuration values.`,
 					return t.BaseContext()
 				}
 
-				// Hot-reload credentials and TLS certificate on SIGHUP.
-				go handleReload(ctx, lg, configPath, insecureNoAuth, authManager, srv)
+				// Hot-reload credentials and TLS certificate on SIGHUP or via
+				// the admin reload endpoint — one reloader backs both.
+				rel := newReloader(lg, configPath, insecureNoAuth, authManager, srv)
+				go handleReload(ctx, rel)
 
 				lg.Info("Starting server", zap.String("addr", cfg.Server.Addr))
 
@@ -305,7 +307,7 @@ Command-line flags override YAML configuration values.`,
 					}
 
 					grp.Go(func() error {
-						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance, clusterStatus)
+						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance, clusterStatus, rel)
 					})
 				}
 

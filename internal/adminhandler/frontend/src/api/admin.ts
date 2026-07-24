@@ -33,7 +33,8 @@ import type {
   ErrorResponse,
   InstanceInfo,
   RebalanceControlRequest,
-  RebalanceStatus
+  RebalanceStatus,
+  ReloadResult
 } from './model';
 
 import { customFetch } from '../lib/fetcher';
@@ -553,6 +554,71 @@ export function useGetClusterStatus<TData = Awaited<ReturnType<typeof getCluster
 
 
 
+/**
+ * Re-read the configuration file and apply the parts that change without a restart — the config-defined credentials and grants, the anonymously readable buckets and the TLS certificate — exactly as SIGHUP does. Runtime credentials created through this API are preserved. Returns what was reloaded and the config revision now in effect, so an orchestrator can confirm a config change landed without shelling into the process. Returns 501 on a listener with nothing to reload (the headless cluster admin serves no S3 data).
+
+ * @summary Reload hot-reloadable configuration
+ */
+export const reloadConfig = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ReloadResult>(
+      {url: `/api/v1/reload`, method: 'POST', signal
+    },
+      );
+    }
+  
+
+
+export const getReloadConfigMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reloadConfig>>, TError,void, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof reloadConfig>>, TError,void, TContext> => {
+
+const mutationKey = ['reloadConfig'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reloadConfig>>, void> = () => {
+          
+
+          return  reloadConfig()
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReloadConfigMutationResult = NonNullable<Awaited<ReturnType<typeof reloadConfig>>>
+    
+    export type ReloadConfigMutationError = ErrorResponse
+
+    /**
+ * @summary Reload hot-reloadable configuration
+ */
+export const useReloadConfig = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reloadConfig>>, TError,void, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof reloadConfig>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getReloadConfigMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Remove a runtime credential. Config-defined credentials cannot be deleted.
  * @summary Delete an access key

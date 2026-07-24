@@ -13,4 +13,5 @@ const (
 	GetInfoOperation            OperationName = "GetInfo"
 	GetRebalanceStatusOperation OperationName = "GetRebalanceStatus"
 	ListAccessKeysOperation     OperationName = "ListAccessKeys"
+	ReloadConfigOperation       OperationName = "ReloadConfig"
 )

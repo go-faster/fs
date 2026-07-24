@@ -24,4 +24,5 @@ export * from './rebalanceAction';
 export * from './rebalanceControlRequest';
 export * from './rebalanceState';
 export * from './rebalanceStatus';
+export * from './reloadResult';
 export * from './source';
