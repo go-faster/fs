@@ -9,6 +9,7 @@
 
 export * from './accessKey';
 export * from './accessKeyList';
+export * from './bucketScheme';
 export * from './clusterDisk';
 export * from './clusterNode';
 export * from './clusterState';
@@ -25,4 +26,5 @@ export * from './rebalanceControlRequest';
 export * from './rebalanceState';
 export * from './rebalanceStatus';
 export * from './reloadResult';
+export * from './setBucketSchemeRequest';
 export * from './source';
