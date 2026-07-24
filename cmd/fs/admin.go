@@ -15,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 
+	"github.com/go-faster/fs/adminapi"
 	"github.com/go-faster/fs/auth"
-	"github.com/go-faster/fs/internal/adminapi"
 	"github.com/go-faster/fs/internal/adminhandler"
 )
 

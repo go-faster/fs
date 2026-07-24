@@ -1,6 +1,6 @@
 package adminhandler
 
-import "github.com/go-faster/fs/internal/adminapi"
+import "github.com/go-faster/fs/adminapi"
 
 // apiErr builds an *adminapi.ErrorStatusCode with the given HTTP status and
 // message. Returning it from a handler makes ogen encode the structured Error

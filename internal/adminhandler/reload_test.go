@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-faster/fs/internal/adminapi"
+	"github.com/go-faster/fs/adminapi"
 )
 
 // fakeReloader is a Reloader whose result and error are fixed by the test.

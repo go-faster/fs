@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/go-faster/fs/internal/adminapi"
+	"github.com/go-faster/fs/adminapi"
 )
 
 // ErrRebalanceConflict marks an invalid rebalance transition (starting a

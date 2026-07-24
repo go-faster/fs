@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs/adminapi"
 	"github.com/go-faster/fs/auth"
-	"github.com/go-faster/fs/internal/adminapi"
 )
 
 // BuildInfo is static build metadata reported by GetInfo.

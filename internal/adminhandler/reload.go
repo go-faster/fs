@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/go-faster/fs/internal/adminapi"
+	"github.com/go-faster/fs/adminapi"
 )
 
 // ReloadResult reports what a reload applied and the config revision left in

@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs/adminapi"
 	"github.com/go-faster/fs/auth"
-	"github.com/go-faster/fs/internal/adminapi"
 )
 
 func newTestAPI(t *testing.T) *AdminAPI {

@@ -3,7 +3,7 @@ package adminhandler
 import (
 	"context"
 
-	"github.com/go-faster/fs/internal/adminapi"
+	"github.com/go-faster/fs/adminapi"
 )
 
 // ClusterDisk is one disk's placement weight and reported capacity.
