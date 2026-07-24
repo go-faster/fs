@@ -20,12 +20,28 @@ type BuildInfo struct {
 	Commit  string
 }
 
+// CredentialManager is the runtime access-key store the admin API manages. Both
+// the local file-backed store (*auth.Manager) and the etcd-backed cluster store
+// satisfy it, so the same endpoints serve single-node and cluster-wide
+// credentials. Its methods do not take a context: the file store is in-memory,
+// and the cluster store reads from a watch-maintained snapshot for List while
+// bounding its own etcd writes for Create/Delete.
+type CredentialManager interface {
+	// List returns every credential, secrets omitted, sorted by access key.
+	List() []auth.KeyInfo
+	// Create adds a credential, generating the access key and/or secret when
+	// CreateInput leaves them empty, and returns the secret exactly once.
+	Create(in auth.CreateInput) (*auth.Created, error)
+	// Delete removes a credential by access key.
+	Delete(accessKey string) error
+}
+
 // Options configures an AdminAPI.
 type Options struct {
 	// Manager is the access-key store to manage. Optional: nil disables the
-	// access-key endpoints (they return 501) — the headless cluster admin runs
-	// without a local credential store until cluster-wide credentials land.
-	Manager *auth.Manager
+	// access-key endpoints (they return 501) — e.g. a headless cluster admin
+	// with file-backed credentials, which live on the data nodes.
+	Manager CredentialManager
 	// Build is reported by GetInfo.
 	Build BuildInfo
 	// AuthEnabled reports whether the S3 server enforces SigV4.
@@ -49,6 +65,10 @@ type Options struct {
 	// via the control plane; nil outside cluster mode (the scheme endpoints
 	// then return 501).
 	BucketSchemes BucketSchemeStore
+	// PublicRead reads and writes the cluster-wide public-read bucket list; nil
+	// unless the server uses cluster-wide credentials (the public-read endpoints
+	// then return 501).
+	PublicRead PublicReadStore
 	// ClusterDefaultScheme is the scheme applied to buckets without an override,
 	// echoed by the scheme endpoints. Empty when unknown.
 	ClusterDefaultScheme string

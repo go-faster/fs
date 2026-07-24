@@ -477,6 +477,28 @@ table.left td:last-child {
 .chip + .chip {
   margin-left: 5px;
 }
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+.chips .chip + .chip {
+  margin-left: 0;
+}
+.chip-x {
+  padding: 0 2px;
+  margin-left: 3px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip-x:hover:not(:disabled) {
+  color: var(--danger, #e5484d);
+}
 
 /* Forms. */
 label {

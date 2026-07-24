@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  getGetPublicReadBucketsQueryKey,
   getListAccessKeysQueryKey,
   useCreateAccessKey,
   useDeleteAccessKey,
+  useGetPublicReadBuckets,
   useListAccessKeys,
+  useSetPublicReadBuckets,
 } from "../api/admin";
 import type { CreatedAccessKey, Grant, Permission } from "../api/model";
+import { ApiError } from "../lib/fetcher";
 import { useToast } from "../components/toast";
 
 const PERMISSIONS: Permission[] = ["read", "write", "admin"];
@@ -166,6 +170,100 @@ function SecretCard({ created, onDismiss }: { created: CreatedAccessKey; onDismi
   );
 }
 
+// PublicReadPanel manages the cluster-wide public-read bucket list. It renders
+// only with cluster-wide credentials (auth.source: etcd); the endpoint returns
+// 501 otherwise, and the panel hides itself. Each add/remove replaces the whole
+// list, matching the API.
+function PublicReadPanel() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useGetPublicReadBuckets({ query: { retry: false } });
+  const [draft, setDraft] = useState("");
+
+  const save = useSetPublicReadBuckets({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getGetPublicReadBucketsQueryKey() });
+      },
+      onError: (err) => toast.notify((err as unknown as ApiError).message, "error"),
+    },
+  });
+
+  // Not applicable without cluster-wide credentials: hide entirely on 501. The
+  // fetcher throws ApiError at runtime (the generated error type is nominal).
+  const err = q.error as unknown as ApiError | null;
+  if (err && err.status === 501) return null;
+
+  const buckets = q.data?.buckets ?? [];
+
+  const replace = (next: string[]) => save.mutate({ data: { buckets: next } });
+
+  const add = () => {
+    const name = draft.trim();
+    if (name === "") return;
+    if (buckets.includes(name)) {
+      toast.notify(`${name} is already public-read`, "error");
+      return;
+    }
+    setDraft("");
+    replace([...buckets, name]);
+  };
+
+  const remove = (name: string) => replace(buckets.filter((b) => b !== name));
+
+  return (
+    <div className="card">
+      <h2>
+        Public-read buckets
+        <span className="sub">cluster-wide, hot-reloaded</span>
+      </h2>
+      <p className="lead">
+        Buckets anyone can read without credentials (unsigned GET/HEAD/list).
+        Changes propagate to every node within seconds, no restart.
+      </p>
+
+      {err && <div className="err-box">{err.message}</div>}
+
+      <div className="chips" style={{ marginBottom: "12px" }}>
+        {buckets.length === 0 && <span className="empty">None.</span>}
+        {buckets.map((b) => (
+          <span className="chip" key={b}>
+            {b}{" "}
+            <button
+              type="button"
+              className="chip-x"
+              aria-label={`Remove ${b}`}
+              onClick={() => remove(b)}
+              disabled={save.isPending}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <div className="grant-row">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") add();
+          }}
+          placeholder="bucket name"
+        />
+        <button
+          type="button"
+          className="primary"
+          onClick={add}
+          disabled={save.isPending || draft.trim() === ""}
+        >
+          {save.isPending ? "Saving…" : "Add"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AccessKeys() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -203,6 +301,10 @@ export default function AccessKeys() {
 
       <div style={{ marginBottom: "14px" }}>
         <CreatePanel onCreated={setCreated} />
+      </div>
+
+      <div style={{ marginBottom: "14px" }}>
+        <PublicReadPanel />
       </div>
 
       <div className="card">

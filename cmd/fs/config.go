@@ -71,11 +71,29 @@ type IntegrityConfig struct {
 	ScrubQuarantine bool `yaml:"scrub_quarantine,omitempty"`
 }
 
+// Auth source values for AuthConfig.Source.
+const (
+	// AuthSourceFile keeps credentials in config/env and the local runtime keys
+	// file (the default, single-node behavior).
+	AuthSourceFile = "file"
+	// AuthSourceEtcd keeps credentials in the cluster control plane (etcd),
+	// sealed by the cluster secret and hot-reloaded on every node. Cluster mode
+	// only.
+	AuthSourceEtcd = "etcd"
+)
+
 // AuthConfig configures authentication and authorization.
 type AuthConfig struct {
 	// Disabled turns off authentication entirely (anonymous access). Equivalent
 	// to the --insecure-no-auth flag.
 	Disabled bool `yaml:"disabled,omitempty"`
+
+	// Source selects where runtime credentials live: "file" (the default —
+	// config/env plus the local keys file) or "etcd" (cluster-wide, sealed by
+	// the cluster secret and hot-reloaded on every node). "etcd" requires
+	// cluster storage. The two sources are never merged: with "etcd", config
+	// keys seed an empty namespace once and are authoritative in etcd thereafter.
+	Source string `yaml:"source,omitempty"`
 
 	// Keys are the credentials the server accepts. A root credential can also be
 	// supplied via the FS_ROOT_ACCESS_KEY / FS_ROOT_SECRET_KEY environment
@@ -84,6 +102,16 @@ type AuthConfig struct {
 
 	// PublicReadBuckets may be read anonymously.
 	PublicReadBuckets []string `yaml:"public_read_buckets,omitempty"`
+}
+
+// AuthSourceValue returns the effective auth source, defaulting to
+// AuthSourceFile when unset.
+func (c *Config) AuthSourceValue() string {
+	if c.Auth.Source == "" {
+		return AuthSourceFile
+	}
+
+	return c.Auth.Source
 }
 
 // DefaultAdminAddr is the default admin listener address.
@@ -430,6 +458,20 @@ func (c *Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("unsupported storage type: %s (want %q or %q)", c.Storage.Type, StorageTypeFilesystem, StorageTypeCluster)
+	}
+
+	switch c.Auth.Source {
+	case "", AuthSourceFile:
+	case AuthSourceEtcd:
+		if c.Storage.Type != StorageTypeCluster {
+			return errors.Errorf("auth.source: %q requires cluster storage (storage.type: cluster)", AuthSourceEtcd)
+		}
+
+		if c.Auth.Disabled {
+			return errors.Errorf("auth.source: %q requires authentication enabled (auth.disabled is set)", AuthSourceEtcd)
+		}
+	default:
+		return errors.Errorf("invalid auth.source %q (want %q or %q)", c.Auth.Source, AuthSourceFile, AuthSourceEtcd)
 	}
 
 	if c.Server.ReadTimeout <= 0 {

@@ -26,7 +26,11 @@ is the working checklist; ARCHITECTURE.md is the reference.
 - `internal/sigv4` — SigV4 verification (header, presigned, streaming chunk
   signatures). Verified against the real aws-sdk-go-v2 signer.
 - `auth`, `cors` (public) — credential/grant store and per-bucket CORS config,
-  wired via `server.WithAuth` / `server.WithCORS`.
+  wired via `server.WithAuth` / `server.WithCORS`. `auth.Manager` is the local
+  (file) credential store; `auth.Sealer` seals secrets for the cluster-wide
+  credential source (`auth.source: etcd`), whose etcd persistence/watch live in
+  `internal/cluster/etcd` (`auth.go`) and whose seal/unseal + admin adapter is
+  `cmd/fs`'s `clusterCredentials`.
 - `storagefs`, `storagemem` — filesystem and in-memory `fs.Storage` backends.
 - `storagetest` — exported conformance suite; both backends and any
   third-party backend run `storagetest.Run(t, factory)`.

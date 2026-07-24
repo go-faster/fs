@@ -16,7 +16,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-faster/fs/adminapi"
-	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/internal/adminhandler"
 )
 
@@ -62,7 +61,7 @@ func resolveAdminKeysFile(cfg Config, absRoot string) string {
 // runAdminServer serves the admin API and its embedded web dashboard on a
 // separate listener until ctx is canceled. It requires a bearer token on every
 // API request. It returns an error only on a fatal serve failure.
-func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr *auth.Manager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl, clusterStatus adminhandler.ClusterStatusSource, bucketSchemes adminhandler.BucketSchemeStore, clusterDefaultScheme string, rel *reloader) error {
+func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr adminhandler.CredentialManager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl, clusterStatus adminhandler.ClusterStatusSource, bucketSchemes adminhandler.BucketSchemeStore, clusterDefaultScheme string, rel *reloader) error {
 	addr := cfg.Addr
 	if addr == "" {
 		addr = DefaultAdminAddr
@@ -88,6 +87,12 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg A
 		ClusterStatus:        clusterStatus,
 		BucketSchemes:        bucketSchemes,
 		ClusterDefaultScheme: clusterDefaultScheme,
+	}
+
+	// Cluster-wide credential stores also manage the public-read bucket list;
+	// the file-backed manager does not, leaving those endpoints at 501.
+	if prs, ok := mgr.(adminhandler.PublicReadStore); ok {
+		opts.PublicRead = prs
 	}
 
 	// Set the reload interface only when there is a reloader: a nil *reloader

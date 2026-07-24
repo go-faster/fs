@@ -216,6 +216,47 @@ paths:
                 $ref: "#/components/schemas/BucketScheme"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/public-read-buckets:
+    get:
+      operationId: "getPublicReadBuckets"
+      summary: "List public-read buckets"
+      description: >
+        Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide.
+        Available only with cluster-wide credentials (auth.source: etcd);
+        returns 501 otherwise, where public-read buckets are managed in the
+        config file per node.
+      responses:
+        200:
+          description: The public-read bucket list.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/PublicReadBuckets"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: "setPublicReadBuckets"
+      summary: "Replace the public-read bucket list"
+      description: >
+        Replace the cluster-wide public-read bucket list. The change propagates
+        to every node within seconds with no restart. Returns the stored list.
+        Returns 400 on an invalid bucket name and 501 when not using
+        cluster-wide credentials.
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/SetPublicReadBucketsRequest"
+      responses:
+        200:
+          description: The public-read bucket list after applying the change.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/PublicReadBuckets"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   schemas:
     InstanceInfo:
@@ -563,6 +604,28 @@ components:
             string (or "default") clears the override, restoring the cluster
             default.
           example: "ec:4,2"
+    PublicReadBuckets:
+      type: object
+      description: "The cluster-wide list of anonymously-readable buckets."
+      required:
+        - buckets
+      properties:
+        buckets:
+          type: array
+          description: "Bucket names readable without credentials."
+          items:
+            type: string
+    SetPublicReadBucketsRequest:
+      type: object
+      description: "Replace the cluster-wide public-read bucket list."
+      required:
+        - buckets
+      properties:
+        buckets:
+          type: array
+          description: "The full new list; an empty array clears all public-read access."
+          items:
+            type: string
     Error:
       title: Structured error
       description: Error occurred while processing request

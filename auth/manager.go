@@ -173,12 +173,12 @@ func (m *Manager) Create(in CreateInput) (*Created, error) {
 
 	access := in.AccessKey
 	if access == "" {
-		access = generateAccessKey()
+		access = NewAccessKey()
 	}
 
 	secret := in.SecretKey
 	if secret == "" {
-		secret = generateSecretKey()
+		secret = NewSecretKey()
 	}
 
 	if _, ok := m.managed[access]; ok || m.isBase(access) {
@@ -325,8 +325,8 @@ func (m *Manager) load() error {
 	return nil
 }
 
-// generateAccessKey returns an AWS-style 20-character access key ID.
-func generateAccessKey() string {
+// NewAccessKey returns an AWS-style 20-character access key ID.
+func NewAccessKey() string {
 	var b [10]byte
 
 	_, _ = rand.Read(b[:])
@@ -334,8 +334,8 @@ func generateAccessKey() string {
 	return "AKIA" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
 
-// generateSecretKey returns a 40-character secret access key.
-func generateSecretKey() string {
+// NewSecretKey returns a 40-character secret access key.
+func NewSecretKey() string {
 	var b [30]byte
 
 	_, _ = rand.Read(b[:])

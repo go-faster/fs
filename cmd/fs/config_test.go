@@ -280,6 +280,55 @@ func TestValidate_BucketNames(t *testing.T) {
 	}
 }
 
+func TestValidate_AuthSource(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate  func(*Config)
+		wantErr string
+	}{
+		"default is file": {
+			mutate: func(*Config) {},
+		},
+		"explicit file": {
+			mutate: func(c *Config) { c.Auth.Source = AuthSourceFile },
+		},
+		"etcd on filesystem storage is rejected": {
+			mutate:  func(c *Config) { c.Auth.Source = AuthSourceEtcd },
+			wantErr: "requires cluster storage",
+		},
+		"unknown source is rejected": {
+			mutate:  func(c *Config) { c.Auth.Source = "vault" },
+			wantErr: "invalid auth.source",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tc.mutate(&cfg)
+
+			err := cfg.Validate()
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidate_AuthSourceEtcdCluster(t *testing.T) {
+	// etcd source is valid in cluster mode, but not with auth disabled.
+	cfg := validClusterConfig()
+	cfg.Auth.Source = AuthSourceEtcd
+	require.NoError(t, cfg.Validate())
+
+	cfg.Auth.Disabled = true
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires authentication enabled")
+}
+
 func TestLoadConfig_WithBuckets(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

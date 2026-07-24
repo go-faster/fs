@@ -939,6 +939,23 @@ func (s *Permission) UnmarshalText(data []byte) error {
 	}
 }
 
+// The cluster-wide list of anonymously-readable buckets.
+// Ref: #/components/schemas/PublicReadBuckets
+type PublicReadBuckets struct {
+	// Bucket names readable without credentials.
+	Buckets []string `json:"buckets"`
+}
+
+// GetBuckets returns the value of Buckets.
+func (s *PublicReadBuckets) GetBuckets() []string {
+	return s.Buckets
+}
+
+// SetBuckets sets the value of Buckets.
+func (s *PublicReadBuckets) SetBuckets(val []string) {
+	s.Buckets = val
+}
+
 // Ref: #/components/schemas/RebalanceAction
 type RebalanceAction string
 
@@ -1250,6 +1267,23 @@ func (s *SetBucketSchemeRequest) GetScheme() OptString {
 // SetScheme sets the value of Scheme.
 func (s *SetBucketSchemeRequest) SetScheme(val OptString) {
 	s.Scheme = val
+}
+
+// Replace the cluster-wide public-read bucket list.
+// Ref: #/components/schemas/SetPublicReadBucketsRequest
+type SetPublicReadBucketsRequest struct {
+	// The full new list; an empty array clears all public-read access.
+	Buckets []string `json:"buckets"`
+}
+
+// GetBuckets returns the value of Buckets.
+func (s *SetPublicReadBucketsRequest) GetBuckets() []string {
+	return s.Buckets
+}
+
+// SetBuckets sets the value of Buckets.
+func (s *SetPublicReadBucketsRequest) SetBuckets(val []string) {
+	s.Buckets = val
 }
 
 // Where the credential is defined.

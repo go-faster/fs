@@ -6,14 +6,16 @@ package adminapi
 type OperationName = string
 
 const (
-	ControlRebalanceOperation   OperationName = "ControlRebalance"
-	CreateAccessKeyOperation    OperationName = "CreateAccessKey"
-	DeleteAccessKeyOperation    OperationName = "DeleteAccessKey"
-	GetBucketSchemeOperation    OperationName = "GetBucketScheme"
-	GetClusterStatusOperation   OperationName = "GetClusterStatus"
-	GetInfoOperation            OperationName = "GetInfo"
-	GetRebalanceStatusOperation OperationName = "GetRebalanceStatus"
-	ListAccessKeysOperation     OperationName = "ListAccessKeys"
-	ReloadConfigOperation       OperationName = "ReloadConfig"
-	SetBucketSchemeOperation    OperationName = "SetBucketScheme"
+	ControlRebalanceOperation     OperationName = "ControlRebalance"
+	CreateAccessKeyOperation      OperationName = "CreateAccessKey"
+	DeleteAccessKeyOperation      OperationName = "DeleteAccessKey"
+	GetBucketSchemeOperation      OperationName = "GetBucketScheme"
+	GetClusterStatusOperation     OperationName = "GetClusterStatus"
+	GetInfoOperation              OperationName = "GetInfo"
+	GetPublicReadBucketsOperation OperationName = "GetPublicReadBuckets"
+	GetRebalanceStatusOperation   OperationName = "GetRebalanceStatus"
+	ListAccessKeysOperation       OperationName = "ListAccessKeys"
+	ReloadConfigOperation         OperationName = "ReloadConfig"
+	SetBucketSchemeOperation      OperationName = "SetBucketScheme"
+	SetPublicReadBucketsOperation OperationName = "SetPublicReadBuckets"
 )

@@ -72,6 +72,14 @@ type Invoker interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetPublicReadBuckets invokes getPublicReadBuckets operation.
+	//
+	// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with
+	// cluster-wide credentials (auth.source: etcd); returns 501 otherwise, where public-read buckets are
+	// managed in the config file per node.
+	//
+	// GET /api/v1/public-read-buckets
+	GetPublicReadBuckets(ctx context.Context) (*PublicReadBuckets, error)
 	// GetRebalanceStatus invokes getRebalanceStatus operation.
 	//
 	// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
@@ -107,6 +115,14 @@ type Invoker interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/scheme
 	SetBucketScheme(ctx context.Context, request *SetBucketSchemeRequest, params SetBucketSchemeParams) (*BucketScheme, error)
+	// SetPublicReadBuckets invokes setPublicReadBuckets operation.
+	//
+	// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds
+	// with no restart. Returns the stored list. Returns 400 on an invalid bucket name and 501 when not
+	// using cluster-wide credentials.
+	//
+	// PUT /api/v1/public-read-buckets
+	SetPublicReadBuckets(ctx context.Context, request *SetPublicReadBucketsRequest) (*PublicReadBuckets, error)
 }
 
 // Client implements OAS client.
@@ -679,6 +695,88 @@ func (c *Client) sendGetInfo(ctx context.Context) (res *InstanceInfo, err error)
 	return result, nil
 }
 
+// GetPublicReadBuckets invokes getPublicReadBuckets operation.
+//
+// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with
+// cluster-wide credentials (auth.source: etcd); returns 501 otherwise, where public-read buckets are
+// managed in the config file per node.
+//
+// GET /api/v1/public-read-buckets
+func (c *Client) GetPublicReadBuckets(ctx context.Context) (*PublicReadBuckets, error) {
+	res, err := c.sendGetPublicReadBuckets(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetPublicReadBuckets(ctx context.Context) (res *PublicReadBuckets, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getPublicReadBuckets"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/public-read-buckets"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetPublicReadBucketsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/public-read-buckets"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetPublicReadBucketsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetRebalanceStatus invokes getRebalanceStatus operation.
 //
 // State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
@@ -1025,6 +1123,91 @@ func (c *Client) sendSetBucketScheme(ctx context.Context, request *SetBucketSche
 
 	stage = "DecodeResponse"
 	result, err := decodeSetBucketSchemeResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetPublicReadBuckets invokes setPublicReadBuckets operation.
+//
+// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds
+// with no restart. Returns the stored list. Returns 400 on an invalid bucket name and 501 when not
+// using cluster-wide credentials.
+//
+// PUT /api/v1/public-read-buckets
+func (c *Client) SetPublicReadBuckets(ctx context.Context, request *SetPublicReadBucketsRequest) (*PublicReadBuckets, error) {
+	res, err := c.sendSetPublicReadBuckets(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendSetPublicReadBuckets(ctx context.Context, request *SetPublicReadBucketsRequest) (res *PublicReadBuckets, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setPublicReadBuckets"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/api/v1/public-read-buckets"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetPublicReadBucketsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/public-read-buckets"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetPublicReadBucketsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetPublicReadBucketsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

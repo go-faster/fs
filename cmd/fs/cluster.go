@@ -40,6 +40,11 @@ type clusterRuntime struct {
 	nodeID    cluster.NodeID
 	schemeID  string
 
+	// client and etcdCfg are the control-plane handle, exposed so the S3 server
+	// can back etcd-sourced credentials (auth.source: etcd) on this same node.
+	client  *clientv3.Client
+	etcdCfg etcd.Config
+
 	// Usage refresh inputs: the local disk store, this node's static registry
 	// identity and its registration handle.
 	store *diskstore.Store
@@ -164,6 +169,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	if cc.Etcd.TTL > 0 {
 		etcdCfg.TTL = int64(cc.Etcd.TTL / time.Second)
 	}
+
+	rt.client = client
+	rt.etcdCfg = etcdCfg
 
 	// Schema-compatibility gate: refuse to join a cluster whose on-disk/etcd
 	// schema is newer than this binary understands (a stale binary must not

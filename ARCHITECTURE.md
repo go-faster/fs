@@ -127,6 +127,24 @@ with optional public-read buckets. The snapshot sits behind an atomic pointer,
 so `Set` hot-reloads credentials without locking readers. `Store` satisfies the
 handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`).
 
+Credentials come from one authoritative source, selected by `auth.source`:
+
+- **`file`** (default) — config/env keys plus runtime keys the admin API creates,
+  held by `auth.Manager` and persisted to a local JSON file. Single-node.
+- **`etcd`** (cluster mode) — **cluster-wide runtime key management**. Keys and
+  grants (under `<prefix>/auth/keys/`) and the public-read bucket list (at
+  `<prefix>/auth/public-read`) live in the control plane; each secret is sealed
+  with an AES-256-GCM key that `auth.Sealer` derives from the cluster secret via
+  HKDF (an etcd leak yields only ciphertext; the cluster secret never touches
+  etcd). Every node — and the headless `fs admin` — runs one `etcd.AuthSource`
+  watch over the whole `<prefix>/auth/` namespace that rebuilds the full snapshot
+  (credentials + public-read) through the same `Store.Set` atomic swap, so a key
+  or public-read change made on any admin listener propagates to all nodes with
+  no restart. The two sources are never merged: config keys and public-read seed
+  an empty namespace once, then etcd is authoritative. The etcd persistence and
+  watch live in `internal/cluster/etcd`; `cmd/fs`'s `clusterCredentials`
+  seals/unseals and adapts it to the admin API.
+
 Anonymous (unsigned) requests are authorized against **canned ACLs**
 (`private` / `public-read` / `public-read-write`) stored per bucket and per
 object: the auth middleware consults `fs.Storage.BucketACL`/`ObjectACL`
