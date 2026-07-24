@@ -14,6 +14,9 @@ var (
 	rn3AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
+	rn8AllowedHeaders = map[string]string{
+		"PUT": "Content-Type",
+	}
 	rn1AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
@@ -124,6 +127,60 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							s.notAllowed(w, r, notAllowedParams{
 								allowedMethods: "DELETE",
 								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				}
+
+			case 'b': // Prefix: "buckets/"
+
+				if l := len("buckets/"); len(elem) >= l && elem[0:l] == "buckets/" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				// Param: "bucket"
+				// Match until "/"
+				idx := strings.IndexByte(elem, '/')
+				if idx < 0 {
+					idx = len(elem)
+				}
+				args[0] = elem[:idx]
+				elem = elem[idx:]
+
+				if len(elem) == 0 {
+					break
+				}
+				switch elem[0] {
+				case '/': // Prefix: "/scheme"
+
+					if l := len("/scheme"); len(elem) >= l && elem[0:l] == "/scheme" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetBucketSchemeRequest([1]string{
+								args[0],
+							}, elemIsEscaped, w, r)
+						case "PUT":
+							s.handleSetBucketSchemeRequest([1]string{
+								args[0],
+							}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET,PUT",
+								allowedHeaders: rn8AllowedHeaders,
 								acceptPost:     "",
 								acceptPatch:    "",
 							})
@@ -409,6 +466,63 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 							r.operationID = "deleteAccessKey"
 							r.operationGroup = ""
 							r.pathPattern = "/api/v1/access-keys/{accessKey}"
+							r.args = args
+							r.count = 1
+							return r, true
+						default:
+							return
+						}
+					}
+
+				}
+
+			case 'b': // Prefix: "buckets/"
+
+				if l := len("buckets/"); len(elem) >= l && elem[0:l] == "buckets/" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				// Param: "bucket"
+				// Match until "/"
+				idx := strings.IndexByte(elem, '/')
+				if idx < 0 {
+					idx = len(elem)
+				}
+				args[0] = elem[:idx]
+				elem = elem[idx:]
+
+				if len(elem) == 0 {
+					break
+				}
+				switch elem[0] {
+				case '/': // Prefix: "/scheme"
+
+					if l := len("/scheme"); len(elem) >= l && elem[0:l] == "/scheme" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetBucketSchemeOperation
+							r.summary = "Get a bucket's replication scheme"
+							r.operationID = "getBucketScheme"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/buckets/{bucket}/scheme"
+							r.args = args
+							r.count = 1
+							return r, true
+						case "PUT":
+							r.name = SetBucketSchemeOperation
+							r.summary = "Set or clear a bucket's replication scheme"
+							r.operationID = "setBucketScheme"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/buckets/{bucket}/scheme"
 							r.args = args
 							r.count = 1
 							return r, true

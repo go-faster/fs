@@ -27,6 +27,7 @@ import type {
 
 import type {
   AccessKeyList,
+  BucketScheme,
   ClusterStatus,
   CreateAccessKeyRequest,
   CreatedAccessKey,
@@ -34,7 +35,8 @@ import type {
   InstanceInfo,
   RebalanceControlRequest,
   RebalanceStatus,
-  ReloadResult
+  ReloadResult,
+  SetBucketSchemeRequest
 } from './model';
 
 import { customFetch } from '../lib/fetcher';
@@ -678,6 +680,168 @@ export const useDeleteAccessKey = <TError = ErrorResponse,
       > => {
 
       const mutationOptions = getDeleteAccessKeyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * The bucket's effective replication scheme, its explicit override (empty when the bucket follows the cluster default) and the cluster default. Returns 404 when the bucket does not exist and 501 when the server is not in cluster mode (a single-node server has no per-bucket schemes).
+
+ * @summary Get a bucket's replication scheme
+ */
+export const getBucketScheme = (
+    bucket: string,
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<BucketScheme>(
+      {url: `/api/v1/buckets/${bucket}/scheme`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetBucketSchemeQueryKey = (bucket?: string,) => {
+    return [
+    `/api/v1/buckets/${bucket}/scheme`
+    ] as const;
+    }
+
+    
+export const getGetBucketSchemeQueryOptions = <TData = Awaited<ReturnType<typeof getBucketScheme>>, TError = ErrorResponse>(bucket: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketScheme>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBucketSchemeQueryKey(bucket);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBucketScheme>>> = ({ signal }) => getBucketScheme(bucket, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bucket), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBucketScheme>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetBucketSchemeQueryResult = NonNullable<Awaited<ReturnType<typeof getBucketScheme>>>
+export type GetBucketSchemeQueryError = ErrorResponse
+
+
+export function useGetBucketScheme<TData = Awaited<ReturnType<typeof getBucketScheme>>, TError = ErrorResponse>(
+ bucket: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketScheme>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBucketScheme>>,
+          TError,
+          Awaited<ReturnType<typeof getBucketScheme>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBucketScheme<TData = Awaited<ReturnType<typeof getBucketScheme>>, TError = ErrorResponse>(
+ bucket: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketScheme>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBucketScheme>>,
+          TError,
+          Awaited<ReturnType<typeof getBucketScheme>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBucketScheme<TData = Awaited<ReturnType<typeof getBucketScheme>>, TError = ErrorResponse>(
+ bucket: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketScheme>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get a bucket's replication scheme
+ */
+
+export function useGetBucketScheme<TData = Awaited<ReturnType<typeof getBucketScheme>>, TError = ErrorResponse>(
+ bucket: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketScheme>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetBucketSchemeQueryOptions(bucket,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Override the bucket's replication scheme, or clear the override to restore the cluster default. The scheme must parse ("rf2.5", "rf3" or "ec:k,m") and the current topology must be able to host it. The change affects new writes cluster-wide within seconds; existing objects convert through repair/rebalance. Returns the effective scheme after applying. Returns 400 when the scheme is invalid or the topology cannot host it, 404 when the bucket does not exist and 501 when the server is not in cluster mode.
+
+ * @summary Set or clear a bucket's replication scheme
+ */
+export const setBucketScheme = (
+    bucket: string,
+    setBucketSchemeRequest: SetBucketSchemeRequest,
+ ) => {
+      
+      
+      return customFetch<BucketScheme>(
+      {url: `/api/v1/buckets/${bucket}/scheme`, method: 'PUT',
+      headers: {'Content-Type': 'application/json', },
+      data: setBucketSchemeRequest
+    },
+      );
+    }
+  
+
+
+export const getSetBucketSchemeMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setBucketScheme>>, TError,{bucket: string;data: SetBucketSchemeRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof setBucketScheme>>, TError,{bucket: string;data: SetBucketSchemeRequest}, TContext> => {
+
+const mutationKey = ['setBucketScheme'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setBucketScheme>>, {bucket: string;data: SetBucketSchemeRequest}> = (props) => {
+          const {bucket,data} = props ?? {};
+
+          return  setBucketScheme(bucket,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetBucketSchemeMutationResult = NonNullable<Awaited<ReturnType<typeof setBucketScheme>>>
+    export type SetBucketSchemeMutationBody = SetBucketSchemeRequest
+    export type SetBucketSchemeMutationError = ErrorResponse
+
+    /**
+ * @summary Set or clear a bucket's replication scheme
+ */
+export const useSetBucketScheme = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setBucketScheme>>, TError,{bucket: string;data: SetBucketSchemeRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setBucketScheme>>,
+        TError,
+        {bucket: string;data: SetBucketSchemeRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getSetBucketSchemeMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

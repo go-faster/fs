@@ -44,6 +44,17 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 	return ht.ErrNotImplemented
 }
 
+// GetBucketScheme implements getBucketScheme operation.
+//
+// The bucket's effective replication scheme, its explicit override (empty when the bucket follows the
+// cluster default) and the cluster default. Returns 404 when the bucket does not exist and 501 when
+// the server is not in cluster mode (a single-node server has no per-bucket schemes).
+//
+// GET /api/v1/buckets/{bucket}/scheme
+func (UnimplementedHandler) GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (r *BucketScheme, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetClusterStatus implements getClusterStatus operation.
 //
 // Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
@@ -94,6 +105,20 @@ func (UnimplementedHandler) ListAccessKeys(ctx context.Context) (r *AccessKeyLis
 //
 // POST /api/v1/reload
 func (UnimplementedHandler) ReloadConfig(ctx context.Context) (r *ReloadResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetBucketScheme implements setBucketScheme operation.
+//
+// Override the bucket's replication scheme, or clear the override to restore the cluster default. The
+// scheme must parse ("rf2.5", "rf3" or "ec:k,m") and the current topology must be able to host it. The
+// change affects new writes cluster-wide within seconds; existing objects convert through
+// repair/rebalance. Returns the effective scheme after applying. Returns 400 when the scheme is
+// invalid or the topology cannot host it, 404 when the bucket does not exist and 501 when the server
+// is not in cluster mode.
+//
+// PUT /api/v1/buckets/{bucket}/scheme
+func (UnimplementedHandler) SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (r *BucketScheme, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

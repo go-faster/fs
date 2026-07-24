@@ -77,6 +77,70 @@ func (s *AccessKeyList) SetKeys(val []AccessKey) {
 	s.Keys = val
 }
 
+// A bucket's effective replication scheme and whether it overrides the cluster default.
+// Ref: #/components/schemas/BucketScheme
+type BucketScheme struct {
+	Bucket string `json:"bucket"`
+	// The effective scheme: the override when set, otherwise the cluster default.
+	Scheme string `json:"scheme"`
+	// The explicit override; empty when the bucket follows the cluster default.
+	Override OptString `json:"override"`
+	// The cluster default scheme, applied to buckets without an override.
+	ClusterDefault string `json:"cluster_default"`
+	// True when the bucket has no override and follows the cluster default.
+	IsDefault bool `json:"is_default"`
+}
+
+// GetBucket returns the value of Bucket.
+func (s *BucketScheme) GetBucket() string {
+	return s.Bucket
+}
+
+// GetScheme returns the value of Scheme.
+func (s *BucketScheme) GetScheme() string {
+	return s.Scheme
+}
+
+// GetOverride returns the value of Override.
+func (s *BucketScheme) GetOverride() OptString {
+	return s.Override
+}
+
+// GetClusterDefault returns the value of ClusterDefault.
+func (s *BucketScheme) GetClusterDefault() string {
+	return s.ClusterDefault
+}
+
+// GetIsDefault returns the value of IsDefault.
+func (s *BucketScheme) GetIsDefault() bool {
+	return s.IsDefault
+}
+
+// SetBucket sets the value of Bucket.
+func (s *BucketScheme) SetBucket(val string) {
+	s.Bucket = val
+}
+
+// SetScheme sets the value of Scheme.
+func (s *BucketScheme) SetScheme(val string) {
+	s.Scheme = val
+}
+
+// SetOverride sets the value of Override.
+func (s *BucketScheme) SetOverride(val OptString) {
+	s.Override = val
+}
+
+// SetClusterDefault sets the value of ClusterDefault.
+func (s *BucketScheme) SetClusterDefault(val string) {
+	s.ClusterDefault = val
+}
+
+// SetIsDefault sets the value of IsDefault.
+func (s *BucketScheme) SetIsDefault(val bool) {
+	s.IsDefault = val
+}
+
 // Ref: #/components/schemas/ClusterDisk
 type ClusterDisk struct {
 	ID string `json:"id"`
@@ -1168,6 +1232,24 @@ func (s *ReloadResult) SetReloaded(val []string) {
 // SetConfigRevision sets the value of ConfigRevision.
 func (s *ReloadResult) SetConfigRevision(val OptString) {
 	s.ConfigRevision = val
+}
+
+// Set or clear a bucket's replication-scheme override.
+// Ref: #/components/schemas/SetBucketSchemeRequest
+type SetBucketSchemeRequest struct {
+	// The scheme override to apply, e.g. "rf3" or "ec:4,2". An empty string (or "default") clears the
+	// override, restoring the cluster default.
+	Scheme OptString `json:"scheme"`
+}
+
+// GetScheme returns the value of Scheme.
+func (s *SetBucketSchemeRequest) GetScheme() OptString {
+	return s.Scheme
+}
+
+// SetScheme sets the value of Scheme.
+func (s *SetBucketSchemeRequest) SetScheme(val OptString) {
+	s.Scheme = val
 }
 
 // Where the credential is defined.

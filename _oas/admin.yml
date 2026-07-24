@@ -157,6 +157,65 @@ paths:
           description: Deleted.
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/buckets/{bucket}/scheme:
+    get:
+      operationId: "getBucketScheme"
+      summary: "Get a bucket's replication scheme"
+      description: >
+        The bucket's effective replication scheme, its explicit override (empty
+        when the bucket follows the cluster default) and the cluster default.
+        Returns 404 when the bucket does not exist and 501 when the server is
+        not in cluster mode (a single-node server has no per-bucket schemes).
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          description: "The bucket name."
+          schema:
+            type: string
+      responses:
+        200:
+          description: Bucket scheme.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/BucketScheme"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: "setBucketScheme"
+      summary: "Set or clear a bucket's replication scheme"
+      description: >
+        Override the bucket's replication scheme, or clear the override to
+        restore the cluster default. The scheme must parse ("rf2.5", "rf3" or
+        "ec:k,m") and the current topology must be able to host it. The change
+        affects new writes cluster-wide within seconds; existing objects
+        convert through repair/rebalance. Returns the effective scheme after
+        applying. Returns 400 when the scheme is invalid or the topology cannot
+        host it, 404 when the bucket does not exist and 501 when the server is
+        not in cluster mode.
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          description: "The bucket name."
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/SetBucketSchemeRequest"
+      responses:
+        200:
+          description: Bucket scheme after applying the change.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/BucketScheme"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   schemas:
     InstanceInfo:
@@ -468,6 +527,42 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClusterNode"
+    BucketScheme:
+      type: object
+      description: "A bucket's effective replication scheme and whether it overrides the cluster default."
+      required:
+        - bucket
+        - scheme
+        - cluster_default
+        - is_default
+      properties:
+        bucket:
+          type: string
+        scheme:
+          type: string
+          description: "The effective scheme: the override when set, otherwise the cluster default."
+          example: "ec:4,2"
+        override:
+          type: string
+          description: "The explicit override; empty when the bucket follows the cluster default."
+        cluster_default:
+          type: string
+          description: "The cluster default scheme, applied to buckets without an override."
+          example: "rf2.5"
+        is_default:
+          type: boolean
+          description: "True when the bucket has no override and follows the cluster default."
+    SetBucketSchemeRequest:
+      type: object
+      description: "Set or clear a bucket's replication-scheme override."
+      properties:
+        scheme:
+          type: string
+          description: >
+            The scheme override to apply, e.g. "rf3" or "ec:4,2". An empty
+            string (or "default") clears the override, restoring the cluster
+            default.
+          example: "ec:4,2"
     Error:
       title: Structured error
       description: Error occurred while processing request
