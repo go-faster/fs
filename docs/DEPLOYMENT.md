@@ -145,7 +145,13 @@ cluster:
 - **Admin API** (credential management + rebalance control) listens separately
   (`admin.addr`, default `localhost:8090`) and requires a bearer token
   (`admin.token` or `FS_ADMIN_TOKEN`). Keep it bound to localhost or behind a
-  proxy.
+  proxy. Every data node serves it, including a cluster-wide status view
+  (`GET /api/v1/cluster/status`: schema version, per-node/-disk/-rack capacity
+  and health, placement skew, rebalance state). `fs admin --config config.yaml`
+  runs the same admin API/dashboard **headless** — a control-plane-only process
+  (no S3 data) that reads cluster status from etcd and drives rebalancing
+  through the cluster-wide election. Credential management is not available on
+  the headless listener (manage access keys on a data node's admin API).
 - **Cluster secret** authenticates all peer traffic (HMAC). Treat it like a
   password; supply it via `FS_CLUSTER_SECRET` / a Kubernetes Secret, not in a
   committed file.

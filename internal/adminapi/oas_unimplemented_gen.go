@@ -44,6 +44,17 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 	return ht.ErrNotImplemented
 }
 
+// GetClusterStatus implements getClusterStatus operation.
+//
+// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
+// and reported capacity, aggregate capacity, placement skew and whether a rebalance is currently
+// running. State is "disabled" when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/status
+func (UnimplementedHandler) GetClusterStatus(ctx context.Context) (r *ClusterStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetInfo implements getInfo operation.
 //
 // Build information, uptime and whether authentication is enabled.

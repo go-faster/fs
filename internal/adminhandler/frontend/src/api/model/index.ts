@@ -9,6 +9,10 @@
 
 export * from './accessKey';
 export * from './accessKeyList';
+export * from './clusterDisk';
+export * from './clusterNode';
+export * from './clusterState';
+export * from './clusterStatus';
 export * from './createAccessKeyRequest';
 export * from './createdAccessKey';
 export * from './error';

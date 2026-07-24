@@ -77,6 +77,303 @@ func (s *AccessKeyList) SetKeys(val []AccessKey) {
 	s.Keys = val
 }
 
+// Ref: #/components/schemas/ClusterDisk
+type ClusterDisk struct {
+	ID string `json:"id"`
+	// Relative placement weight (0 = drained).
+	Weight float64 `json:"weight"`
+	// Reported filesystem size; 0 when the node has not reported capacity.
+	TotalBytes OptInt64 `json:"total_bytes"`
+	FreeBytes  OptInt64 `json:"free_bytes"`
+	// Used fraction (0..1); omitted when capacity is unknown.
+	Fullness OptFloat64 `json:"fullness"`
+}
+
+// GetID returns the value of ID.
+func (s *ClusterDisk) GetID() string {
+	return s.ID
+}
+
+// GetWeight returns the value of Weight.
+func (s *ClusterDisk) GetWeight() float64 {
+	return s.Weight
+}
+
+// GetTotalBytes returns the value of TotalBytes.
+func (s *ClusterDisk) GetTotalBytes() OptInt64 {
+	return s.TotalBytes
+}
+
+// GetFreeBytes returns the value of FreeBytes.
+func (s *ClusterDisk) GetFreeBytes() OptInt64 {
+	return s.FreeBytes
+}
+
+// GetFullness returns the value of Fullness.
+func (s *ClusterDisk) GetFullness() OptFloat64 {
+	return s.Fullness
+}
+
+// SetID sets the value of ID.
+func (s *ClusterDisk) SetID(val string) {
+	s.ID = val
+}
+
+// SetWeight sets the value of Weight.
+func (s *ClusterDisk) SetWeight(val float64) {
+	s.Weight = val
+}
+
+// SetTotalBytes sets the value of TotalBytes.
+func (s *ClusterDisk) SetTotalBytes(val OptInt64) {
+	s.TotalBytes = val
+}
+
+// SetFreeBytes sets the value of FreeBytes.
+func (s *ClusterDisk) SetFreeBytes(val OptInt64) {
+	s.FreeBytes = val
+}
+
+// SetFullness sets the value of Fullness.
+func (s *ClusterDisk) SetFullness(val OptFloat64) {
+	s.Fullness = val
+}
+
+// Ref: #/components/schemas/ClusterNode
+type ClusterNode struct {
+	ID string `json:"id"`
+	// Peer address the node advertises.
+	Addr OptString `json:"addr"`
+	// Failure-domain label.
+	Rack  OptString     `json:"rack"`
+	Disks []ClusterDisk `json:"disks"`
+}
+
+// GetID returns the value of ID.
+func (s *ClusterNode) GetID() string {
+	return s.ID
+}
+
+// GetAddr returns the value of Addr.
+func (s *ClusterNode) GetAddr() OptString {
+	return s.Addr
+}
+
+// GetRack returns the value of Rack.
+func (s *ClusterNode) GetRack() OptString {
+	return s.Rack
+}
+
+// GetDisks returns the value of Disks.
+func (s *ClusterNode) GetDisks() []ClusterDisk {
+	return s.Disks
+}
+
+// SetID sets the value of ID.
+func (s *ClusterNode) SetID(val string) {
+	s.ID = val
+}
+
+// SetAddr sets the value of Addr.
+func (s *ClusterNode) SetAddr(val OptString) {
+	s.Addr = val
+}
+
+// SetRack sets the value of Rack.
+func (s *ClusterNode) SetRack(val OptString) {
+	s.Rack = val
+}
+
+// SetDisks sets the value of Disks.
+func (s *ClusterNode) SetDisks(val []ClusterDisk) {
+	s.Disks = val
+}
+
+// "disabled" when the server is not in cluster mode.
+// Ref: #/components/schemas/ClusterState
+type ClusterState string
+
+const (
+	ClusterStateDisabled ClusterState = "disabled"
+	ClusterStateOk       ClusterState = "ok"
+)
+
+// AllValues returns all ClusterState values.
+func (ClusterState) AllValues() []ClusterState {
+	return []ClusterState{
+		ClusterStateDisabled,
+		ClusterStateOk,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ClusterState) MarshalText() ([]byte, error) {
+	switch s {
+	case ClusterStateDisabled:
+		return []byte(s), nil
+	case ClusterStateOk:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ClusterState) UnmarshalText(data []byte) error {
+	switch ClusterState(data) {
+	case ClusterStateDisabled:
+		*s = ClusterStateDisabled
+		return nil
+	case ClusterStateOk:
+		*s = ClusterStateOk
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ClusterStatus
+type ClusterStatus struct {
+	State ClusterState `json:"state"`
+	// Schema version the cluster has agreed on (etcd).
+	SchemaVersion int `json:"schema_version"`
+	// Schema version this binary implements.
+	BinarySchemaVersion int `json:"binary_schema_version"`
+	NodeCount           int `json:"node_count"`
+	DiskCount           int `json:"disk_count"`
+	// Sum of reported disk capacity across the cluster.
+	TotalBytes int64 `json:"total_bytes"`
+	FreeBytes  int64 `json:"free_bytes"`
+	// Max minus min disk fullness across disks reporting capacity.
+	PlacementSkew float64 `json:"placement_skew"`
+	// Whether a rebalance runner currently holds the cluster-wide election.
+	RebalanceRunning bool `json:"rebalance_running"`
+	// Resume cursor of an in-progress/last rebalance, if any.
+	RebalanceCursorBucket OptString     `json:"rebalance_cursor_bucket"`
+	RebalanceCursorKey    OptString     `json:"rebalance_cursor_key"`
+	Nodes                 []ClusterNode `json:"nodes"`
+}
+
+// GetState returns the value of State.
+func (s *ClusterStatus) GetState() ClusterState {
+	return s.State
+}
+
+// GetSchemaVersion returns the value of SchemaVersion.
+func (s *ClusterStatus) GetSchemaVersion() int {
+	return s.SchemaVersion
+}
+
+// GetBinarySchemaVersion returns the value of BinarySchemaVersion.
+func (s *ClusterStatus) GetBinarySchemaVersion() int {
+	return s.BinarySchemaVersion
+}
+
+// GetNodeCount returns the value of NodeCount.
+func (s *ClusterStatus) GetNodeCount() int {
+	return s.NodeCount
+}
+
+// GetDiskCount returns the value of DiskCount.
+func (s *ClusterStatus) GetDiskCount() int {
+	return s.DiskCount
+}
+
+// GetTotalBytes returns the value of TotalBytes.
+func (s *ClusterStatus) GetTotalBytes() int64 {
+	return s.TotalBytes
+}
+
+// GetFreeBytes returns the value of FreeBytes.
+func (s *ClusterStatus) GetFreeBytes() int64 {
+	return s.FreeBytes
+}
+
+// GetPlacementSkew returns the value of PlacementSkew.
+func (s *ClusterStatus) GetPlacementSkew() float64 {
+	return s.PlacementSkew
+}
+
+// GetRebalanceRunning returns the value of RebalanceRunning.
+func (s *ClusterStatus) GetRebalanceRunning() bool {
+	return s.RebalanceRunning
+}
+
+// GetRebalanceCursorBucket returns the value of RebalanceCursorBucket.
+func (s *ClusterStatus) GetRebalanceCursorBucket() OptString {
+	return s.RebalanceCursorBucket
+}
+
+// GetRebalanceCursorKey returns the value of RebalanceCursorKey.
+func (s *ClusterStatus) GetRebalanceCursorKey() OptString {
+	return s.RebalanceCursorKey
+}
+
+// GetNodes returns the value of Nodes.
+func (s *ClusterStatus) GetNodes() []ClusterNode {
+	return s.Nodes
+}
+
+// SetState sets the value of State.
+func (s *ClusterStatus) SetState(val ClusterState) {
+	s.State = val
+}
+
+// SetSchemaVersion sets the value of SchemaVersion.
+func (s *ClusterStatus) SetSchemaVersion(val int) {
+	s.SchemaVersion = val
+}
+
+// SetBinarySchemaVersion sets the value of BinarySchemaVersion.
+func (s *ClusterStatus) SetBinarySchemaVersion(val int) {
+	s.BinarySchemaVersion = val
+}
+
+// SetNodeCount sets the value of NodeCount.
+func (s *ClusterStatus) SetNodeCount(val int) {
+	s.NodeCount = val
+}
+
+// SetDiskCount sets the value of DiskCount.
+func (s *ClusterStatus) SetDiskCount(val int) {
+	s.DiskCount = val
+}
+
+// SetTotalBytes sets the value of TotalBytes.
+func (s *ClusterStatus) SetTotalBytes(val int64) {
+	s.TotalBytes = val
+}
+
+// SetFreeBytes sets the value of FreeBytes.
+func (s *ClusterStatus) SetFreeBytes(val int64) {
+	s.FreeBytes = val
+}
+
+// SetPlacementSkew sets the value of PlacementSkew.
+func (s *ClusterStatus) SetPlacementSkew(val float64) {
+	s.PlacementSkew = val
+}
+
+// SetRebalanceRunning sets the value of RebalanceRunning.
+func (s *ClusterStatus) SetRebalanceRunning(val bool) {
+	s.RebalanceRunning = val
+}
+
+// SetRebalanceCursorBucket sets the value of RebalanceCursorBucket.
+func (s *ClusterStatus) SetRebalanceCursorBucket(val OptString) {
+	s.RebalanceCursorBucket = val
+}
+
+// SetRebalanceCursorKey sets the value of RebalanceCursorKey.
+func (s *ClusterStatus) SetRebalanceCursorKey(val OptString) {
+	s.RebalanceCursorKey = val
+}
+
+// SetNodes sets the value of Nodes.
+func (s *ClusterStatus) SetNodes(val []ClusterNode) {
+	s.Nodes = val
+}
+
 // Ref: #/components/schemas/CreateAccessKeyRequest
 type CreateAccessKeyRequest struct {
 	// Access key ID; generated when omitted.
@@ -370,6 +667,98 @@ func (o OptDateTime) Get() (v time.Time, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptDateTime) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptFloat64 returns new OptFloat64 with value set to v.
+func NewOptFloat64(v float64) OptFloat64 {
+	return OptFloat64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFloat64 is optional float64.
+type OptFloat64 struct {
+	Value float64
+	Set   bool
+}
+
+// IsSet returns true if OptFloat64 was set.
+func (o OptFloat64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFloat64) Reset() {
+	var v float64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFloat64) SetTo(v float64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFloat64) Get() (v float64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFloat64) Or(d float64) float64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptInt64 returns new OptInt64 with value set to v.
+func NewOptInt64(v int64) OptInt64 {
+	return OptInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt64 is optional int64.
+type OptInt64 struct {
+	Value int64
+	Set   bool
+}
+
+// IsSet returns true if OptInt64 was set.
+func (o OptInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt64) SetTo(v int64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt64) Get() (v int64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt64) Or(d int64) int64 {
 	if v, ok := o.Get(); ok {
 		return v
 	}

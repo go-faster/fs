@@ -62,7 +62,7 @@ func resolveAdminKeysFile(cfg Config, absRoot string) string {
 // runAdminServer serves the admin API and its embedded web dashboard on a
 // separate listener until ctx is canceled. It requires a bearer token on every
 // API request. It returns an error only on a fatal serve failure.
-func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr *auth.Manager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl) error {
+func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr *auth.Manager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl, clusterStatus adminhandler.ClusterStatusSource) error {
 	addr := cfg.Addr
 	if addr == "" {
 		addr = DefaultAdminAddr
@@ -80,11 +80,12 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg A
 	build, _ := buildInfo()
 
 	handler := adminhandler.NewAdminAPI(adminhandler.Options{
-		Manager:     mgr,
-		Build:       adminhandler.BuildInfo{Version: build.Version, Commit: build.Commit},
-		AuthEnabled: authEnabled,
-		StartTime:   start,
-		Rebalance:   rebalance,
+		Manager:       mgr,
+		Build:         adminhandler.BuildInfo{Version: build.Version, Commit: build.Commit},
+		AuthEnabled:   authEnabled,
+		StartTime:     start,
+		Rebalance:     rebalance,
+		ClusterStatus: clusterStatus,
 	})
 
 	s, err := adminapi.NewServer(handler,

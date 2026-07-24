@@ -27,6 +27,7 @@ import type {
 
 import type {
   AccessKeyList,
+  ClusterStatus,
   CreateAccessKeyRequest,
   CreatedAccessKey,
   ErrorResponse,
@@ -457,6 +458,101 @@ export const useControlRebalance = <TError = ErrorResponse,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * Cluster-wide view read from the control plane: the agreed schema version, every node with its disks and reported capacity, aggregate capacity, placement skew and whether a rebalance is currently running. State is "disabled" when the server is not in cluster mode.
+
+ * @summary Cluster-wide status
+ */
+export const getClusterStatus = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ClusterStatus>(
+      {url: `/api/v1/cluster/status`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetClusterStatusQueryKey = () => {
+    return [
+    `/api/v1/cluster/status`
+    ] as const;
+    }
+
+    
+export const getGetClusterStatusQueryOptions = <TData = Awaited<ReturnType<typeof getClusterStatus>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterStatus>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClusterStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClusterStatus>>> = ({ signal }) => getClusterStatus(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClusterStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetClusterStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getClusterStatus>>>
+export type GetClusterStatusQueryError = ErrorResponse
+
+
+export function useGetClusterStatus<TData = Awaited<ReturnType<typeof getClusterStatus>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getClusterStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getClusterStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetClusterStatus<TData = Awaited<ReturnType<typeof getClusterStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getClusterStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getClusterStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetClusterStatus<TData = Awaited<ReturnType<typeof getClusterStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Cluster-wide status
+ */
+
+export function useGetClusterStatus<TData = Awaited<ReturnType<typeof getClusterStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetClusterStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Remove a runtime credential. Config-defined credentials cannot be deleted.
  * @summary Delete an access key

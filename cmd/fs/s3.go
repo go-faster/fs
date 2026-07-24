@@ -292,15 +292,20 @@ Command-line flags override YAML configuration values.`,
 						return errors.New("admin API requires authentication; remove --insecure-no-auth / auth.disabled or disable admin")
 					}
 
-					// Avoid a non-nil interface around a nil controller outside
-					// cluster mode.
-					var rebalance adminhandler.RebalanceControl
+					// Avoid a non-nil interface around a nil controller/source
+					// outside cluster mode.
+					var (
+						rebalance     adminhandler.RebalanceControl
+						clusterStatus adminhandler.ClusterStatusSource
+					)
+
 					if clusterRT != nil {
 						rebalance = clusterRT.rebalance
+						clusterStatus = clusterRT.status
 					}
 
 					grp.Go(func() error {
-						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance)
+						return runAdminServer(grpCtx, lg, t, cfg.Admin, authManager, authStore != nil, startTime, rebalance, clusterStatus)
 					})
 				}
 
