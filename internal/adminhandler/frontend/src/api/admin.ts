@@ -33,6 +33,7 @@ import type {
   CreatedAccessKey,
   ErrorResponse,
   InstanceInfo,
+  MigrationStatus,
   PublicReadBuckets,
   RebalanceControlRequest,
   RebalanceStatus,
@@ -558,6 +559,166 @@ export function useGetClusterStatus<TData = Awaited<ReturnType<typeof getCluster
 
 
 
+/**
+ * The schema version the cluster has agreed on, the version this binary implements, and the migrations still pending between them. State is "disabled" when the server is not in cluster mode.
+
+ * @summary Cluster schema migration status
+ */
+export const getMigrationStatus = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<MigrationStatus>(
+      {url: `/api/v1/cluster/migrate`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetMigrationStatusQueryKey = () => {
+    return [
+    `/api/v1/cluster/migrate`
+    ] as const;
+    }
+
+    
+export const getGetMigrationStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMigrationStatus>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMigrationStatus>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMigrationStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMigrationStatus>>> = ({ signal }) => getMigrationStatus(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMigrationStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMigrationStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getMigrationStatus>>>
+export type GetMigrationStatusQueryError = ErrorResponse
+
+
+export function useGetMigrationStatus<TData = Awaited<ReturnType<typeof getMigrationStatus>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMigrationStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMigrationStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getMigrationStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMigrationStatus<TData = Awaited<ReturnType<typeof getMigrationStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMigrationStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMigrationStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getMigrationStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMigrationStatus<TData = Awaited<ReturnType<typeof getMigrationStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMigrationStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Cluster schema migration status
+ */
+
+export function useGetMigrationStatus<TData = Awaited<ReturnType<typeof getMigrationStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMigrationStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMigrationStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Apply every pending migration in order, under the cluster-wide migrate election, and record the new schema version — the admin-API equivalent of `fs cluster migrate`. Run it once a rolling upgrade has replaced every node's binary; until then the cluster keeps operating at the old schema. Returns 409 when a migration is already running or when the cluster's schema is newer than this binary implements.
+
+ * @summary Apply pending schema migrations
+ */
+export const applyMigrations = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<MigrationStatus>(
+      {url: `/api/v1/cluster/migrate`, method: 'POST', signal
+    },
+      );
+    }
+  
+
+
+export const getApplyMigrationsMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyMigrations>>, TError,void, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof applyMigrations>>, TError,void, TContext> => {
+
+const mutationKey = ['applyMigrations'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyMigrations>>, void> = () => {
+          
+
+          return  applyMigrations()
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyMigrationsMutationResult = NonNullable<Awaited<ReturnType<typeof applyMigrations>>>
+    
+    export type ApplyMigrationsMutationError = ErrorResponse
+
+    /**
+ * @summary Apply pending schema migrations
+ */
+export const useApplyMigrations = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyMigrations>>, TError,void, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyMigrations>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getApplyMigrationsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Re-read the configuration file and apply the parts that change without a restart — the config-defined credentials and grants, the anonymously readable buckets and the TLS certificate — exactly as SIGHUP does. Runtime credentials created through this API are preserved. Returns what was reloaded and the config revision now in effect, so an orchestrator can confirm a config change landed without shelling into the process. Returns 501 on a listener with nothing to reload (the headless cluster admin serves no S3 data).
 

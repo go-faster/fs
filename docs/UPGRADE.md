@@ -57,6 +57,20 @@ fs cluster migrate --config config.yaml --dry-run   # show versions + pending mi
 fs cluster migrate --config config.yaml             # apply them
 ```
 
+The same control is on the admin API, so an orchestrator (or the dashboard's
+schema panel) can drive it without shelling into a node:
+
+```sh
+curl -H "Authorization: Bearer $FS_ADMIN_TOKEN" localhost:8090/api/v1/cluster/migrate
+curl -XPOST -H "Authorization: Bearer $FS_ADMIN_TOKEN" localhost:8090/api/v1/cluster/migrate
+```
+
+`GET` reports the cluster and binary schema versions plus what is pending;
+`POST` applies it. Both are served by every node's admin listener and by the
+headless `fs admin`. A migration expected to run long belongs on the CLI, which
+waits as long as you do — the endpoint bounds one apply at ten minutes (and,
+because migrations are resumable, a later apply continues where it stopped).
+
 At most one migrator runs cluster-wide (etcd election) and the schema version is
 recorded after each migration, so an interrupted run resumes cleanly. Until you
 migrate, the cluster keeps operating at the old schema; a node still too old to

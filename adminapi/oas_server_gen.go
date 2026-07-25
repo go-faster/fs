@@ -8,6 +8,16 @@ import (
 
 // Handler handles operations described by OpenAPI v3 specification.
 type Handler interface {
+	// ApplyMigrations implements applyMigrations operation.
+	//
+	// Apply every pending migration in order, under the cluster-wide migrate election, and record the new
+	// schema version — the admin-API equivalent of `fs cluster migrate`. Run it once a rolling upgrade
+	// has replaced every node's binary; until then the cluster keeps operating at the old schema. Returns
+	// 409 when a migration is already running or when the cluster's schema is newer than this binary
+	// implements.
+	//
+	// POST /api/v1/cluster/migrate
+	ApplyMigrations(ctx context.Context) (*MigrationStatus, error)
 	// ControlRebalance implements controlRebalance operation.
 	//
 	// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
@@ -52,6 +62,13 @@ type Handler interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetMigrationStatus implements getMigrationStatus operation.
+	//
+	// The schema version the cluster has agreed on, the version this binary implements, and the migrations
+	// still pending between them. State is "disabled" when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/migrate
+	GetMigrationStatus(ctx context.Context) (*MigrationStatus, error)
 	// GetPublicReadBuckets implements getPublicReadBuckets operation.
 	//
 	// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with

@@ -14,7 +14,10 @@
 //
 // The transport is deliberately dumb: it moves named fragment payloads to and
 // from a node-local Store, one disk namespace per request. Placement, quorum,
-// repair and metadata all live above it (clusterstore).
+// repair and metadata all live above it (clusterstore). One non-fragment op
+// rides along under the same auth: GET /v1/status returns the node's live
+// runtime state (queue depths, runner progress, scrub totals) as a signed JSON
+// document, so an admin can aggregate what only a running process knows.
 package transport
 
 import "github.com/go-faster/errors"
@@ -50,4 +53,7 @@ var (
 	ErrUnauthorized = errors.New("cluster auth failed")
 	// ErrChecksumMismatch reports a payload whose digest did not match.
 	ErrChecksumMismatch = errors.New("fragment checksum mismatch")
+	// ErrUnsupported reports an operation the peer does not serve — an older
+	// binary during a rolling upgrade, or a node that reports no live state.
+	ErrUnsupported = errors.New("operation not supported by peer")
 )

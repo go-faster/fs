@@ -32,6 +32,7 @@ type clusterRuntime struct {
 	repairer  *clusterstore.Repairer
 	rebalance *rebalanceController
 	status    *clusterStatusSource
+	migrate   *migrateController
 	listener  net.Listener
 	addr      string
 	lg        *zap.Logger
@@ -39,6 +40,9 @@ type clusterRuntime struct {
 	coord     *clusterstore.Coordinator
 	nodeID    cluster.NodeID
 	schemeID  string
+	// version and started stamp the live state this node reports to peers.
+	version string
+	started time.Time
 
 	// client and etcdCfg are the control-plane handle, exposed so the S3 server
 	// can back etcd-sourced credentials (auth.source: etcd) on this same node.
@@ -130,10 +134,14 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		return nil, errors.Wrap(err, "cluster disk store")
 	}
 
+	build := buildInfo()
+
 	rt := &clusterRuntime{
 		lg:       lg,
 		nodeID:   cluster.NodeID(cfg.ClusterNodeID()),
 		schemeID: defaultScheme.String(),
+		version:  build.Version,
+		started:  time.Now(),
 	}
 
 	// Bind the peer listener BEFORE registering in etcd: the moment the node
@@ -265,10 +273,15 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// as `fs cluster rebalance`, using this node's repairer. Its runs are
 	// bounded by ctx (the server lifetime).
 	rt.rebalance = newRebalanceController(ctx, lg, client, etcdCfg, coord, rt.repairer, string(rt.nodeID)+"/admin")
-	rt.status = newClusterStatusSource(coord, client, etcdCfg)
+	rt.status = newClusterStatusSource(coord, client, etcdCfg, newPeerStatus(rt.nodeID, secret))
+	rt.migrate = newMigrateController(client, etcdCfg, string(rt.nodeID)+"/admin",
+		clusterMigrations(migrationDeps{client: client, etcdCfg: etcdCfg, coord: coord}))
 
+	// The node serves its own live runtime state to peers alongside fragments:
+	// it is what an admin — on any node or headless — aggregates into the
+	// cluster-wide view.
 	rt.server = &http.Server{
-		Handler:           transport.NewServer(store, secret),
+		Handler:           transport.NewServer(store, secret, transport.WithStatus(rt.nodeStatus)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

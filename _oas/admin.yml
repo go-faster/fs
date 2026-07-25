@@ -118,6 +118,42 @@ paths:
                 $ref: "#/components/schemas/ClusterStatus"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/migrate:
+    get:
+      operationId: "getMigrationStatus"
+      summary: "Cluster schema migration status"
+      description: >
+        The schema version the cluster has agreed on, the version this binary
+        implements, and the migrations still pending between them. State is
+        "disabled" when the server is not in cluster mode.
+      responses:
+        200:
+          description: Migration status.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MigrationStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: "applyMigrations"
+      summary: "Apply pending schema migrations"
+      description: >
+        Apply every pending migration in order, under the cluster-wide migrate
+        election, and record the new schema version — the admin-API equivalent
+        of `fs cluster migrate`. Run it once a rolling upgrade has replaced
+        every node's binary; until then the cluster keeps operating at the old
+        schema. Returns 409 when a migration is already running or when the
+        cluster's schema is newer than this binary implements.
+      responses:
+        200:
+          description: Status after applying the pending migrations.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MigrationStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/reload:
     post:
       operationId: "reloadConfig"
@@ -513,6 +549,87 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClusterDisk"
+        live:
+          $ref: "#/components/schemas/ClusterNodeLive"
+        live_error:
+          type: string
+          description: >
+            Why live state is missing for this node: unreachable, or running a
+            binary that does not serve it.
+    ClusterNodeLive:
+      type: object
+      description: >
+        A node's live runtime state, fetched from the node itself over the peer
+        transport — what only the running process knows, as opposed to the
+        control-plane state in etcd.
+      required:
+        - repair_queue_depth
+        - rebalance_state
+        - rebalance_objects
+        - rebalance_relocated
+        - rebalance_failed
+        - scrub_passes
+        - scrub_objects
+        - scrub_repaired
+        - scrub_failed
+        - rebuilt_fragments
+        - swept_stale
+        - corrupt_replicas
+        - converted_objects
+        - ec_unverified
+      properties:
+        version:
+          type: string
+          description: "The node's binary version — a half-upgraded cluster shows mixed values."
+        schema_version:
+          type: integer
+          description: "Schema version the node's binary implements."
+        uptime_seconds:
+          type: number
+          format: double
+        repair_queue_depth:
+          type: integer
+          description: "Objects with pending async replication/repair work on the node."
+        rebalance_state:
+          $ref: "#/components/schemas/RebalanceState"
+        rebalance_objects:
+          type: integer
+        rebalance_relocated:
+          type: integer
+        rebalance_failed:
+          type: integer
+        rebalance_error:
+          type: string
+        scrub_passes:
+          type: integer
+          format: int64
+        scrub_objects:
+          type: integer
+          format: int64
+        scrub_repaired:
+          type: integer
+          format: int64
+        scrub_failed:
+          type: integer
+          format: int64
+        rebuilt_fragments:
+          type: integer
+          format: int64
+          description: "Fragments rebuilt by scrubs on the node (repair lag indicator)."
+        swept_stale:
+          type: integer
+          format: int64
+        corrupt_replicas:
+          type: integer
+          format: int64
+          description: "Replica payloads that failed checksum verification (bit-rot)."
+        converted_objects:
+          type: integer
+          format: int64
+          description: "Objects rewritten to their bucket's current scheme."
+        ec_unverified:
+          type: boolean
+          description: "The node's last scrub pass saw an EC set failing parity verification."
     ClusterState:
       type: string
       enum:
@@ -531,6 +648,9 @@ components:
         - free_bytes
         - placement_skew
         - rebalance_running
+        - repair_queue_depth
+        - nodes_reporting
+        - nodes_not_reporting
         - nodes
       properties:
         state:
@@ -564,10 +684,74 @@ components:
           description: "Resume cursor of an in-progress/last rebalance, if any."
         rebalance_cursor_key:
           type: string
+        repair_queue_depth:
+          type: integer
+          description: >
+            Pending async replication/repair work summed over the nodes that
+            reported live state.
+        nodes_reporting:
+          type: integer
+          description: "Nodes that answered the live-state request."
+        nodes_not_reporting:
+          type: integer
+          description: >
+            Nodes that did not answer: unreachable, or running a binary that
+            does not serve live state.
         nodes:
           type: array
           items:
             $ref: "#/components/schemas/ClusterNode"
+    Migration:
+      type: object
+      description: "A pending schema migration."
+      required:
+        - version
+        - description
+      properties:
+        version:
+          type: integer
+          description: "Schema version this migration produces."
+        description:
+          type: string
+    MigrationStatus:
+      type: object
+      description: "Cluster schema state and the migrations pending between cluster and binary."
+      required:
+        - state
+        - cluster_schema_version
+        - binary_schema_version
+        - up_to_date
+        - running
+        - pending
+      properties:
+        state:
+          $ref: "#/components/schemas/ClusterState"
+        cluster_schema_version:
+          type: integer
+          description: >
+            Schema version the cluster has agreed on; 0 when none is recorded
+            yet (no node has joined).
+        binary_schema_version:
+          type: integer
+          description: "Schema version this binary implements."
+        up_to_date:
+          type: boolean
+          description: "True when nothing is pending: the cluster is at the binary's schema version."
+        running:
+          type: boolean
+          description: "True while this process is applying migrations."
+        pending:
+          type: array
+          items:
+            $ref: "#/components/schemas/Migration"
+        last_applied:
+          type: array
+          description: "Versions applied by the most recent run on this process."
+          items:
+            type: integer
+        last_error:
+          type: string
+          description: "Why the most recent run on this process failed."
     BucketScheme:
       type: object
       description: "A bucket's effective replication scheme and whether it overrides the cluster default."

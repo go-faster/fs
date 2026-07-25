@@ -1,0 +1,29 @@
+# The etcd control plane fs stores its cluster state in — topology, node
+# leases, placement and (with auth.source etcd) sealed runtime credentials.
+#
+# fs-operator never manages etcd: FSCluster only takes external endpoints. Here
+# etcd is managed by the official etcd-operator (etcd-io/etcd-operator), so the
+# dev setup exercises the same "someone else runs etcd" shape as production.
+#
+# The etcd-operator creates a headless Service named after the EtcdCluster, so
+# the members get stable DNS:
+#
+#   etcd-{0,1,2}.etcd.fs-dev.svc:2379
+#
+# which is exactly what 20-fscluster.yaml points spec.etcd.external.endpoints
+# at. Renaming this resource or its namespace means editing those endpoints.
+apiVersion: operator.etcd.io/v1alpha1
+kind: EtcdCluster
+metadata:
+  name: etcd
+  namespace: fs-dev
+spec:
+  # Three members: the smallest cluster that has a real quorum, so losing one
+  # member is survivable and leader election is genuinely exercised.
+  size: 3
+  version: v3.6.1
+  storageSpec:
+    accessModes: ReadWriteOnce
+    # kind's default StorageClass (rancher.io/local-path) provisions this from
+    # the worker's disk; storageClassName is left unset to use it.
+    volumeSizeRequest: 1Gi

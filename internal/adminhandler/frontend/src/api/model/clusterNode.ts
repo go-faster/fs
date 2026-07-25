@@ -7,6 +7,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ClusterDisk } from './clusterDisk';
+import type { ClusterNodeLive } from './clusterNodeLive';
 
 export interface ClusterNode {
   id: string;
@@ -15,4 +16,8 @@ export interface ClusterNode {
   /** Failure-domain label. */
   rack?: string;
   disks: ClusterDisk[];
+  live?: ClusterNodeLive;
+  /** Why live state is missing for this node: unreachable, or running a binary that does not serve it.
+ */
+  live_error?: string;
 }

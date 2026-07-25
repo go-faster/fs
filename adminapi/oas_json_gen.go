@@ -635,13 +635,27 @@ func (s *ClusterNode) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		if s.Live.Set {
+			e.FieldStart("live")
+			s.Live.Encode(e)
+		}
+	}
+	{
+		if s.LiveError.Set {
+			e.FieldStart("live_error")
+			s.LiveError.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfClusterNode = [4]string{
+var jsonFieldsNameOfClusterNode = [6]string{
 	0: "id",
 	1: "addr",
 	2: "rack",
 	3: "disks",
+	4: "live",
+	5: "live_error",
 }
 
 // Decode decodes ClusterNode from json.
@@ -703,6 +717,26 @@ func (s *ClusterNode) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"disks\"")
 			}
+		case "live":
+			if err := func() error {
+				s.Live.Reset()
+				if err := s.Live.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"live\"")
+			}
+		case "live_error":
+			if err := func() error {
+				s.LiveError.Reset()
+				if err := s.LiveError.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"live_error\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -755,6 +789,391 @@ func (s *ClusterNode) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ClusterNode) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ClusterNodeLive) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ClusterNodeLive) encodeFields(e *jx.Encoder) {
+	{
+		if s.Version.Set {
+			e.FieldStart("version")
+			s.Version.Encode(e)
+		}
+	}
+	{
+		if s.SchemaVersion.Set {
+			e.FieldStart("schema_version")
+			s.SchemaVersion.Encode(e)
+		}
+	}
+	{
+		if s.UptimeSeconds.Set {
+			e.FieldStart("uptime_seconds")
+			s.UptimeSeconds.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("repair_queue_depth")
+		e.Int(s.RepairQueueDepth)
+	}
+	{
+		e.FieldStart("rebalance_state")
+		s.RebalanceState.Encode(e)
+	}
+	{
+		e.FieldStart("rebalance_objects")
+		e.Int(s.RebalanceObjects)
+	}
+	{
+		e.FieldStart("rebalance_relocated")
+		e.Int(s.RebalanceRelocated)
+	}
+	{
+		e.FieldStart("rebalance_failed")
+		e.Int(s.RebalanceFailed)
+	}
+	{
+		if s.RebalanceError.Set {
+			e.FieldStart("rebalance_error")
+			s.RebalanceError.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("scrub_passes")
+		e.Int64(s.ScrubPasses)
+	}
+	{
+		e.FieldStart("scrub_objects")
+		e.Int64(s.ScrubObjects)
+	}
+	{
+		e.FieldStart("scrub_repaired")
+		e.Int64(s.ScrubRepaired)
+	}
+	{
+		e.FieldStart("scrub_failed")
+		e.Int64(s.ScrubFailed)
+	}
+	{
+		e.FieldStart("rebuilt_fragments")
+		e.Int64(s.RebuiltFragments)
+	}
+	{
+		e.FieldStart("swept_stale")
+		e.Int64(s.SweptStale)
+	}
+	{
+		e.FieldStart("corrupt_replicas")
+		e.Int64(s.CorruptReplicas)
+	}
+	{
+		e.FieldStart("converted_objects")
+		e.Int64(s.ConvertedObjects)
+	}
+	{
+		e.FieldStart("ec_unverified")
+		e.Bool(s.EcUnverified)
+	}
+}
+
+var jsonFieldsNameOfClusterNodeLive = [18]string{
+	0:  "version",
+	1:  "schema_version",
+	2:  "uptime_seconds",
+	3:  "repair_queue_depth",
+	4:  "rebalance_state",
+	5:  "rebalance_objects",
+	6:  "rebalance_relocated",
+	7:  "rebalance_failed",
+	8:  "rebalance_error",
+	9:  "scrub_passes",
+	10: "scrub_objects",
+	11: "scrub_repaired",
+	12: "scrub_failed",
+	13: "rebuilt_fragments",
+	14: "swept_stale",
+	15: "corrupt_replicas",
+	16: "converted_objects",
+	17: "ec_unverified",
+}
+
+// Decode decodes ClusterNodeLive from json.
+func (s *ClusterNodeLive) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ClusterNodeLive to nil")
+	}
+	var requiredBitSet [3]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "version":
+			if err := func() error {
+				s.Version.Reset()
+				if err := s.Version.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"version\"")
+			}
+		case "schema_version":
+			if err := func() error {
+				s.SchemaVersion.Reset()
+				if err := s.SchemaVersion.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"schema_version\"")
+			}
+		case "uptime_seconds":
+			if err := func() error {
+				s.UptimeSeconds.Reset()
+				if err := s.UptimeSeconds.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"uptime_seconds\"")
+			}
+		case "repair_queue_depth":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Int()
+				s.RepairQueueDepth = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"repair_queue_depth\"")
+			}
+		case "rebalance_state":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.RebalanceState.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rebalance_state\"")
+			}
+		case "rebalance_objects":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				v, err := d.Int()
+				s.RebalanceObjects = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rebalance_objects\"")
+			}
+		case "rebalance_relocated":
+			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				v, err := d.Int()
+				s.RebalanceRelocated = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rebalance_relocated\"")
+			}
+		case "rebalance_failed":
+			requiredBitSet[0] |= 1 << 7
+			if err := func() error {
+				v, err := d.Int()
+				s.RebalanceFailed = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rebalance_failed\"")
+			}
+		case "rebalance_error":
+			if err := func() error {
+				s.RebalanceError.Reset()
+				if err := s.RebalanceError.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rebalance_error\"")
+			}
+		case "scrub_passes":
+			requiredBitSet[1] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int64()
+				s.ScrubPasses = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scrub_passes\"")
+			}
+		case "scrub_objects":
+			requiredBitSet[1] |= 1 << 2
+			if err := func() error {
+				v, err := d.Int64()
+				s.ScrubObjects = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scrub_objects\"")
+			}
+		case "scrub_repaired":
+			requiredBitSet[1] |= 1 << 3
+			if err := func() error {
+				v, err := d.Int64()
+				s.ScrubRepaired = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scrub_repaired\"")
+			}
+		case "scrub_failed":
+			requiredBitSet[1] |= 1 << 4
+			if err := func() error {
+				v, err := d.Int64()
+				s.ScrubFailed = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scrub_failed\"")
+			}
+		case "rebuilt_fragments":
+			requiredBitSet[1] |= 1 << 5
+			if err := func() error {
+				v, err := d.Int64()
+				s.RebuiltFragments = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rebuilt_fragments\"")
+			}
+		case "swept_stale":
+			requiredBitSet[1] |= 1 << 6
+			if err := func() error {
+				v, err := d.Int64()
+				s.SweptStale = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"swept_stale\"")
+			}
+		case "corrupt_replicas":
+			requiredBitSet[1] |= 1 << 7
+			if err := func() error {
+				v, err := d.Int64()
+				s.CorruptReplicas = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"corrupt_replicas\"")
+			}
+		case "converted_objects":
+			requiredBitSet[2] |= 1 << 0
+			if err := func() error {
+				v, err := d.Int64()
+				s.ConvertedObjects = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"converted_objects\"")
+			}
+		case "ec_unverified":
+			requiredBitSet[2] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.EcUnverified = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ec_unverified\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ClusterNodeLive")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [3]uint8{
+		0b11111000,
+		0b11111110,
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfClusterNodeLive) {
+					name = jsonFieldsNameOfClusterNodeLive[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ClusterNodeLive) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ClusterNodeLive) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -857,6 +1276,18 @@ func (s *ClusterStatus) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		e.FieldStart("repair_queue_depth")
+		e.Int(s.RepairQueueDepth)
+	}
+	{
+		e.FieldStart("nodes_reporting")
+		e.Int(s.NodesReporting)
+	}
+	{
+		e.FieldStart("nodes_not_reporting")
+		e.Int(s.NodesNotReporting)
+	}
+	{
 		e.FieldStart("nodes")
 		e.ArrStart()
 		for _, elem := range s.Nodes {
@@ -866,7 +1297,7 @@ func (s *ClusterStatus) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfClusterStatus = [12]string{
+var jsonFieldsNameOfClusterStatus = [15]string{
 	0:  "state",
 	1:  "schema_version",
 	2:  "binary_schema_version",
@@ -878,7 +1309,10 @@ var jsonFieldsNameOfClusterStatus = [12]string{
 	8:  "rebalance_running",
 	9:  "rebalance_cursor_bucket",
 	10: "rebalance_cursor_key",
-	11: "nodes",
+	11: "repair_queue_depth",
+	12: "nodes_reporting",
+	13: "nodes_not_reporting",
+	14: "nodes",
 }
 
 // Decode decodes ClusterStatus from json.
@@ -1016,8 +1450,44 @@ func (s *ClusterStatus) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"rebalance_cursor_key\"")
 			}
-		case "nodes":
+		case "repair_queue_depth":
 			requiredBitSet[1] |= 1 << 3
+			if err := func() error {
+				v, err := d.Int()
+				s.RepairQueueDepth = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"repair_queue_depth\"")
+			}
+		case "nodes_reporting":
+			requiredBitSet[1] |= 1 << 4
+			if err := func() error {
+				v, err := d.Int()
+				s.NodesReporting = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nodes_reporting\"")
+			}
+		case "nodes_not_reporting":
+			requiredBitSet[1] |= 1 << 5
+			if err := func() error {
+				v, err := d.Int()
+				s.NodesNotReporting = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nodes_not_reporting\"")
+			}
+		case "nodes":
+			requiredBitSet[1] |= 1 << 6
 			if err := func() error {
 				s.Nodes = make([]ClusterNode, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1045,7 +1515,7 @@ func (s *ClusterStatus) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00001001,
+		0b01111001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1828,6 +2298,388 @@ func (s *InstanceInfo) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode implements json.Marshaler.
+func (s *Migration) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *Migration) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("version")
+		e.Int(s.Version)
+	}
+	{
+		e.FieldStart("description")
+		e.Str(s.Description)
+	}
+}
+
+var jsonFieldsNameOfMigration = [2]string{
+	0: "version",
+	1: "description",
+}
+
+// Decode decodes Migration from json.
+func (s *Migration) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode Migration to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "version":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Int()
+				s.Version = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"version\"")
+			}
+		case "description":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Description = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"description\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode Migration")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigration) {
+					name = jsonFieldsNameOfMigration[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *Migration) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *Migration) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationStatus) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationStatus) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("state")
+		s.State.Encode(e)
+	}
+	{
+		e.FieldStart("cluster_schema_version")
+		e.Int(s.ClusterSchemaVersion)
+	}
+	{
+		e.FieldStart("binary_schema_version")
+		e.Int(s.BinarySchemaVersion)
+	}
+	{
+		e.FieldStart("up_to_date")
+		e.Bool(s.UpToDate)
+	}
+	{
+		e.FieldStart("running")
+		e.Bool(s.Running)
+	}
+	{
+		e.FieldStart("pending")
+		e.ArrStart()
+		for _, elem := range s.Pending {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		if s.LastApplied != nil {
+			e.FieldStart("last_applied")
+			e.ArrStart()
+			for _, elem := range s.LastApplied {
+				e.Int(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.LastError.Set {
+			e.FieldStart("last_error")
+			s.LastError.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfMigrationStatus = [8]string{
+	0: "state",
+	1: "cluster_schema_version",
+	2: "binary_schema_version",
+	3: "up_to_date",
+	4: "running",
+	5: "pending",
+	6: "last_applied",
+	7: "last_error",
+}
+
+// Decode decodes MigrationStatus from json.
+func (s *MigrationStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationStatus to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "state":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.State.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"state\"")
+			}
+		case "cluster_schema_version":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int()
+				s.ClusterSchemaVersion = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"cluster_schema_version\"")
+			}
+		case "binary_schema_version":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Int()
+				s.BinarySchemaVersion = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"binary_schema_version\"")
+			}
+		case "up_to_date":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Bool()
+				s.UpToDate = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"up_to_date\"")
+			}
+		case "running":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Bool()
+				s.Running = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"running\"")
+			}
+		case "pending":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				s.Pending = make([]Migration, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem Migration
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Pending = append(s.Pending, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"pending\"")
+			}
+		case "last_applied":
+			if err := func() error {
+				s.LastApplied = make([]int, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem int
+					v, err := d.Int()
+					elem = int(v)
+					if err != nil {
+						return err
+					}
+					s.LastApplied = append(s.LastApplied, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"last_applied\"")
+			}
+		case "last_error":
+			if err := func() error {
+				s.LastError.Reset()
+				if err := s.LastError.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"last_error\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationStatus")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00111111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationStatus) {
+					name = jsonFieldsNameOfMigrationStatus[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ClusterNodeLive as json.
+func (o OptClusterNodeLive) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ClusterNodeLive from json.
+func (o *OptClusterNodeLive) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptClusterNodeLive to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptClusterNodeLive) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptClusterNodeLive) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes time.Time as json.
 func (o OptDateTime) Encode(e *jx.Encoder, format func(*jx.Encoder, time.Time)) {
 	if !o.Set {
@@ -1894,6 +2746,41 @@ func (s OptFloat64) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptFloat64) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int as json.
+func (o OptInt) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Int(int(o.Value))
+}
+
+// Decode decodes int from json.
+func (o *OptInt) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptInt to nil")
+	}
+	o.Set = true
+	v, err := d.Int()
+	if err != nil {
+		return err
+	}
+	o.Value = int(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptInt) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptInt) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

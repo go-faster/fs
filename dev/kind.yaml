@@ -1,0 +1,24 @@
+# A kind cluster shaped for the clustered fs dev setup: one control plane and
+# three workers, each labelled as its own availability zone.
+#
+# The zones are what makes this more than a toy. fs places object copies across
+# failure domains, and the operator pins each FSCluster rack to a
+# topology.kubernetes.io/zone value with required node affinity — so the three
+# racks in manifests/20-fscluster.yaml land on three distinct workers, and the
+# default rf2.5 scheme (which needs three domains) is actually placeable.
+#
+# Used by `make cluster`; see README.md.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: fs-dev
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-a
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-b
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-c

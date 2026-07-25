@@ -9,16 +9,32 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/go-faster/fs/clusterstore"
 	"github.com/go-faster/fs/internal/cluster/etcd"
 )
+
+// migrationDeps is the cluster access a schema migration may need: the control
+// plane and a coordinator over the cluster's data. Both the disk-less operator
+// client (`fs cluster migrate`, `fs admin`) and a running node can provide it,
+// so migrations run identically wherever they are triggered from.
+type migrationDeps struct {
+	client  *clientv3.Client
+	etcdCfg etcd.Config
+	coord   *clusterstore.Coordinator
+}
+
+// deps is the migration access this operator client provides.
+func (c *clusterClient) deps() migrationDeps {
+	return migrationDeps{client: c.client, etcdCfg: c.etcdCfg, coord: c.coord}
+}
 
 // clusterMigrations is the ordered set of schema migrations this binary knows
 // how to apply. It is empty at schema v1 (the founding version); each future
 // incompatible change to the on-disk or etcd format adds a Migration whose
-// Version() is the new etcd.SchemaVersion. cl gives migrations access to the
-// cluster (etcd client, coordinator) they need.
-func clusterMigrations(_ *clusterClient) []etcd.Migration {
+// Version() is the new etcd.SchemaVersion.
+func clusterMigrations(_ migrationDeps) []etcd.Migration {
 	return nil
 }
 
@@ -88,7 +104,7 @@ func runMigrate(ctx context.Context, out io.Writer, cfg Config, dryRun bool) err
 		return nil
 	}
 
-	migrations := clusterMigrations(cl)
+	migrations := clusterMigrations(cl.deps())
 
 	var pending []etcd.Migration
 

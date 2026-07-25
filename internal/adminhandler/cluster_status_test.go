@@ -70,6 +70,51 @@ func TestClusterStatusMapsAndAggregates(t *testing.T) {
 	assert.False(t, st.Nodes[1].Disks[1].Fullness.Set)
 }
 
+// TestClusterStatusCarriesLiveState: live state reported by the nodes lands on
+// each node and in the cluster aggregates, and a node that did not report is
+// counted as such instead of silently reading as an idle, empty node.
+func TestClusterStatusCarriesLiveState(t *testing.T) {
+	src := stubClusterStatus{st: ClusterStatus{
+		Nodes: []ClusterNode{
+			{ID: "n0", Live: &NodeLive{
+				Version:          "v1.2.3",
+				SchemaVersion:    1,
+				UptimeSeconds:    30,
+				RepairQueueDepth: 4,
+				RebalanceState:   RebalanceRunning,
+				RebalanceObjects: 10,
+				RebuiltFragments: 2,
+				CorruptReplicas:  1,
+				ECUnverified:     true,
+			}},
+			{ID: "n1", Live: &NodeLive{RepairQueueDepth: 3}},
+			{ID: "n2", LiveError: "dial tcp: connection refused"},
+		},
+	}}
+
+	a := NewAdminAPI(Options{ClusterStatus: src})
+
+	st, err := a.GetClusterStatus(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, 7, st.RepairQueueDepth)
+	assert.Equal(t, 2, st.NodesReporting)
+	assert.Equal(t, 1, st.NodesNotReporting)
+
+	require.Len(t, st.Nodes, 3)
+	require.True(t, st.Nodes[0].Live.Set)
+	assert.Equal(t, "v1.2.3", st.Nodes[0].Live.Value.Version.Or(""))
+	assert.Equal(t, adminapi.RebalanceStateRunning, st.Nodes[0].Live.Value.RebalanceState)
+	assert.Equal(t, int64(2), st.Nodes[0].Live.Value.RebuiltFragments)
+	assert.True(t, st.Nodes[0].Live.Value.EcUnverified)
+
+	// A node with no runner reports idle, not the empty string.
+	assert.Equal(t, adminapi.RebalanceStateIdle, st.Nodes[1].Live.Value.RebalanceState)
+
+	assert.False(t, st.Nodes[2].Live.Set)
+	assert.Equal(t, "dial tcp: connection refused", st.Nodes[2].LiveError.Or(""))
+}
+
 func TestClusterStatusPropagatesError(t *testing.T) {
 	a := NewAdminAPI(Options{ClusterStatus: stubClusterStatus{err: assert.AnError}})
 

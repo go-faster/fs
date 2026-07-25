@@ -28,6 +28,16 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// ApplyMigrations invokes applyMigrations operation.
+	//
+	// Apply every pending migration in order, under the cluster-wide migrate election, and record the new
+	// schema version — the admin-API equivalent of `fs cluster migrate`. Run it once a rolling upgrade
+	// has replaced every node's binary; until then the cluster keeps operating at the old schema. Returns
+	// 409 when a migration is already running or when the cluster's schema is newer than this binary
+	// implements.
+	//
+	// POST /api/v1/cluster/migrate
+	ApplyMigrations(ctx context.Context) (*MigrationStatus, error)
 	// ControlRebalance invokes controlRebalance operation.
 	//
 	// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
@@ -72,6 +82,13 @@ type Invoker interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetMigrationStatus invokes getMigrationStatus operation.
+	//
+	// The schema version the cluster has agreed on, the version this binary implements, and the migrations
+	// still pending between them. State is "disabled" when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/migrate
+	GetMigrationStatus(ctx context.Context) (*MigrationStatus, error)
 	// GetPublicReadBuckets invokes getPublicReadBuckets operation.
 	//
 	// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with
@@ -162,6 +179,90 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// ApplyMigrations invokes applyMigrations operation.
+//
+// Apply every pending migration in order, under the cluster-wide migrate election, and record the new
+// schema version — the admin-API equivalent of `fs cluster migrate`. Run it once a rolling upgrade
+// has replaced every node's binary; until then the cluster keeps operating at the old schema. Returns
+// 409 when a migration is already running or when the cluster's schema is newer than this binary
+// implements.
+//
+// POST /api/v1/cluster/migrate
+func (c *Client) ApplyMigrations(ctx context.Context) (*MigrationStatus, error) {
+	res, err := c.sendApplyMigrations(ctx)
+	return res, err
+}
+
+func (c *Client) sendApplyMigrations(ctx context.Context) (res *MigrationStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("applyMigrations"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/migrate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ApplyMigrationsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/migrate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeApplyMigrationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // ControlRebalance invokes controlRebalance operation.
@@ -688,6 +789,87 @@ func (c *Client) sendGetInfo(ctx context.Context) (res *InstanceInfo, err error)
 
 	stage = "DecodeResponse"
 	result, err := decodeGetInfoResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetMigrationStatus invokes getMigrationStatus operation.
+//
+// The schema version the cluster has agreed on, the version this binary implements, and the migrations
+// still pending between them. State is "disabled" when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/migrate
+func (c *Client) GetMigrationStatus(ctx context.Context) (*MigrationStatus, error) {
+	res, err := c.sendGetMigrationStatus(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetMigrationStatus(ctx context.Context) (res *MigrationStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMigrationStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/migrate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetMigrationStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/migrate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetMigrationStatusResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

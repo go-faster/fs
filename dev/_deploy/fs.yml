@@ -1,0 +1,65 @@
+# Helm values for the fs-operator chart on the local kind cluster.
+#
+#   helm upgrade --install fs-operator oci://ghcr.io/go-faster/charts/fs-operator \
+#     --values _deploy/fs.yml --version 0.5.0 \
+#     --namespace fs-operator-system --create-namespace
+#
+# Dev-only choices are marked; everything else follows the chart defaults.
+# Upstream values: https://github.com/go-faster/fs-operator/blob/main/dist/chart/values.yaml
+
+manager:
+  replicas: 1
+
+  image:
+    repository: ghcr.io/go-faster/fs-operator
+    # tag defaults to the chart appVersion (v0.5.0), which is the operator
+    # release this chart version was cut from. Pin it here only to test an
+    # unreleased build.
+    pullPolicy: IfNotPresent
+
+  args:
+    # Harmless with one replica, and keeps the dev deployment identical in
+    # shape to a real one.
+    - --leader-elect
+
+  # Dev: a single-node-ish kind cluster does not need the production envelope,
+  # and a tight CPU limit makes the controller visibly slow during rollouts.
+  resources:
+    limits:
+      cpu: "1"
+      memory: 256Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+
+rbac:
+  # Cluster-scoped, so the operator reconciles FSClusters in any namespace —
+  # here the fs-dev tenant namespace, not its own.
+  namespaced: false
+  helpers:
+    # Dev: install the admin/editor/viewer roles for the three CRDs so RBAC
+    # experiments do not need hand-written roles.
+    enabled: true
+
+crd:
+  enabled: true
+  # Dev: let `helm uninstall` take the CRDs (and therefore the CRs) with it, so
+  # `make down` leaves nothing behind. Production keeps them.
+  keep: false
+
+metrics:
+  enabled: true
+  port: 8443
+  # Dev: plain HTTP on the metrics endpoint, so `kubectl port-forward` + curl
+  # works without minting a token or trusting a self-signed cert.
+  secure: false
+
+# No cert-manager, no prometheus-operator and no CNI policy enforcement in the
+# default kind cluster — enabling any of these would leave objects pending on
+# CRDs that do not exist.
+certManager:
+  enabled: false
+prometheus:
+  enabled: false
+networkPolicy:
+  enabled: false
