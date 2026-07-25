@@ -1,0 +1,9 @@
+# The tenant namespace. Both the etcd control plane and the fs cluster live
+# here — the namespace is the tenancy boundary for FSCluster, FSBucket and
+# FSAccessKey, which may only reference each other within one namespace.
+#
+# The operator itself runs elsewhere (fs-operator-system) and watches this one.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fs-dev

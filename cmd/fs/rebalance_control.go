@@ -123,10 +123,14 @@ func (c *rebalanceController) Pause(context.Context) error {
 	return nil
 }
 
-// Status implements adminhandler.RebalanceControl.
-func (c *rebalanceController) Status(ctx context.Context) adminhandler.RebalanceStatus {
+// localStatus snapshots the runner from process-local state alone. The peer
+// status RPC answers from here: reporting live state must stay cheap and must
+// not wait on the control plane, so the etcd cursor read stays in Status.
+func (c *rebalanceController) localStatus() adminhandler.RebalanceStatus {
 	c.mu.Lock()
-	st := adminhandler.RebalanceStatus{
+	defer c.mu.Unlock()
+
+	return adminhandler.RebalanceStatus{
 		State:      c.state,
 		Objects:    c.objects,
 		Relocated:  c.relocated,
@@ -135,7 +139,11 @@ func (c *rebalanceController) Status(ctx context.Context) adminhandler.Rebalance
 		FinishedAt: c.finishedAt,
 		Err:        c.lastErr,
 	}
-	c.mu.Unlock()
+}
+
+// Status implements adminhandler.RebalanceControl.
+func (c *rebalanceController) Status(ctx context.Context) adminhandler.RebalanceStatus {
+	st := c.localStatus()
 
 	st.RepairQueueDepth = c.coord.QueueDepth()
 

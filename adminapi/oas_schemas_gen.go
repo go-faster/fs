@@ -209,8 +209,11 @@ type ClusterNode struct {
 	// Peer address the node advertises.
 	Addr OptString `json:"addr"`
 	// Failure-domain label.
-	Rack  OptString     `json:"rack"`
-	Disks []ClusterDisk `json:"disks"`
+	Rack  OptString          `json:"rack"`
+	Disks []ClusterDisk      `json:"disks"`
+	Live  OptClusterNodeLive `json:"live"`
+	// Why live state is missing for this node: unreachable, or running a binary that does not serve it.
+	LiveError OptString `json:"live_error"`
 }
 
 // GetID returns the value of ID.
@@ -233,6 +236,16 @@ func (s *ClusterNode) GetDisks() []ClusterDisk {
 	return s.Disks
 }
 
+// GetLive returns the value of Live.
+func (s *ClusterNode) GetLive() OptClusterNodeLive {
+	return s.Live
+}
+
+// GetLiveError returns the value of LiveError.
+func (s *ClusterNode) GetLiveError() OptString {
+	return s.LiveError
+}
+
 // SetID sets the value of ID.
 func (s *ClusterNode) SetID(val string) {
 	s.ID = val
@@ -251,6 +264,227 @@ func (s *ClusterNode) SetRack(val OptString) {
 // SetDisks sets the value of Disks.
 func (s *ClusterNode) SetDisks(val []ClusterDisk) {
 	s.Disks = val
+}
+
+// SetLive sets the value of Live.
+func (s *ClusterNode) SetLive(val OptClusterNodeLive) {
+	s.Live = val
+}
+
+// SetLiveError sets the value of LiveError.
+func (s *ClusterNode) SetLiveError(val OptString) {
+	s.LiveError = val
+}
+
+// A node's live runtime state, fetched from the node itself over the peer transport — what only the
+// running process knows, as opposed to the control-plane state in etcd.
+// Ref: #/components/schemas/ClusterNodeLive
+type ClusterNodeLive struct {
+	// The node's binary version — a half-upgraded cluster shows mixed values.
+	Version OptString `json:"version"`
+	// Schema version the node's binary implements.
+	SchemaVersion OptInt     `json:"schema_version"`
+	UptimeSeconds OptFloat64 `json:"uptime_seconds"`
+	// Objects with pending async replication/repair work on the node.
+	RepairQueueDepth   int            `json:"repair_queue_depth"`
+	RebalanceState     RebalanceState `json:"rebalance_state"`
+	RebalanceObjects   int            `json:"rebalance_objects"`
+	RebalanceRelocated int            `json:"rebalance_relocated"`
+	RebalanceFailed    int            `json:"rebalance_failed"`
+	RebalanceError     OptString      `json:"rebalance_error"`
+	ScrubPasses        int64          `json:"scrub_passes"`
+	ScrubObjects       int64          `json:"scrub_objects"`
+	ScrubRepaired      int64          `json:"scrub_repaired"`
+	ScrubFailed        int64          `json:"scrub_failed"`
+	// Fragments rebuilt by scrubs on the node (repair lag indicator).
+	RebuiltFragments int64 `json:"rebuilt_fragments"`
+	SweptStale       int64 `json:"swept_stale"`
+	// Replica payloads that failed checksum verification (bit-rot).
+	CorruptReplicas int64 `json:"corrupt_replicas"`
+	// Objects rewritten to their bucket's current scheme.
+	ConvertedObjects int64 `json:"converted_objects"`
+	// The node's last scrub pass saw an EC set failing parity verification.
+	EcUnverified bool `json:"ec_unverified"`
+}
+
+// GetVersion returns the value of Version.
+func (s *ClusterNodeLive) GetVersion() OptString {
+	return s.Version
+}
+
+// GetSchemaVersion returns the value of SchemaVersion.
+func (s *ClusterNodeLive) GetSchemaVersion() OptInt {
+	return s.SchemaVersion
+}
+
+// GetUptimeSeconds returns the value of UptimeSeconds.
+func (s *ClusterNodeLive) GetUptimeSeconds() OptFloat64 {
+	return s.UptimeSeconds
+}
+
+// GetRepairQueueDepth returns the value of RepairQueueDepth.
+func (s *ClusterNodeLive) GetRepairQueueDepth() int {
+	return s.RepairQueueDepth
+}
+
+// GetRebalanceState returns the value of RebalanceState.
+func (s *ClusterNodeLive) GetRebalanceState() RebalanceState {
+	return s.RebalanceState
+}
+
+// GetRebalanceObjects returns the value of RebalanceObjects.
+func (s *ClusterNodeLive) GetRebalanceObjects() int {
+	return s.RebalanceObjects
+}
+
+// GetRebalanceRelocated returns the value of RebalanceRelocated.
+func (s *ClusterNodeLive) GetRebalanceRelocated() int {
+	return s.RebalanceRelocated
+}
+
+// GetRebalanceFailed returns the value of RebalanceFailed.
+func (s *ClusterNodeLive) GetRebalanceFailed() int {
+	return s.RebalanceFailed
+}
+
+// GetRebalanceError returns the value of RebalanceError.
+func (s *ClusterNodeLive) GetRebalanceError() OptString {
+	return s.RebalanceError
+}
+
+// GetScrubPasses returns the value of ScrubPasses.
+func (s *ClusterNodeLive) GetScrubPasses() int64 {
+	return s.ScrubPasses
+}
+
+// GetScrubObjects returns the value of ScrubObjects.
+func (s *ClusterNodeLive) GetScrubObjects() int64 {
+	return s.ScrubObjects
+}
+
+// GetScrubRepaired returns the value of ScrubRepaired.
+func (s *ClusterNodeLive) GetScrubRepaired() int64 {
+	return s.ScrubRepaired
+}
+
+// GetScrubFailed returns the value of ScrubFailed.
+func (s *ClusterNodeLive) GetScrubFailed() int64 {
+	return s.ScrubFailed
+}
+
+// GetRebuiltFragments returns the value of RebuiltFragments.
+func (s *ClusterNodeLive) GetRebuiltFragments() int64 {
+	return s.RebuiltFragments
+}
+
+// GetSweptStale returns the value of SweptStale.
+func (s *ClusterNodeLive) GetSweptStale() int64 {
+	return s.SweptStale
+}
+
+// GetCorruptReplicas returns the value of CorruptReplicas.
+func (s *ClusterNodeLive) GetCorruptReplicas() int64 {
+	return s.CorruptReplicas
+}
+
+// GetConvertedObjects returns the value of ConvertedObjects.
+func (s *ClusterNodeLive) GetConvertedObjects() int64 {
+	return s.ConvertedObjects
+}
+
+// GetEcUnverified returns the value of EcUnverified.
+func (s *ClusterNodeLive) GetEcUnverified() bool {
+	return s.EcUnverified
+}
+
+// SetVersion sets the value of Version.
+func (s *ClusterNodeLive) SetVersion(val OptString) {
+	s.Version = val
+}
+
+// SetSchemaVersion sets the value of SchemaVersion.
+func (s *ClusterNodeLive) SetSchemaVersion(val OptInt) {
+	s.SchemaVersion = val
+}
+
+// SetUptimeSeconds sets the value of UptimeSeconds.
+func (s *ClusterNodeLive) SetUptimeSeconds(val OptFloat64) {
+	s.UptimeSeconds = val
+}
+
+// SetRepairQueueDepth sets the value of RepairQueueDepth.
+func (s *ClusterNodeLive) SetRepairQueueDepth(val int) {
+	s.RepairQueueDepth = val
+}
+
+// SetRebalanceState sets the value of RebalanceState.
+func (s *ClusterNodeLive) SetRebalanceState(val RebalanceState) {
+	s.RebalanceState = val
+}
+
+// SetRebalanceObjects sets the value of RebalanceObjects.
+func (s *ClusterNodeLive) SetRebalanceObjects(val int) {
+	s.RebalanceObjects = val
+}
+
+// SetRebalanceRelocated sets the value of RebalanceRelocated.
+func (s *ClusterNodeLive) SetRebalanceRelocated(val int) {
+	s.RebalanceRelocated = val
+}
+
+// SetRebalanceFailed sets the value of RebalanceFailed.
+func (s *ClusterNodeLive) SetRebalanceFailed(val int) {
+	s.RebalanceFailed = val
+}
+
+// SetRebalanceError sets the value of RebalanceError.
+func (s *ClusterNodeLive) SetRebalanceError(val OptString) {
+	s.RebalanceError = val
+}
+
+// SetScrubPasses sets the value of ScrubPasses.
+func (s *ClusterNodeLive) SetScrubPasses(val int64) {
+	s.ScrubPasses = val
+}
+
+// SetScrubObjects sets the value of ScrubObjects.
+func (s *ClusterNodeLive) SetScrubObjects(val int64) {
+	s.ScrubObjects = val
+}
+
+// SetScrubRepaired sets the value of ScrubRepaired.
+func (s *ClusterNodeLive) SetScrubRepaired(val int64) {
+	s.ScrubRepaired = val
+}
+
+// SetScrubFailed sets the value of ScrubFailed.
+func (s *ClusterNodeLive) SetScrubFailed(val int64) {
+	s.ScrubFailed = val
+}
+
+// SetRebuiltFragments sets the value of RebuiltFragments.
+func (s *ClusterNodeLive) SetRebuiltFragments(val int64) {
+	s.RebuiltFragments = val
+}
+
+// SetSweptStale sets the value of SweptStale.
+func (s *ClusterNodeLive) SetSweptStale(val int64) {
+	s.SweptStale = val
+}
+
+// SetCorruptReplicas sets the value of CorruptReplicas.
+func (s *ClusterNodeLive) SetCorruptReplicas(val int64) {
+	s.CorruptReplicas = val
+}
+
+// SetConvertedObjects sets the value of ConvertedObjects.
+func (s *ClusterNodeLive) SetConvertedObjects(val int64) {
+	s.ConvertedObjects = val
+}
+
+// SetEcUnverified sets the value of EcUnverified.
+func (s *ClusterNodeLive) SetEcUnverified(val bool) {
+	s.EcUnverified = val
 }
 
 // "disabled" when the server is not in cluster mode.
@@ -313,9 +547,15 @@ type ClusterStatus struct {
 	// Whether a rebalance runner currently holds the cluster-wide election.
 	RebalanceRunning bool `json:"rebalance_running"`
 	// Resume cursor of an in-progress/last rebalance, if any.
-	RebalanceCursorBucket OptString     `json:"rebalance_cursor_bucket"`
-	RebalanceCursorKey    OptString     `json:"rebalance_cursor_key"`
-	Nodes                 []ClusterNode `json:"nodes"`
+	RebalanceCursorBucket OptString `json:"rebalance_cursor_bucket"`
+	RebalanceCursorKey    OptString `json:"rebalance_cursor_key"`
+	// Pending async replication/repair work summed over the nodes that reported live state.
+	RepairQueueDepth int `json:"repair_queue_depth"`
+	// Nodes that answered the live-state request.
+	NodesReporting int `json:"nodes_reporting"`
+	// Nodes that did not answer: unreachable, or running a binary that does not serve live state.
+	NodesNotReporting int           `json:"nodes_not_reporting"`
+	Nodes             []ClusterNode `json:"nodes"`
 }
 
 // GetState returns the value of State.
@@ -371,6 +611,21 @@ func (s *ClusterStatus) GetRebalanceCursorBucket() OptString {
 // GetRebalanceCursorKey returns the value of RebalanceCursorKey.
 func (s *ClusterStatus) GetRebalanceCursorKey() OptString {
 	return s.RebalanceCursorKey
+}
+
+// GetRepairQueueDepth returns the value of RepairQueueDepth.
+func (s *ClusterStatus) GetRepairQueueDepth() int {
+	return s.RepairQueueDepth
+}
+
+// GetNodesReporting returns the value of NodesReporting.
+func (s *ClusterStatus) GetNodesReporting() int {
+	return s.NodesReporting
+}
+
+// GetNodesNotReporting returns the value of NodesNotReporting.
+func (s *ClusterStatus) GetNodesNotReporting() int {
+	return s.NodesNotReporting
 }
 
 // GetNodes returns the value of Nodes.
@@ -431,6 +686,21 @@ func (s *ClusterStatus) SetRebalanceCursorBucket(val OptString) {
 // SetRebalanceCursorKey sets the value of RebalanceCursorKey.
 func (s *ClusterStatus) SetRebalanceCursorKey(val OptString) {
 	s.RebalanceCursorKey = val
+}
+
+// SetRepairQueueDepth sets the value of RepairQueueDepth.
+func (s *ClusterStatus) SetRepairQueueDepth(val int) {
+	s.RepairQueueDepth = val
+}
+
+// SetNodesReporting sets the value of NodesReporting.
+func (s *ClusterStatus) SetNodesReporting(val int) {
+	s.NodesReporting = val
+}
+
+// SetNodesNotReporting sets the value of NodesNotReporting.
+func (s *ClusterStatus) SetNodesNotReporting(val int) {
+	s.NodesNotReporting = val
 }
 
 // SetNodes sets the value of Nodes.
@@ -705,6 +975,179 @@ func (s *InstanceInfo) SetConfigRevision(val OptString) {
 	s.ConfigRevision = val
 }
 
+// A pending schema migration.
+// Ref: #/components/schemas/Migration
+type Migration struct {
+	// Schema version this migration produces.
+	Version     int    `json:"version"`
+	Description string `json:"description"`
+}
+
+// GetVersion returns the value of Version.
+func (s *Migration) GetVersion() int {
+	return s.Version
+}
+
+// GetDescription returns the value of Description.
+func (s *Migration) GetDescription() string {
+	return s.Description
+}
+
+// SetVersion sets the value of Version.
+func (s *Migration) SetVersion(val int) {
+	s.Version = val
+}
+
+// SetDescription sets the value of Description.
+func (s *Migration) SetDescription(val string) {
+	s.Description = val
+}
+
+// Cluster schema state and the migrations pending between cluster and binary.
+// Ref: #/components/schemas/MigrationStatus
+type MigrationStatus struct {
+	State ClusterState `json:"state"`
+	// Schema version the cluster has agreed on; 0 when none is recorded yet (no node has joined).
+	ClusterSchemaVersion int `json:"cluster_schema_version"`
+	// Schema version this binary implements.
+	BinarySchemaVersion int `json:"binary_schema_version"`
+	// True when nothing is pending: the cluster is at the binary's schema version.
+	UpToDate bool `json:"up_to_date"`
+	// True while this process is applying migrations.
+	Running bool        `json:"running"`
+	Pending []Migration `json:"pending"`
+	// Versions applied by the most recent run on this process.
+	LastApplied []int `json:"last_applied"`
+	// Why the most recent run on this process failed.
+	LastError OptString `json:"last_error"`
+}
+
+// GetState returns the value of State.
+func (s *MigrationStatus) GetState() ClusterState {
+	return s.State
+}
+
+// GetClusterSchemaVersion returns the value of ClusterSchemaVersion.
+func (s *MigrationStatus) GetClusterSchemaVersion() int {
+	return s.ClusterSchemaVersion
+}
+
+// GetBinarySchemaVersion returns the value of BinarySchemaVersion.
+func (s *MigrationStatus) GetBinarySchemaVersion() int {
+	return s.BinarySchemaVersion
+}
+
+// GetUpToDate returns the value of UpToDate.
+func (s *MigrationStatus) GetUpToDate() bool {
+	return s.UpToDate
+}
+
+// GetRunning returns the value of Running.
+func (s *MigrationStatus) GetRunning() bool {
+	return s.Running
+}
+
+// GetPending returns the value of Pending.
+func (s *MigrationStatus) GetPending() []Migration {
+	return s.Pending
+}
+
+// GetLastApplied returns the value of LastApplied.
+func (s *MigrationStatus) GetLastApplied() []int {
+	return s.LastApplied
+}
+
+// GetLastError returns the value of LastError.
+func (s *MigrationStatus) GetLastError() OptString {
+	return s.LastError
+}
+
+// SetState sets the value of State.
+func (s *MigrationStatus) SetState(val ClusterState) {
+	s.State = val
+}
+
+// SetClusterSchemaVersion sets the value of ClusterSchemaVersion.
+func (s *MigrationStatus) SetClusterSchemaVersion(val int) {
+	s.ClusterSchemaVersion = val
+}
+
+// SetBinarySchemaVersion sets the value of BinarySchemaVersion.
+func (s *MigrationStatus) SetBinarySchemaVersion(val int) {
+	s.BinarySchemaVersion = val
+}
+
+// SetUpToDate sets the value of UpToDate.
+func (s *MigrationStatus) SetUpToDate(val bool) {
+	s.UpToDate = val
+}
+
+// SetRunning sets the value of Running.
+func (s *MigrationStatus) SetRunning(val bool) {
+	s.Running = val
+}
+
+// SetPending sets the value of Pending.
+func (s *MigrationStatus) SetPending(val []Migration) {
+	s.Pending = val
+}
+
+// SetLastApplied sets the value of LastApplied.
+func (s *MigrationStatus) SetLastApplied(val []int) {
+	s.LastApplied = val
+}
+
+// SetLastError sets the value of LastError.
+func (s *MigrationStatus) SetLastError(val OptString) {
+	s.LastError = val
+}
+
+// NewOptClusterNodeLive returns new OptClusterNodeLive with value set to v.
+func NewOptClusterNodeLive(v ClusterNodeLive) OptClusterNodeLive {
+	return OptClusterNodeLive{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptClusterNodeLive is optional ClusterNodeLive.
+type OptClusterNodeLive struct {
+	Value ClusterNodeLive
+	Set   bool
+}
+
+// IsSet returns true if OptClusterNodeLive was set.
+func (o OptClusterNodeLive) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptClusterNodeLive) Reset() {
+	var v ClusterNodeLive
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptClusterNodeLive) SetTo(v ClusterNodeLive) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptClusterNodeLive) Get() (v ClusterNodeLive, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptClusterNodeLive) Or(d ClusterNodeLive) ClusterNodeLive {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptDateTime returns new OptDateTime with value set to v.
 func NewOptDateTime(v time.Time) OptDateTime {
 	return OptDateTime{
@@ -791,6 +1234,52 @@ func (o OptFloat64) Get() (v float64, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptFloat64) Or(d float64) float64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptInt returns new OptInt with value set to v.
+func NewOptInt(v int) OptInt {
+	return OptInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt is optional int.
+type OptInt struct {
+	Value int
+	Set   bool
+}
+
+// IsSet returns true if OptInt was set.
+func (o OptInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt) SetTo(v int) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt) Get() (v int, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt) Or(d int) int {
 	if v, ok := o.Get(); ok {
 		return v
 	}

@@ -332,24 +332,27 @@ Command-line flags override YAML configuration values.`,
 						return errors.New("admin API requires authentication; remove --insecure-no-auth / auth.disabled or disable admin")
 					}
 
-					// Avoid a non-nil interface around a nil controller/source
-					// outside cluster mode.
-					var (
-						rebalance     adminhandler.RebalanceControl
-						clusterStatus adminhandler.ClusterStatusSource
-						bucketSchemes adminhandler.BucketSchemeStore
-						defaultScheme string
-					)
+					adminCfg := adminServerConfig{
+						Admin:       cfg.Admin,
+						Credentials: credentials,
+						AuthEnabled: authStore != nil,
+						StartTime:   startTime,
+						Reloader:    rel,
+					}
 
+					// Set the cluster surfaces only in cluster mode: a non-nil
+					// interface around a nil controller would defeat the
+					// handlers' "disabled" guards.
 					if clusterRT != nil {
-						rebalance = clusterRT.rebalance
-						clusterStatus = clusterRT.status
-						bucketSchemes = newBucketSchemeSource(clusterRT.coord)
-						defaultScheme = clusterRT.schemeID
+						adminCfg.Rebalance = clusterRT.rebalance
+						adminCfg.ClusterStatus = clusterRT.status
+						adminCfg.Migrations = clusterRT.migrate
+						adminCfg.BucketSchemes = newBucketSchemeSource(clusterRT.coord)
+						adminCfg.ClusterDefaultScheme = clusterRT.schemeID
 					}
 
 					grp.Go(func() error {
-						return runAdminServer(grpCtx, lg, t, cfg.Admin, credentials, authStore != nil, startTime, rebalance, clusterStatus, bucketSchemes, defaultScheme, rel)
+						return runAdminServer(grpCtx, lg, t, adminCfg)
 					})
 				}
 

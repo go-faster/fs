@@ -1,0 +1,33 @@
+# Tenancy on top of the cluster: one bucket and one credential, so `make up`
+# lands on something you can immediately point an S3 client at.
+#
+# Both reference the FSCluster by name within the same namespace — that is the
+# only reference the operator allows.
+---
+# bucketName defaults to metadata.name and is immutable. No scheme override, so
+# the bucket follows the cluster default (rf2.5).
+apiVersion: fs.go-faster.org/v1alpha1
+kind: FSBucket
+metadata:
+  name: dev
+  namespace: fs-dev
+spec:
+  clusterRef:
+    name: fs
+  # Dev: let deleting the FSBucket delete the bucket and its objects.
+  reclaimPolicy: Delete
+---
+# A generated credential: the operator mints the access/secret pair once and
+# writes it to an owned Secret named <metadata.name>-credentials, with keys
+# access-key, secret-key and endpoint. `make creds` prints it.
+apiVersion: fs.go-faster.org/v1alpha1
+kind: FSAccessKey
+metadata:
+  name: dev
+  namespace: fs-dev
+spec:
+  clusterRef:
+    name: fs
+  grants:
+    - bucket: "dev"
+      permission: admin

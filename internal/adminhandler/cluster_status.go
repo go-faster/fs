@@ -20,6 +20,34 @@ type ClusterNode struct {
 	Addr  string
 	Rack  string
 	Disks []ClusterDisk
+	// Live is the node's live runtime state, fetched from the node itself; nil
+	// when it did not report.
+	Live *NodeLive
+	// LiveError says why Live is nil (unreachable, or a binary that does not
+	// serve live state).
+	LiveError string
+}
+
+// NodeLive is what only a running node knows: its queue depths, runner
+// progress and scrub totals. The control plane (etcd) carries none of this, so
+// it is collected from the nodes over the peer transport.
+type NodeLive struct {
+	Version       string
+	SchemaVersion int
+	UptimeSeconds float64
+	// RepairQueueDepth is the node's pending async remainder/repair backlog.
+	RepairQueueDepth int
+	// Rebalance* is the node's rebalance runner and its current/last run.
+	RebalanceState                                        RebalanceState
+	RebalanceObjects, RebalanceRelocated, RebalanceFailed int
+	RebalanceErr                                          string
+	// Scrub* and the repair totals are cumulative since the node started.
+	ScrubPasses, ScrubObjects, ScrubRepaired, ScrubFailed int64
+	RebuiltFragments, SweptStale                          int64
+	CorruptReplicas, Converted                            int64
+	// ECUnverified reports that the node's last scrub pass saw an EC set
+	// failing parity verification.
+	ECUnverified bool
 }
 
 // ClusterStatus is the cluster-wide view assembled from the control plane.
@@ -87,6 +115,19 @@ func clusterStatusToAPI(st ClusterStatus) *adminapi.ClusterStatus {
 			apiNode.Rack = adminapi.NewOptString(n.Rack)
 		}
 
+		switch {
+		case n.Live != nil:
+			apiNode.Live = adminapi.NewOptClusterNodeLive(liveToAPI(*n.Live))
+			out.NodesReporting++
+			out.RepairQueueDepth += n.Live.RepairQueueDepth
+		default:
+			out.NodesNotReporting++
+
+			if n.LiveError != "" {
+				apiNode.LiveError = adminapi.NewOptString(n.LiveError)
+			}
+		}
+
 		out.DiskCount += len(n.Disks)
 
 		for _, d := range n.Disks {
@@ -113,6 +154,49 @@ func clusterStatusToAPI(st ClusterStatus) *adminapi.ClusterStatus {
 
 	if maxFull >= minFull {
 		out.PlacementSkew = maxFull - minFull
+	}
+
+	return out
+}
+
+// liveToAPI maps a node's live state to the wire schema.
+func liveToAPI(l NodeLive) adminapi.ClusterNodeLive {
+	state := l.RebalanceState
+	if state == "" {
+		state = RebalanceIdle
+	}
+
+	out := adminapi.ClusterNodeLive{
+		RepairQueueDepth:   l.RepairQueueDepth,
+		RebalanceState:     adminapi.RebalanceState(state),
+		RebalanceObjects:   l.RebalanceObjects,
+		RebalanceRelocated: l.RebalanceRelocated,
+		RebalanceFailed:    l.RebalanceFailed,
+		ScrubPasses:        l.ScrubPasses,
+		ScrubObjects:       l.ScrubObjects,
+		ScrubRepaired:      l.ScrubRepaired,
+		ScrubFailed:        l.ScrubFailed,
+		RebuiltFragments:   l.RebuiltFragments,
+		SweptStale:         l.SweptStale,
+		CorruptReplicas:    l.CorruptReplicas,
+		ConvertedObjects:   l.Converted,
+		EcUnverified:       l.ECUnverified,
+	}
+
+	if l.Version != "" {
+		out.Version = adminapi.NewOptString(l.Version)
+	}
+
+	if l.SchemaVersion > 0 {
+		out.SchemaVersion = adminapi.NewOptInt(l.SchemaVersion)
+	}
+
+	if l.UptimeSeconds > 0 {
+		out.UptimeSeconds = adminapi.NewOptFloat64(l.UptimeSeconds)
+	}
+
+	if l.RebalanceErr != "" {
+		out.RebalanceError = adminapi.NewOptString(l.RebalanceErr)
 	}
 
 	return out

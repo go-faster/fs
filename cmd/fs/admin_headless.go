@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-faster/fs/clusterstore"
 	"github.com/go-faster/fs/internal/adminhandler"
+	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
 // Admin is `fs admin`: a headless, control-plane-only admin. It serves the
@@ -96,7 +97,13 @@ func runHeadlessAdmin(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg
 	// cursor-checkpointed walk as a node's admin, driven from this disk-less
 	// client.
 	controller := newRebalanceController(ctx, lg, cl.client, cl.etcdCfg, cl.coord, repairer, string(cl.self))
-	status := newClusterStatusSource(cl.coord, cl.client, cl.etcdCfg)
+
+	// Live per-node state comes from the nodes themselves over the peer
+	// transport — this process holds no data and runs no queues of its own.
+	status := newClusterStatusSource(cl.coord, cl.client, cl.etcdCfg,
+		newPeerStatus(cl.self, transport.Secret(cfg.ClusterSecret())))
+
+	migrations := newMigrateController(cl.client, cl.etcdCfg, string(cl.self), clusterMigrations(cl.deps()))
 
 	// With auth.source: etcd, credentials are cluster-wide, so this headless
 	// admin manages the very same store every data node watches — key CRUD here
@@ -122,10 +129,19 @@ func runHeadlessAdmin(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg
 
 	lg.Info("Starting headless cluster admin", zap.String("candidate", string(cl.self)))
 
-	// authEnabled is reported false — this process is not an S3 server; the data
-	// nodes carry their own auth. No reloader either: there is no S3 config to
-	// hot-reload, so the reload endpoint reports 501. Per-bucket schemes are
-	// cluster-wide, so this control-plane admin serves them through the same
-	// coordinator.
-	return runAdminServer(t.ShutdownContext(), lg, t, cfg.Admin, credentials, false, start, controller, status, newBucketSchemeSource(cl.coord), clusterDefaultScheme(cfg), nil)
+	// AuthEnabled is false — this process is not an S3 server; the data nodes
+	// carry their own auth. No reloader either: there is no S3 config to
+	// hot-reload, so the reload endpoint reports 501. Per-bucket schemes and
+	// schema migrations are cluster-wide, so this control-plane admin serves
+	// them through the same coordinator and election as any node.
+	return runAdminServer(t.ShutdownContext(), lg, t, adminServerConfig{
+		Admin:                cfg.Admin,
+		Credentials:          credentials,
+		StartTime:            start,
+		Rebalance:            controller,
+		ClusterStatus:        status,
+		Migrations:           migrations,
+		BucketSchemes:        newBucketSchemeSource(cl.coord),
+		ClusterDefaultScheme: clusterDefaultScheme(cfg),
+	})
 }

@@ -27,12 +27,12 @@ type buildMeta struct {
 
 // buildInfo reports the module version and VCS revision embedded by the Go
 // toolchain, falling back to "devel"/"unknown" when unavailable.
-func buildInfo() (buildMeta, bool) {
+func buildInfo() buildMeta {
 	meta := buildMeta{Version: "devel", Commit: "unknown"}
 
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return meta, false
+		return meta
 	}
 
 	if info.Main.Version != "" && info.Main.Version != "(devel)" {
@@ -45,7 +45,7 @@ func buildInfo() (buildMeta, bool) {
 		}
 	}
 
-	return meta, true
+	return meta
 }
 
 // resolveAdminKeysFile returns the path where runtime-created access keys are
@@ -58,16 +58,36 @@ func resolveAdminKeysFile(cfg Config, absRoot string) string {
 	return filepath.Join(absRoot, DefaultAdminKeysFile)
 }
 
+// adminServerConfig is what an admin listener serves: the listener settings,
+// the credential store, and the cluster control surfaces — all of the latter
+// nil outside cluster mode, where their endpoints report "disabled".
+type adminServerConfig struct {
+	Admin       AdminConfig
+	Credentials adminhandler.CredentialManager
+	// AuthEnabled reports whether the S3 server enforces SigV4; false on the
+	// headless admin, which serves no S3.
+	AuthEnabled bool
+	StartTime   time.Time
+
+	Rebalance            adminhandler.RebalanceControl
+	ClusterStatus        adminhandler.ClusterStatusSource
+	Migrations           adminhandler.MigrationControl
+	BucketSchemes        adminhandler.BucketSchemeStore
+	ClusterDefaultScheme string
+	// Reloader applies hot-reloadable config; nil where there is none.
+	Reloader *reloader
+}
+
 // runAdminServer serves the admin API and its embedded web dashboard on a
 // separate listener until ctx is canceled. It requires a bearer token on every
 // API request. It returns an error only on a fatal serve failure.
-func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg AdminConfig, mgr adminhandler.CredentialManager, authEnabled bool, start time.Time, rebalance adminhandler.RebalanceControl, clusterStatus adminhandler.ClusterStatusSource, bucketSchemes adminhandler.BucketSchemeStore, clusterDefaultScheme string, rel *reloader) error {
-	addr := cfg.Addr
+func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg adminServerConfig) error {
+	addr := cfg.Admin.Addr
 	if addr == "" {
 		addr = DefaultAdminAddr
 	}
 
-	token := cfg.Token
+	token := cfg.Admin.Token
 	if env := os.Getenv(envAdminToken); env != "" {
 		token = env
 	}
@@ -76,29 +96,30 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg A
 		return errors.Errorf("admin API is enabled but no token is set: set admin.token or %s", envAdminToken)
 	}
 
-	build, _ := buildInfo()
+	build := buildInfo()
 
 	opts := adminhandler.Options{
-		Manager:              mgr,
+		Manager:              cfg.Credentials,
 		Build:                adminhandler.BuildInfo{Version: build.Version, Commit: build.Commit},
-		AuthEnabled:          authEnabled,
-		StartTime:            start,
-		Rebalance:            rebalance,
-		ClusterStatus:        clusterStatus,
-		BucketSchemes:        bucketSchemes,
-		ClusterDefaultScheme: clusterDefaultScheme,
+		AuthEnabled:          cfg.AuthEnabled,
+		StartTime:            cfg.StartTime,
+		Rebalance:            cfg.Rebalance,
+		ClusterStatus:        cfg.ClusterStatus,
+		Migrations:           cfg.Migrations,
+		BucketSchemes:        cfg.BucketSchemes,
+		ClusterDefaultScheme: cfg.ClusterDefaultScheme,
 	}
 
 	// Cluster-wide credential stores also manage the public-read bucket list;
 	// the file-backed manager does not, leaving those endpoints at 501.
-	if prs, ok := mgr.(adminhandler.PublicReadStore); ok {
+	if prs, ok := cfg.Credentials.(adminhandler.PublicReadStore); ok {
 		opts.PublicRead = prs
 	}
 
 	// Set the reload interface only when there is a reloader: a nil *reloader
 	// stored in the interface would read as non-nil and defeat the endpoint's
 	// "nothing to reload" guard.
-	if rel != nil {
+	if rel := cfg.Reloader; rel != nil {
 		opts.Reloader = rel
 		opts.ConfigRevision = rel.CurrentRevision
 	}

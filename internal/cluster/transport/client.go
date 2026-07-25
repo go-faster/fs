@@ -307,6 +307,8 @@ func statusError(resp *http.Response) error {
 		return ErrNotFound
 	case http.StatusUnauthorized:
 		return ErrUnauthorized
+	case http.StatusNotImplemented:
+		return ErrUnsupported
 	default:
 		return errors.Errorf("peer returned status %d", resp.StatusCode)
 	}

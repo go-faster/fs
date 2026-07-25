@@ -13,6 +13,19 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// ApplyMigrations implements applyMigrations operation.
+//
+// Apply every pending migration in order, under the cluster-wide migrate election, and record the new
+// schema version — the admin-API equivalent of `fs cluster migrate`. Run it once a rolling upgrade
+// has replaced every node's binary; until then the cluster keeps operating at the old schema. Returns
+// 409 when a migration is already running or when the cluster's schema is newer than this binary
+// implements.
+//
+// POST /api/v1/cluster/migrate
+func (UnimplementedHandler) ApplyMigrations(ctx context.Context) (r *MigrationStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ControlRebalance implements controlRebalance operation.
 //
 // Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
@@ -72,6 +85,16 @@ func (UnimplementedHandler) GetClusterStatus(ctx context.Context) (r *ClusterSta
 //
 // GET /api/v1/info
 func (UnimplementedHandler) GetInfo(ctx context.Context) (r *InstanceInfo, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetMigrationStatus implements getMigrationStatus operation.
+//
+// The schema version the cluster has agreed on, the version this binary implements, and the migrations
+// still pending between them. State is "disabled" when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/migrate
+func (UnimplementedHandler) GetMigrationStatus(ctx context.Context) (r *MigrationStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

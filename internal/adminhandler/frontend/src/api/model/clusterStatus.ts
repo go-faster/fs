@@ -27,5 +27,13 @@ export interface ClusterStatus {
   /** Resume cursor of an in-progress/last rebalance, if any. */
   rebalance_cursor_bucket?: string;
   rebalance_cursor_key?: string;
+  /** Pending async replication/repair work summed over the nodes that reported live state.
+ */
+  repair_queue_depth: number;
+  /** Nodes that answered the live-state request. */
+  nodes_reporting: number;
+  /** Nodes that did not answer: unreachable, or running a binary that does not serve live state.
+ */
+  nodes_not_reporting: number;
   nodes: ClusterNode[];
 }

@@ -147,11 +147,19 @@ cluster:
   (`admin.token` or `FS_ADMIN_TOKEN`). Keep it bound to localhost or behind a
   proxy. Every data node serves it, including a cluster-wide status view
   (`GET /api/v1/cluster/status`: schema version, per-node/-disk/-rack capacity
-  and health, placement skew, rebalance state). `fs admin --config config.yaml`
-  runs the same admin API/dashboard **headless** — a control-plane-only process
-  (no S3 data) that reads cluster status from etcd and drives rebalancing
-  through the cluster-wide election. Credential management is not available on
-  the headless listener (manage access keys on a data node's admin API).
+  and health, placement skew, rebalance state) and schema migrations
+  (`GET`/`POST /api/v1/cluster/migrate`, see [UPGRADE.md](UPGRADE.md)). The
+  status view also carries each node's **live** state — its repair-queue depth,
+  rebalance runner and scrub/repair totals — fetched from the nodes themselves
+  over the peer transport; a node that does not answer is reported as not
+  reporting (with the reason) rather than as idle, and the control-plane half of
+  the view still renders. `fs admin --config config.yaml` runs the same admin
+  API/dashboard **headless** — a control-plane-only process (no S3 data) that
+  reads cluster status from etcd, collects live state from the nodes, and drives
+  rebalancing and migrations through the cluster-wide elections. Credential
+  management works there only with cluster-wide credentials
+  (`auth.source: etcd`); with file-based auth, manage access keys on a data
+  node's admin API.
 - **Hot reload without a signal**: `POST /api/v1/reload` re-applies the same
   hot-reloadable configuration SIGHUP does — the config-defined credentials and
   grants and the TLS certificate, preserving runtime-created keys — and returns

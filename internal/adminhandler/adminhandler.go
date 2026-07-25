@@ -54,6 +54,9 @@ type Options struct {
 	// ClusterStatus assembles the cluster-wide status; nil outside cluster mode
 	// (the endpoint then reports "disabled").
 	ClusterStatus ClusterStatusSource
+	// Migrations reports and applies cluster schema migrations; nil outside
+	// cluster mode (the endpoint then reports "disabled" and refuses to apply).
+	Migrations MigrationControl
 	// Reloader applies hot-reloadable configuration on demand (POST
 	// /api/v1/reload); nil on a listener with nothing to reload (the headless
 	// cluster admin), where the endpoint returns 501.

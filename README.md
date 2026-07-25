@@ -190,8 +190,10 @@ cluster:
   converges automatically, and a background scrubber repairs missing or corrupt
   fragments.
 - **`fs admin`** runs a headless, control-plane-only process (no data path) that
-  serves the cluster-wide status dashboard and drives rebalance through the same
-  etcd election a data node uses.
+  serves the cluster-wide status dashboard — including each node's live repair
+  queue, rebalance runner and scrub totals, collected from the nodes themselves
+  — and drives rebalance and schema migrations through the same etcd elections
+  a data node uses.
 - **Cluster-wide credentials** — set `auth.source: etcd` so access keys, grants
   and the public-read bucket list live in the control plane (secrets sealed by an
   HKDF key derived from the cluster secret) and every node hot-reloads any change

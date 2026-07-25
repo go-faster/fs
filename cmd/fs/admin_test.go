@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -179,4 +180,96 @@ func (t bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("Authorization", "Bearer "+t.token)
 
 	return t.base.RoundTrip(r)
+}
+
+// stubMigrationControl stands in for the cluster's migration controller.
+type stubMigrationControl struct {
+	st      adminhandler.MigrationStatus
+	applied bool
+	err     error
+}
+
+func (s *stubMigrationControl) Status(context.Context) (adminhandler.MigrationStatus, error) {
+	return s.st, nil
+}
+
+func (s *stubMigrationControl) Apply(context.Context) (adminhandler.MigrationStatus, error) {
+	if s.err != nil {
+		return adminhandler.MigrationStatus{}, s.err
+	}
+
+	s.applied = true
+	s.st.ClusterVersion = s.st.BinaryVersion
+	s.st.Pending = nil
+
+	return s.st, nil
+}
+
+// TestAdminServer_MigrationsViaClient drives the schema endpoints end to end
+// through the routed server, the way the dashboard and an orchestrator do.
+func TestAdminServer_MigrationsViaClient(t *testing.T) {
+	token := "s3cr3t"
+	ctl := &stubMigrationControl{st: adminhandler.MigrationStatus{
+		ClusterVersion: 1,
+		BinaryVersion:  2,
+		Pending:        []adminhandler.Migration{{Version: 2, Description: "rewrite sidecars"}},
+	}}
+
+	handler := adminhandler.NewAdminAPI(adminhandler.Options{Migrations: ctl})
+
+	s, err := adminapi.NewServer(handler)
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(adminhandler.UIMiddleware()(bearerAuth(token, s)))
+	t.Cleanup(srv.Close)
+
+	client, err := adminapi.NewClient(srv.URL, adminapi.WithClient(&http.Client{
+		Transport: bearerTransport{token: token, base: http.DefaultTransport},
+	}))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	st, err := client.GetMigrationStatus(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, adminapi.ClusterStateOk, st.State)
+	assert.False(t, st.UpToDate)
+	require.Len(t, st.Pending, 1)
+	assert.Equal(t, "rewrite sidecars", st.Pending[0].Description)
+
+	st, err = client.ApplyMigrations(ctx)
+	require.NoError(t, err)
+	assert.True(t, ctl.applied)
+	assert.True(t, st.UpToDate)
+	assert.Equal(t, 2, st.ClusterSchemaVersion)
+}
+
+// TestAdminServer_MigrationsConflict: an apply that cannot run now surfaces as
+// a 409 through the generated client, not as a generic failure.
+func TestAdminServer_MigrationsConflict(t *testing.T) {
+	token := "s3cr3t"
+	ctl := &stubMigrationControl{
+		st:  adminhandler.MigrationStatus{ClusterVersion: 2, BinaryVersion: 1},
+		err: errors.Wrap(adminhandler.ErrMigrationConflict, "cluster schema is newer than this binary"),
+	}
+
+	handler := adminhandler.NewAdminAPI(adminhandler.Options{Migrations: ctl})
+
+	s, err := adminapi.NewServer(handler)
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(adminhandler.UIMiddleware()(bearerAuth(token, s)))
+	t.Cleanup(srv.Close)
+
+	client, err := adminapi.NewClient(srv.URL, adminapi.WithClient(&http.Client{
+		Transport: bearerTransport{token: token, base: http.DefaultTransport},
+	}))
+	require.NoError(t, err)
+
+	_, err = client.ApplyMigrations(context.Background())
+
+	var apiErr *adminapi.ErrorStatusCode
+
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusConflict, apiErr.StatusCode)
 }

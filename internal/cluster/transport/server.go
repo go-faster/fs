@@ -13,17 +13,29 @@ import (
 	"github.com/go-faster/fs/internal/cluster"
 )
 
-// Server serves a node's local fragment store to its peers. Wire it onto the
-// cluster listener; it is an http.Handler.
+// Server serves a node's local fragment store to its peers, plus — when wired
+// with WithStatus — the node's live runtime state. Wire it onto the cluster
+// listener; it is an http.Handler.
 type Server struct {
 	store  Store
 	secret Secret
 	mux    *http.ServeMux
 	now    func() time.Time
+	// nodeStatus reports this node's live state; nil serves 501.
+	nodeStatus StatusFunc
+}
+
+// ServerOption configures a Server.
+type ServerOption func(*Server)
+
+// WithStatus makes the node serve its live runtime state to peers (GET
+// /v1/status), the source the cluster-wide admin view aggregates.
+func WithStatus(fn StatusFunc) ServerOption {
+	return func(s *Server) { s.nodeStatus = fn }
 }
 
 // NewServer builds the fragment server for a node-local store.
-func NewServer(store Store, secret Secret) *Server {
+func NewServer(store Store, secret Secret, opts ...ServerOption) *Server {
 	s := &Server{
 		store:  store,
 		secret: secret,
@@ -31,11 +43,16 @@ func NewServer(store Store, secret Secret) *Server {
 		now:    time.Now,
 	}
 
+	for _, opt := range opts {
+		opt(s)
+	}
+
 	s.mux.HandleFunc("PUT /v1/fragments/{disk}/{name...}", s.put)
 	s.mux.HandleFunc("GET /v1/fragments/{disk}/{name...}", s.get)
 	s.mux.HandleFunc("HEAD /v1/fragments/{disk}/{name...}", s.stat)
 	s.mux.HandleFunc("DELETE /v1/fragments/{disk}/{name...}", s.delete)
 	s.mux.HandleFunc("GET /v1/names/{disk}/{prefix...}", s.list)
+	s.mux.HandleFunc("GET /v1/status", s.serveStatus)
 
 	return s
 }

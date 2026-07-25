@@ -1,0 +1,74 @@
+# The fs cluster: three racks of one node each, one rack per kind worker zone.
+#
+# Three racks is the minimum the default rf2.5 scheme is placeable on (it puts
+# two full replicas plus parity on three distinct failure domains), so this is
+# the smallest topology that still behaves like the real thing: kill a worker
+# and the cluster is degraded but readable, exactly as it would be in a zone
+# outage.
+#
+# Node names follow <cluster>-<rack>-<index>, so the pods are fs-a-0, fs-b-0
+# and fs-c-0, and the S3 Service is svc/fs in this namespace.
+apiVersion: fs.go-faster.org/v1alpha1
+kind: FSCluster
+metadata:
+  name: fs
+  namespace: fs-dev
+spec:
+  # image is omitted on purpose: it defaults to the fs release this operator
+  # version was validated against. Set spec.image.tag to try another build.
+  scheme: rf2.5
+
+  topology:
+    racks:
+      - name: a
+        nodes: 1
+        zone: zone-a
+      - name: b
+        nodes: 1
+        zone: zone-b
+      - name: c
+        nodes: 1
+        zone: zone-c
+    # There is one worker per zone, so strict anti-affinity is satisfiable and
+    # keeps the failure model honest — a rack really is a machine here.
+    podAntiAffinity: Required
+
+  storage:
+    disks:
+      - name: d0
+        size: 10Gi
+    # Dev: drop the PVCs with the cluster so `make clean` actually reclaims the
+    # disk. Production defaults to Retain.
+    reclaimPolicy: Delete
+
+  s3:
+    service:
+      # ClusterIP + `make port-forward` rather than NodePort: the Service gets
+      # no fixed node port, so there is nothing stable to map into kind.
+      type: ClusterIP
+      port: 8080
+
+  etcd:
+    external:
+      endpoints:
+        - http://etcd-0.etcd.fs-dev.svc:2379
+        - http://etcd-1.etcd.fs-dev.svc:2379
+        - http://etcd-2.etcd.fs-dev.svc:2379
+    # Dev: tearing the cluster down should not leave its keys behind for the
+    # next `make up` to trip over. Off by default on a shared etcd.
+    cleanupOnDelete: true
+
+  observability:
+    logLevel: debug
+    # No prometheus-operator in this kind cluster; scrape the metrics port
+    # directly via port-forward instead.
+    podMonitor: false
+
+  podTemplate:
+    # Modest requests so three fs nodes plus three etcd members fit a laptop.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi

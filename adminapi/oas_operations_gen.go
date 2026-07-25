@@ -6,12 +6,14 @@ package adminapi
 type OperationName = string
 
 const (
+	ApplyMigrationsOperation      OperationName = "ApplyMigrations"
 	ControlRebalanceOperation     OperationName = "ControlRebalance"
 	CreateAccessKeyOperation      OperationName = "CreateAccessKey"
 	DeleteAccessKeyOperation      OperationName = "DeleteAccessKey"
 	GetBucketSchemeOperation      OperationName = "GetBucketScheme"
 	GetClusterStatusOperation     OperationName = "GetClusterStatus"
 	GetInfoOperation              OperationName = "GetInfo"
+	GetMigrationStatusOperation   OperationName = "GetMigrationStatus"
 	GetPublicReadBucketsOperation OperationName = "GetPublicReadBuckets"
 	GetRebalanceStatusOperation   OperationName = "GetRebalanceStatus"
 	ListAccessKeysOperation       OperationName = "ListAccessKeys"

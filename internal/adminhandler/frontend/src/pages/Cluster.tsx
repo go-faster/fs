@@ -1,5 +1,12 @@
-import { useGetClusterStatus } from "../api/admin";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  getGetMigrationStatusQueryKey,
+  useApplyMigrations,
+  useGetClusterStatus,
+  useGetMigrationStatus,
+} from "../api/admin";
 import type { ClusterDisk, ClusterNode } from "../api/model";
+import { useToast } from "../components/toast";
 
 // Binary byte units, matching the sizing docs (TiB/GiB, not TB/GB).
 function fmtBytes(n: number): string {
@@ -66,6 +73,67 @@ function Disk({ d }: { d: ClusterDisk }) {
   );
 }
 
+// NodeLive renders what only the node itself knows — its queues, runner and
+// scrub totals. A node that did not answer says so, with the reason: an empty
+// live row would otherwise read as a healthy, idle node.
+function NodeLive({ n }: { n: ClusterNode }) {
+  if (!n.live) {
+    return (
+      <span
+        className="chip warn"
+        title={n.live_error ?? "the node did not report its live state"}
+      >
+        not reporting
+      </span>
+    );
+  }
+
+  const l = n.live;
+  const rebalancing =
+    l.rebalance_state === "running" || l.rebalance_state === "waiting";
+
+  return (
+    <>
+      <span
+        className={`chip ${l.repair_queue_depth > 0 ? "on" : ""}`}
+        title="Objects with pending async replication/repair work on this node."
+      >
+        queue {l.repair_queue_depth}
+      </span>
+      {rebalancing && (
+        <span className="chip on">
+          {l.rebalance_state} · {l.rebalance_relocated}/{l.rebalance_objects}
+        </span>
+      )}
+      {l.rebuilt_fragments > 0 && (
+        <span
+          className="chip"
+          title="Fragments rebuilt by scrubs on this node."
+        >
+          rebuilt {l.rebuilt_fragments}
+        </span>
+      )}
+      {l.corrupt_replicas > 0 && (
+        <span
+          className="chip warn"
+          title="Replica payloads that failed checksum verification (bit-rot)."
+        >
+          corrupt {l.corrupt_replicas}
+        </span>
+      )}
+      {l.ec_unverified && (
+        <span
+          className="chip warn"
+          title="The node's last scrub pass saw an EC set failing parity verification."
+        >
+          EC unverified
+        </span>
+      )}
+      {l.version && <span className="node__ver">{l.version}</span>}
+    </>
+  );
+}
+
 function Rack({ id, nodes }: { id: string; nodes: ClusterNode[] }) {
   let total = 0;
   let free = 0;
@@ -100,6 +168,9 @@ function Rack({ id, nodes }: { id: string; nodes: ClusterNode[] }) {
           <div className="node__head">
             <span className="node__id">{n.id}</span>
             {n.addr && <span className="node__addr">{n.addr}</span>}
+            <span className="node__live">
+              <NodeLive n={n} />
+            </span>
           </div>
           {n.disks.map((d) => (
             <Disk d={d} key={d.id} />
@@ -107,6 +178,91 @@ function Rack({ id, nodes }: { id: string; nodes: ClusterNode[] }) {
         </div>
       ))}
     </section>
+  );
+}
+
+// Migrations is the schema panel: where the cluster's schema stands against
+// this binary's, and — once every node runs the new binary — the control that
+// applies what is pending, cluster-wide under the migrate election.
+function Migrations() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useGetMigrationStatus({ query: { refetchInterval: 10000 } });
+
+  const apply = useApplyMigrations({
+    mutation: {
+      onSuccess: (st) => {
+        toast.notify(
+          st.last_applied?.length
+            ? `Migrated to schema v${st.cluster_schema_version}`
+            : "Nothing to migrate",
+          "success",
+        );
+        void qc.invalidateQueries({
+          queryKey: getGetMigrationStatusQueryKey(),
+        });
+      },
+      onError: (err) => toast.notify(err.error_message, "error"),
+    },
+  });
+
+  const m = q.data;
+  if (!m || m.state === "disabled") return null;
+
+  const joined = m.cluster_schema_version > 0;
+
+  return (
+    <>
+      <div className="section-title">Schema</div>
+      <div className="card">
+        <h2>
+          Migrations
+          <span className="sub">
+            cluster v{joined ? m.cluster_schema_version : "—"} · binary v
+            {m.binary_schema_version}
+          </span>
+        </h2>
+
+        {m.up_to_date ? (
+          <p className="muted-note">
+            Every schema migration this binary knows about has been applied.
+          </p>
+        ) : !joined ? (
+          <p className="muted-note">
+            No schema version is recorded yet — no node has joined this cluster.
+          </p>
+        ) : (
+          <>
+            <p className="muted-note">
+              {m.pending.length} pending{" "}
+              {m.pending.length === 1 ? "migration" : "migrations"}. Apply once
+              a rolling upgrade has replaced every node's binary; until then the
+              cluster keeps operating at its current schema.
+            </p>
+            <ul className="migrations">
+              {m.pending.map((p) => (
+                <li key={p.version}>
+                  <span className="chip">v{p.version}</span> {p.description}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {m.last_error && <div className="err-box">{m.last_error}</div>}
+
+        <div className="actions" style={{ marginTop: "14px" }}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => apply.mutate()}
+            disabled={m.running || apply.isPending || m.pending.length === 0}
+          >
+            {m.running || apply.isPending ? "Migrating…" : "Apply migrations"}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -164,6 +320,14 @@ export default function Cluster() {
             {nearFull} {nearFull === 1 ? "disk" : "disks"} over 90%
           </span>
         )}
+        {c.nodes_not_reporting > 0 && (
+          <span
+            className="pill degraded"
+            title="Nodes that did not answer the live-state request: unreachable, or running a binary that does not serve it. Their capacity and placement still come from the control plane."
+          >
+            {c.nodes_not_reporting} of {c.node_count} not reporting
+          </span>
+        )}
         {schemaSkew ? (
           <span
             className="pill degraded"
@@ -214,12 +378,25 @@ export default function Cluster() {
             Placement skew
           </div>
         </div>
+        <div>
+          <div className={`n ${c.repair_queue_depth > 0 ? "degraded" : ""}`}>
+            {c.repair_queue_depth}
+          </div>
+          <div
+            className="l"
+            title="Objects with pending async replication/repair work, summed over the nodes that reported."
+          >
+            Repair queue
+          </div>
+        </div>
       </div>
 
       <div className="section-title">Failure domains</div>
       {rackIds.map((id) => (
         <Rack id={id} nodes={byRack[id]} key={id} />
       ))}
+
+      <Migrations />
     </>
   );
 }
