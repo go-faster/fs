@@ -48,6 +48,24 @@ type PutRequest struct {
 func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error) {
 	c.waitKey(req.Bucket, req.Key)
 
+	// A body with no declared length (Transfer-Encoding: chunked) arrives as
+	// Size -1, which cannot be placed: fragment.Plan needs the object size
+	// before a single byte is written. Draw the body and measure it first.
+	// Single-node backends stream such a body straight through, so this cost is
+	// confined to the backend that actually needs the size.
+	if req.Size < 0 {
+		body, size, cleanup, err := spool(req.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		defer cleanup()
+
+		spooled := *req
+		spooled.Body, spooled.Size = body, size
+		req = &spooled
+	}
+
 	topo := c.topo.Topology()
 	s := c.EffectiveScheme(ctx, req.Bucket)
 	pkey := placement.ObjectKey(req.Bucket, req.Key)

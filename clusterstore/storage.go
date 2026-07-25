@@ -22,6 +22,7 @@ var _ fs.Storage = (*Storage)(nil)
 // writers on this node. Cross-node conditional-write linearizability needs a
 // cluster lock and arrives with the etcd control plane; until then S3 clients
 // pinned to a node (or a sticky load balancer) get full CAS semantics.
+// Unconditional writes never take that lock — see PutObject.
 type Storage struct {
 	coord *Coordinator
 	locks keyLocks
@@ -136,11 +137,20 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, err
 	}
 
-	l := s.locks.of(req.Bucket, req.Key)
-	l.Lock()
-	defer l.Unlock()
-
+	// The per-key lock exists to make a conditional write's check and write
+	// atomic, so an unconditional PUT — which has nothing to check — must not
+	// take it. Holding it across coord.Put would hold it across the read of the
+	// request body, letting one slow client block every other writer of that
+	// key, and deadlocking a client that issues a second PUT to the same key
+	// while it is still streaming the first: the second waits for the lock, the
+	// first waits for body bytes the client will not send until the second
+	// returns, and both die on the read timeout.
 	if req.IfNoneMatch != "" || req.IfMatch != "" {
+		l := s.locks.of(req.Bucket, req.Key)
+		l.Lock()
+
+		defer l.Unlock()
+
 		var (
 			exists      bool
 			currentETag string
