@@ -34,10 +34,17 @@ ETCD_OPERATOR_DIR ?= /src/etcd/etcd-operator
 ETCD_OPERATOR_VERSION ?= v0.2.0
 ETCD_OPERATOR_MANIFEST := $(ETCD_OPERATOR_DIR)/dist/install-$(ETCD_OPERATOR_VERSION).yaml
 
+# Must match spec.size in manifests/10-etcd.yaml.
+ETCD_SIZE ?= 3
+
 # The FSCluster of manifests/20-fscluster.yaml and its S3 Service (named after
 # the cluster).
 FSCLUSTER ?= fs
 LOCAL_PORT ?= 8080
+
+# Where the cluster keeps its state in etcd. This is the operator's default
+# (/fs/<namespace>/<name>) — spec.etcd.prefix is left unset and is immutable.
+ETCD_PREFIX ?= /fs/$(NS)/$(FSCLUSTER)
 
 # Bounds every wait; a rollout that has not converged by now is a bug, not
 # slowness.
@@ -72,14 +79,20 @@ operator: ## Install/upgrade fs-operator from the OCI chart.
 		--namespace $(OPERATOR_NS) --create-namespace \
 		--wait --timeout $(TIMEOUT)
 
+# The two waits below are both deliberate. The etcd-operator creates the
+# StatefulSet asynchronously, so the object has to exist before anything can
+# wait on it; and it then grows the cluster one member at a time, so the
+# StatefulSet is briefly "complete" at one and at two replicas — `rollout
+# status` would return on the first of those. Waiting for readyReplicas to
+# reach ETCD_SIZE is the quorum fs actually needs. The EtcdCluster resource
+# itself carries no status to wait on in etcd-operator v0.2.0.
 .PHONY: etcd
 etcd: etcd-operator ## Create the three-member EtcdCluster and wait for it.
 	$(KUBECTL_CTX) apply -f manifests/00-namespace.yaml
 	$(KUBECTL_CTX) apply -f manifests/10-etcd.yaml
-	# The etcd-operator creates the StatefulSet asynchronously, so wait for the
-	# object to exist before waiting on its rollout.
 	$(KUBECTL_CTX) -n $(NS) wait --for=create statefulset/etcd --timeout=2m
-	$(KUBECTL_CTX) -n $(NS) rollout status statefulset/etcd --timeout=$(TIMEOUT)
+	$(KUBECTL_CTX) -n $(NS) wait --for=jsonpath='{.status.readyReplicas}'=$(ETCD_SIZE) \
+		statefulset/etcd --timeout=$(TIMEOUT)
 
 .PHONY: etcd-operator
 etcd-operator: ## Install the etcd-operator from $(ETCD_OPERATOR_DIR).
@@ -129,6 +142,25 @@ logs-fs: ## Follow the logs of every fs node.
 clean: ## Delete the fs cluster and its tenancy, keep kind and the operators.
 	-$(KUBECTL_CTX) delete -f manifests/30-tenancy.yaml --ignore-not-found
 	-$(KUBECTL_CTX) delete -f manifests/20-fscluster.yaml --ignore-not-found --wait --timeout=$(TIMEOUT)
+	$(MAKE) --no-print-directory etcd-purge
+
+# fs-operator 0.5.0 declares spec.etcd.cleanupOnDelete but does not implement
+# it — nothing reads the field. Deleting the FSCluster therefore leaves
+# everything under ETCD_PREFIX behind, including the root S3 credential, sealed
+# with a cluster secret the next incarnation will not have. fs then logs
+# "Skipping unreadable cluster credential", declines to re-seed the root
+# credential over the stale entry, and the operator's own S3 client gets
+# InvalidAccessKeyId: the FSCluster goes Ready while every FSBucket hangs on
+# "cluster S3 not reachable yet". Purging the prefix is what makes
+# `make clean && make up` work. Drop this target once the operator implements
+# the field.
+.PHONY: etcd-purge
+etcd-purge: ## Delete the fs cluster's keys from etcd. Part of `clean`.
+	@if $(KUBECTL_CTX) -n $(NS) get pod etcd-0 >/dev/null 2>&1; then \
+		$(KUBECTL_CTX) -n $(NS) exec etcd-0 -- etcdctl del --prefix $(ETCD_PREFIX); \
+	else \
+		echo "etcd-0 not running; nothing to purge under $(ETCD_PREFIX)"; \
+	fi
 
 .PHONY: down
 down: ## Delete the whole kind cluster.

@@ -14,8 +14,12 @@ metadata:
 spec:
   clusterRef:
     name: fs
-  # Dev: let deleting the FSBucket delete the bucket and its objects.
-  reclaimPolicy: Delete
+  # Retain (the default) on purpose, even though this is a dev setup: with
+  # Delete the operator refuses to finalize a bucket that still holds objects
+  # ("bucket dev is not empty"), so `make clean` blocks until you empty it by
+  # hand. Retain just stops managing the bucket; the data goes away with the
+  # cluster's PVCs, which 20-fscluster.yaml already reclaims on delete.
+  reclaimPolicy: Retain
 ---
 # A generated credential: the operator mints the access/secret pair once and
 # writes it to an owned Secret named <metadata.name>-credentials, with keys

@@ -54,9 +54,12 @@ spec:
         - http://etcd-0.etcd.fs-dev.svc:2379
         - http://etcd-1.etcd.fs-dev.svc:2379
         - http://etcd-2.etcd.fs-dev.svc:2379
-    # Dev: tearing the cluster down should not leave its keys behind for the
-    # next `make up` to trip over. Off by default on a shared etcd.
-    cleanupOnDelete: true
+    # NOTE: spec.etcd.cleanupOnDelete exists in the CRD but is not implemented
+    # in fs-operator 0.5.0 — nothing reads it, so setting it here would only
+    # imply a guarantee that does not hold. Deleting this FSCluster therefore
+    # leaves its keys under /fs/fs-dev/fs behind, including the sealed root
+    # credential, which a re-created cluster cannot unseal (its cluster secret
+    # is new) and will not replace. `make clean` purges the prefix instead.
 
   observability:
     logLevel: debug
