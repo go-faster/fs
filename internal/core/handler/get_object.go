@@ -3,8 +3,9 @@ package handler
 import (
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
+
+	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
 )
@@ -32,10 +33,17 @@ func quoteETag(etag string) string {
 	return `"` + etag + `"`
 }
 
-// serveObject writes an object response, delegating to http.ServeContent when the
-// reader is seekable so that Range requests (206 + Content-Range) and conditional
-// headers (If-Range, If-Modified-Since, If-Match, If-None-Match) are handled. It is
-// safe for HEAD requests. The reader is always closed.
+// serveObject writes an object response through http.ServeContent, which handles
+// Range requests (206 + Content-Range), conditional headers (If-Range,
+// If-Modified-Since, If-Match, If-None-Match), Last-Modified, the
+// 206/304/412/416 status codes and the empty body of a HEAD. The reader is
+// always closed.
+//
+// A backend may hand back a reader that cannot seek — the cluster backend
+// streams a replica from a peer over HTTP whenever the fragment it picks is not
+// on the local disk. That is an implementation detail of where the bytes happen
+// to live, so it must not change what the client sees: a streamed reader is
+// wrapped in streamSeeker rather than served through a degraded path.
 func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.GetObjectResponse) {
 	defer func() { _ = resp.Reader.Close() }()
 
@@ -50,26 +58,97 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	if rs, ok := resp.Reader.(io.ReadSeeker); ok {
-		// ServeContent handles Range, conditional requests, Content-Range,
-		// Last-Modified and the 206/304/412/416 status codes, and writes no body
-		// for HEAD requests.
-		http.ServeContent(w, r, key, resp.LastModified, rs)
-		return
+	rs, seekable := resp.Reader.(io.ReadSeeker)
+	if !seekable {
+		// streamSeeker can only move forward, and ServeContent seeks back and
+		// forth between the parts of a multi-range request. Drop the header:
+		// serving the whole object for a multi-range GET is what S3 itself
+		// does, since it supports only one range per request.
+		if isMultiRange(r.Header.Get("Range")) {
+			r = r.Clone(r.Context())
+			r.Header.Del("Range")
+		}
+
+		rs = &streamSeeker{r: resp.Reader, size: resp.Size}
 	}
 
-	// Fallback for non-seekable readers: full body, no range support.
-	if resp.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(resp.Size, 10))
+	http.ServeContent(w, r, key, resp.LastModified, rs)
+}
+
+// isMultiRange reports whether a Range header names more than one range.
+func isMultiRange(header string) bool {
+	return strings.Contains(header, ",")
+}
+
+// streamSeeker adapts a forward-only stream to the io.ReadSeeker http.ServeContent
+// requires, using a size the caller already knows (fs.GetObjectResponse.Size,
+// which every backend reports).
+//
+// ServeContent only ever seeks to the end to learn the size, back to the start,
+// and then forward to the start of the single range it is about to write. None
+// of that needs a real seek: the size is known up front, and moving forward is
+// a discard. Seeking is therefore recorded and applied lazily on the next Read,
+// so learning the size costs nothing — an eager discard would drain the whole
+// stream just to answer it.
+//
+// Backward movement is impossible on a stream and is reported rather than
+// silently serving the wrong bytes; serveObject keeps ServeContent away from
+// the one case (multi-range) that would ask for it.
+type streamSeeker struct {
+	r    io.Reader
+	size int64
+
+	// off is where ServeContent believes it is; read is how much of r has
+	// actually been consumed. They differ between a Seek and the Read that
+	// makes it real.
+	off  int64
+	read int64
+}
+
+func (s *streamSeeker) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = s.off + offset
+	case io.SeekEnd:
+		abs = s.size + offset
+	default:
+		return 0, errors.Errorf("invalid whence %d", whence)
 	}
 
-	if !resp.LastModified.IsZero() {
-		w.Header().Set("Last-Modified", resp.LastModified.UTC().Format(http.TimeFormat))
+	if abs < 0 {
+		return 0, errors.Errorf("seek to negative position %d", abs)
 	}
 
-	w.WriteHeader(http.StatusOK)
+	s.off = abs
 
-	if r.Method != http.MethodHead {
-		_, _ = io.Copy(w, resp.Reader)
+	return abs, nil
+}
+
+func (s *streamSeeker) Read(p []byte) (int, error) {
+	if s.off < s.read {
+		return 0, errors.Errorf("cannot seek backwards on a streamed object (consumed %d, want %d)", s.read, s.off)
 	}
+
+	if skip := s.off - s.read; skip > 0 {
+		n, err := io.CopyN(io.Discard, s.r, skip)
+		s.read += n
+
+		if err != nil {
+			return 0, errors.Wrap(err, "skip to range start")
+		}
+	}
+
+	if s.off >= s.size {
+		return 0, io.EOF
+	}
+
+	n, err := s.r.Read(p)
+	s.read += int64(n)
+	s.off += int64(n)
+
+	return n, err //nolint:wrapcheck // Passing the reader's error (incl. io.EOF) through unchanged.
 }
