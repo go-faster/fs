@@ -58,6 +58,43 @@ Extract the passing node IDs from the JUnit report, confirm they pass
 file sorted so diffs are legible. Never add a test that only passes
 intermittently — a flaky entry blocks every unrelated PR.
 
+## Cluster mode
+
+The [`s3tests-cluster`](../workflows/s3tests-cluster.yml) workflow runs the
+same suite against a **clustered** fs — three nodes in three racks over etcd,
+writing at quorum across failure domains — because a client must not be able
+to tell how many nodes are behind the endpoint. `clusterstore`'s Go conformance
+test (`storagetest.Run`) already covers the `fs.Storage` contract; it cannot
+see HTTP status codes, headers, SigV4 or real boto3 clients, which is the gap
+this closes.
+
+Bring the cluster up locally and point the suite at it:
+
+```sh
+./scripts/s3tests-cluster.sh up     # etcd (Docker) + 3 fs nodes, S3 on :8177
+S3TEST_CONF=$PWD/.github/s3tests/cluster/s3tests.conf \
+  python -m pytest -q $(sed 's/#.*//' /path/to/gating-set.txt)
+./scripts/s3tests-cluster.sh down
+```
+
+Set `ETCD_ENDPOINT` to reuse an etcd you already have (CI does this with a
+service container) instead of letting the script start one.
+
+Files, alongside the single-node ones above:
+
+- **`cluster/node.yaml.tmpl`** — one node's config, rendered per node by the
+  script. Carries the same s3-tests credentials as `server.yaml`, so the auth
+  surface is identical in both modes.
+- **`cluster/s3tests.conf`** — suite config; identical to `s3tests.conf` except
+  it points at node 0.
+- **`cluster/known-failures.txt`** — allow-listed tests that pass single-node
+  but **fail in cluster mode**. The job gates on `allow.txt` minus this file.
+
+`known-failures.txt` is a bug list, not a scope statement: unlike `allow.txt`,
+where an absent test means "unimplemented or out of scope", every line here is
+behaviour that already works on `storagefs` and is wrong on the replicated data
+plane. It should only ever shrink. The file itself documents each root cause.
+
 ## Reproducing a gating failure locally
 
 ```sh

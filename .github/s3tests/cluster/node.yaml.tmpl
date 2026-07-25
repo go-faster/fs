@@ -1,0 +1,85 @@
+# Config template for one node of the s3tests cluster. Rendered per node by
+# scripts/s3tests-cluster.sh, which substitutes the @PLACEHOLDER@ tokens.
+#
+# The credentials are the ceph/s3-tests ones from cluster/s3tests.conf, the
+# same set the single-node .github/s3tests/server.yaml carries — the suite must
+# see an identical auth surface in both modes or the comparison is meaningless.
+# Keep the two files in sync when those credentials change.
+server:
+  addr: "@S3_ADDR@"
+  read_timeout: 60s
+  write_timeout: 120s
+  idle_timeout: 300s
+  health_path: /health
+
+storage:
+  root: "@ROOT@"
+  # The whole point of this suite: the replicated data plane, not storagefs.
+  type: cluster
+  # Throwaway data on a CI runner; fsync per object would dominate the run.
+  fsync: none
+
+auth:
+  # source is left at the default (file): each node carries the static keys
+  # below, so any node can authenticate any request without a shared store.
+  # auth.source: etcd is runtime key management — a different feature, and not
+  # what a conformance run measures.
+  keys:
+    - access_key: 0555b35654ad1656d804
+      secret_key: "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: NOPQRSTUVWXYZABCDEFG
+      secret_key: "nopqrstuvwxyzabcdefghijklmnabcdefghijklm"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: HIJKLMNOPQRSTUVWXYZA
+      secret_key: "opqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: ABCDEFGHIJKLMNOPQRST
+      secret_key: "abcdefghijklmnopqrstuvwxyzabcdefghijklmn"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: AAAAAAAAAAAAAAAAAAaa
+      secret_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      grants:
+        - bucket: "*"
+          permission: admin
+    - access_key: BBBBBBBBBBBBBBBBBBbb
+      secret_key: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      grants:
+        - bucket: "*"
+          permission: admin
+
+cluster:
+  node_id: "@NODE_ID@"
+  # One rack per node: N nodes are N failure domains, which is what makes the
+  # default rf2.5 scheme placeable.
+  rack: "@RACK@"
+  addr: "@PEER_ADDR@"
+  advertise_addr: "@PEER_ADDR@"
+  secret: "@SECRET@"
+  scheme: "rf2.5"
+  disks:
+    - id: d0
+      path: "@DISK@"
+  etcd:
+    endpoints: ["@ETCD@"]
+    prefix: "@ETCD_PREFIX@"
+    ttl: 5s
+  rebalance:
+    # Short settle/cooldown: the suite creates and drops buckets constantly, and
+    # a slow rebalancer would still be catching up when the run ends.
+    settle: 2s
+    cooldown: 2s
+
+observability:
+  service_name: fs-s3tests-cluster
+  enable_request_logging: false
+  enable_metrics: false
+  enable_tracing: false

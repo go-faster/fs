@@ -47,3 +47,15 @@ compat:
 cli-smoke:
 	./scripts/cli-smoke.sh
 .PHONY: cli-smoke
+
+# Bring up / tear down the 3-node cluster the ceph/s3-tests conformance suite
+# runs against (.github/workflows/s3tests-cluster.yml). Needs Docker for etcd
+# unless ETCD_ENDPOINT is set. See .github/s3tests/README.md for running the
+# suite against it.
+s3tests-cluster-up:
+	./scripts/s3tests-cluster.sh up
+.PHONY: s3tests-cluster-up
+
+s3tests-cluster-down:
+	./scripts/s3tests-cluster.sh down
+.PHONY: s3tests-cluster-down

@@ -16,6 +16,10 @@
 
 # S3 server data directory
 .s3data/
+
+# Run dir of scripts/s3tests-cluster.sh: node configs, disks, logs, the built
+# binary. Removed by `s3tests-cluster.sh down`, ignored in case a run is killed.
+.s3tests-cluster/
 bin/
 
 dist

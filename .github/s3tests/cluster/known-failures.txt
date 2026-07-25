@@ -1,0 +1,16 @@
+# Allow-listed tests that pass against a single-node server but FAIL against a
+# cluster. The s3tests-cluster workflow subtracts this file from allow.txt to
+# get its gating set.
+#
+# EMPTY, and meant to stay that way: cluster mode currently passes the full
+# ../allow.txt, all 220 tests, with no exclusions.
+#
+# This is a BUG LIST, not a scope statement. Contrast ../allow.txt, where an
+# absent test means "not implemented / out of scope"; a line here would mean
+# behaviour that already works on storagefs and is broken on the replicated
+# data plane. Add one only to unblock CI while a fix is in flight, with the
+# root cause and the issue number, and take it out again with the fix.
+#
+# The 19 entries this file was created with are gone: they were four bugs
+# (#98 ranged GET, #99 conditional GET, #100 zero-byte Content-Length,
+# #101 chunked PutObject), all fixed.
