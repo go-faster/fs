@@ -193,3 +193,45 @@ func TestClusterWiring(t *testing.T) {
 // diskWeight is a config weight as a pointer, which is how an explicit zero
 // stays distinguishable from an omitted key.
 func diskWeight(w float64) *float64 { return &w }
+
+// TestClusterRegistersTheAdvertisedAddressFromEnv pins the one thing a node's
+// registry record must carry: the address peers dial it on.
+//
+// FS_CLUSTER_ADVERTISE_ADDR exists so one config can serve every instance —
+// a pod's stable DNS name, a compose service name — and validation accepts it
+// in place of the config value. Registering the config field instead meant such
+// a node started, passed its health check, and registered an address of ""; the
+// failure surfaced only on the peers, as "node X has no address" against every
+// write.
+func TestClusterRegistersTheAdvertisedAddressFromEnv(t *testing.T) {
+	endpoint := startTestEtcd(t)
+	addr := testFreeAddr(t)
+
+	cfg := validClusterConfig()
+	cfg.Cluster.NodeID = ""
+	cfg.Cluster.AdvertiseAddr = ""
+	cfg.Cluster.Addr = addr
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-advertise", TTL: 2 * time.Second}
+	cfg.Cluster.Disks = []ClusterDiskConfig{{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")}}
+	cfg.Storage.Fsync = "none"
+
+	t.Setenv("FS_CLUSTER_NODE_ID", "env-node")
+	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", addr)
+
+	// The config is valid with the identity coming only from the environment.
+	require.NoError(t, cfg.Validate())
+
+	rt, err := buildCluster(t.Context(), zaptest.NewLogger(t), cfg, t.TempDir())
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = rt.close() })
+
+	require.Eventually(t, func() bool {
+		return rt.coord.Topology().DiskCount() == 1
+	}, 15*time.Second, 20*time.Millisecond)
+
+	nodes := rt.coord.Topology().Nodes
+	require.Len(t, nodes, 1)
+	assert.EqualValues(t, "env-node", nodes[0].ID)
+	assert.Equal(t, addr, nodes[0].Addr, "peers must have something to dial")
+}
