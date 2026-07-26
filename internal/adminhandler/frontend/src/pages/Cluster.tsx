@@ -151,6 +151,14 @@ function NodeLive({ n }: { n: ClusterNode }) {
           corrupt {l.corrupt_replicas}
         </span>
       )}
+      {l.objects_held !== undefined && (
+        <span
+          className={`chip ${(l.never_verified ?? 0) > 0 ? "warn" : ""}`}
+          title={coverageTitle(l)}
+        >
+          {coverageLabel(l)}
+        </span>
+      )}
       {l.ec_unverified && (
         <span
           className="chip warn"
@@ -162,6 +170,43 @@ function NodeLive({ n }: { n: ClusterNode }) {
       {l.version && <span className="node__ver">{l.version}</span>}
     </>
   );
+}
+
+// coverageLabel says how stale this node's scrub coverage is. Counts of scrub
+// work say how busy the scrubber was; this says whether it is keeping up.
+function coverageLabel(l: NonNullable<ClusterNode["live"]>): string {
+  const never = l.never_verified ?? 0;
+  if (never > 0) return `unverified ${never.toLocaleString()}`;
+
+  if (!l.oldest_verified) return "unverified";
+
+  return `verified ${fmtAge(l.oldest_verified)}`;
+}
+
+function coverageTitle(l: NonNullable<ClusterNode["live"]>): string {
+  const held = (l.objects_held ?? 0).toLocaleString();
+  const never = l.never_verified ?? 0;
+
+  if (never > 0) {
+    return `${never.toLocaleString()} of ${held} objects on this node have never been verified.`;
+  }
+
+  return `All ${held} objects on this node have been verified since ${l.oldest_verified}.`;
+}
+
+// fmtAge renders how long ago something happened, which is what makes a cycle
+// falling behind visible: the age recedes.
+function fmtAge(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m ago`;
+
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 function Rack({ id, nodes }: { id: string; nodes: ClusterNode[] }) {

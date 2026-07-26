@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"go.uber.org/zap"
 
 	"github.com/go-faster/fs/internal/adminhandler"
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/etcd"
+	"github.com/go-faster/fs/internal/cluster/objindex"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
@@ -21,6 +23,7 @@ import (
 // during an etcd outage, which is exactly when an operator looks.
 func (rt *clusterRuntime) nodeStatus(ctx context.Context) (transport.NodeStatus, error) {
 	reb := rt.rebalance.localStatus()
+	coverage := rt.scrubCoverage()
 
 	return transport.NodeStatus{
 		NodeID:           string(rt.nodeID),
@@ -45,6 +48,9 @@ func (rt *clusterRuntime) nodeStatus(ctx context.Context) (transport.NodeStatus,
 			CorruptReplicas:  rt.scrub.corrupt.Load(),
 			Converted:        rt.scrub.converted.Load(),
 			ECUnverified:     rt.scrub.ecUnverifiedLastScrub.Load() != 0,
+			OldestVerified:   coverage.Oldest,
+			NeverVerified:    coverage.Never,
+			Held:             coverage.Objects,
 		},
 		Disks: rt.diskStatus(ctx),
 	}, nil
@@ -108,6 +114,56 @@ func (rt *clusterRuntime) diskStatus(ctx context.Context) []transport.NodeDisk {
 	}
 
 	return disks
+}
+
+// scrubCoverage returns the last computed coverage.
+//
+// It is read here rather than computed here: deriving it scans every entry in
+// the index, and this runs on a peer's status request, which is contracted to
+// be cheap and bounded. A status path that walked the node's whole object set
+// would be the same mistake the index exists to remove.
+func (rt *clusterRuntime) scrubCoverage() objindex.Coverage {
+	if cov := rt.coverage.Load(); cov != nil {
+		return *cov
+	}
+
+	return objindex.Coverage{}
+}
+
+// coverageInterval is how often the node re-derives its verification coverage.
+// The numbers move as the scrub advances and as writes add objects nothing has
+// checked yet, so they go stale slowly; the scan is local but proportional to
+// what the node holds, which is why it is not on a request path.
+const coverageInterval = 10 * time.Minute
+
+// RunCoverage keeps this node's verification coverage current.
+//
+// An index that is missing or still building leaves the coverage unset rather
+// than zero: zero would read as "everything verified just now", the opposite of
+// the truth and exactly the reading these numbers exist to prevent.
+func (rt *clusterRuntime) RunCoverage(ctx context.Context) {
+	if rt.index == nil {
+		return
+	}
+
+	ticker := time.NewTicker(coverageInterval)
+	defer ticker.Stop()
+
+	for {
+		if state, err := rt.index.State(); err == nil && state == objindex.StateReady {
+			if cov, err := rt.index.Coverage(); err == nil {
+				rt.coverage.Store(&cov)
+			} else if ctx.Err() == nil {
+				rt.lg.Warn("Computing scrub coverage failed", zap.Error(err))
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // peerStatusTimeout bounds one node's live-state fetch. A status view is a
@@ -252,6 +308,9 @@ func (p *peerStatus) fetchOne(ctx context.Context, node cluster.Node) (*adminhan
 		CorruptReplicas:    st.Scrub.CorruptReplicas,
 		Converted:          st.Scrub.Converted,
 		ECUnverified:       st.Scrub.ECUnverified,
+		OldestVerified:     st.Scrub.OldestVerified,
+		NeverVerified:      st.Scrub.NeverVerified,
+		Held:               st.Scrub.Held,
 		Disks:              liveDisks(st.Disks),
 	}, nil
 }

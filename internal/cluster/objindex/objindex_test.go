@@ -307,3 +307,85 @@ func TestSyncWritesOption(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, int64(100), got.Size)
 }
+
+// TestSetVerifiedKeepsTheEntry checks the two writers stay out of each other's
+// way: only the scrub knows when an object was checked, only the write path
+// knows its size, and neither may erase the other's field.
+func TestSetVerifiedKeepsTheEntry(t *testing.T) {
+	idx := open(t)
+
+	require.NoError(t, idx.Put(entry("photos", "a.jpg", 100, 1)))
+
+	at := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	require.NoError(t, idx.SetVerified([]objindex.Verification{{Bucket: "photos", Key: "a.jpg", At: at}}))
+
+	got, found, err := idx.Get("photos", "a.jpg")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.True(t, at.Equal(got.VerifiedAt))
+	assert.Equal(t, int64(100), got.Size, "the write path's fields survive a verification")
+
+	// A later write keeps the stamp.
+	require.NoError(t, idx.Put(entry("photos", "a.jpg", 55, 2)))
+
+	got, _, err = idx.Get("photos", "a.jpg")
+	require.NoError(t, err)
+	assert.True(t, at.Equal(got.VerifiedAt), "and the verification survives a write")
+	assert.Equal(t, int64(55), got.Size)
+}
+
+// TestSetVerifiedSkipsUnknownObjects: a stamp for something the node does not
+// hold would be an entry with no object behind it, which would then be listed.
+func TestSetVerifiedSkipsUnknownObjects(t *testing.T) {
+	idx := open(t)
+
+	require.NoError(t, idx.SetVerified([]objindex.Verification{
+		{Bucket: "photos", Key: "ghost.jpg", At: time.Now()},
+	}))
+
+	_, found, err := idx.Get("photos", "ghost.jpg")
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	usage, err := idx.Usage("photos")
+	require.NoError(t, err)
+	assert.Zero(t, usage.Objects)
+}
+
+// TestCoverage is the number counters of scrub work cannot give: how stale the
+// node's verification is.
+func TestCoverage(t *testing.T) {
+	idx := open(t)
+
+	for _, key := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		require.NoError(t, idx.Put(entry("photos", key, 10, 1)))
+	}
+
+	cov, err := idx.Coverage()
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), cov.Objects)
+	assert.Equal(t, int64(3), cov.Never, "nothing has been checked yet")
+	assert.True(t, cov.Oldest.IsZero())
+
+	older := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, idx.SetVerified([]objindex.Verification{
+		{Bucket: "photos", Key: "a.jpg", At: newer},
+		{Bucket: "photos", Key: "b.jpg", At: older},
+	}))
+
+	cov, err = idx.Coverage()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), cov.Never, "one object still unchecked")
+	assert.True(t, older.Equal(cov.Oldest), "coverage is only as good as the least recent check")
+
+	require.NoError(t, idx.SetVerified([]objindex.Verification{
+		{Bucket: "photos", Key: "c.jpg", At: newer},
+	}))
+
+	cov, err = idx.Coverage()
+	require.NoError(t, err)
+	assert.Zero(t, cov.Never)
+	assert.True(t, older.Equal(cov.Oldest))
+}

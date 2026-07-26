@@ -469,6 +469,16 @@ type ClusterNodeLive struct {
 	CorruptReplicas int64 `json:"corrupt_replicas"`
 	// Objects rewritten to their bucket's current scheme.
 	ConvertedObjects int64 `json:"converted_objects"`
+	// How many objects this node holds, as its own index counts them. Absent when the node could not
+	// derive it — a missing or still building index — which is not the same as holding none.
+	ObjectsHeld OptInt64 `json:"objects_held"`
+	// How many of them the scrub has never checked. Present alongside objects_held.
+	NeverVerified OptInt64 `json:"never_verified"`
+	// When the least recently checked object was checked. With never_verified at zero this is the age of
+	// the node's scrub coverage: every object it holds has been verified at least since then. Counts of
+	// scrub work say how busy the scrubber was; this says whether it is keeping up, and a cycle falling
+	// behind shows as this receding.
+	OldestVerified OptDateTime `json:"oldest_verified"`
 	// The node's last scrub pass saw an EC set failing parity verification.
 	EcUnverified bool `json:"ec_unverified"`
 }
@@ -556,6 +566,21 @@ func (s *ClusterNodeLive) GetCorruptReplicas() int64 {
 // GetConvertedObjects returns the value of ConvertedObjects.
 func (s *ClusterNodeLive) GetConvertedObjects() int64 {
 	return s.ConvertedObjects
+}
+
+// GetObjectsHeld returns the value of ObjectsHeld.
+func (s *ClusterNodeLive) GetObjectsHeld() OptInt64 {
+	return s.ObjectsHeld
+}
+
+// GetNeverVerified returns the value of NeverVerified.
+func (s *ClusterNodeLive) GetNeverVerified() OptInt64 {
+	return s.NeverVerified
+}
+
+// GetOldestVerified returns the value of OldestVerified.
+func (s *ClusterNodeLive) GetOldestVerified() OptDateTime {
+	return s.OldestVerified
 }
 
 // GetEcUnverified returns the value of EcUnverified.
@@ -646,6 +671,21 @@ func (s *ClusterNodeLive) SetCorruptReplicas(val int64) {
 // SetConvertedObjects sets the value of ConvertedObjects.
 func (s *ClusterNodeLive) SetConvertedObjects(val int64) {
 	s.ConvertedObjects = val
+}
+
+// SetObjectsHeld sets the value of ObjectsHeld.
+func (s *ClusterNodeLive) SetObjectsHeld(val OptInt64) {
+	s.ObjectsHeld = val
+}
+
+// SetNeverVerified sets the value of NeverVerified.
+func (s *ClusterNodeLive) SetNeverVerified(val OptInt64) {
+	s.NeverVerified = val
+}
+
+// SetOldestVerified sets the value of OldestVerified.
+func (s *ClusterNodeLive) SetOldestVerified(val OptDateTime) {
+	s.OldestVerified = val
 }
 
 // SetEcUnverified sets the value of EcUnverified.

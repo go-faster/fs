@@ -223,6 +223,18 @@ swept**, not how much repair work the scrubber has done — counters of work say
 nothing about the objects a pass never reached. A pass that is interrupted never
 stamps completion, so that timestamp only ever means what it says.
 
+`GET /api/v1/cluster/status` reports the same thing per object rather than per
+disk: `oldest_verified` is when the least recently checked object on a node was
+checked, and `never_verified` how many have not been checked at all. With
+`never_verified` at zero, `oldest_verified` is the honest age of that node's
+coverage — every object it holds has been verified at least since then. A cycle
+failing to keep up shows as that timestamp receding, or as a `never_verified`
+that does not fall.
+
+They are absent, not zero, when a node cannot derive them — a missing index, or
+one still building. Zero would read as "holds nothing, everything just
+verified", which is the reading these numbers exist to prevent.
+
 Losing the cursor file costs a repeated pass and nothing else: it is progress,
 not durability state, and a disk that cannot record it is still scrubbed.
 

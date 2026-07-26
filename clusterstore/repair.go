@@ -47,6 +47,8 @@ type Repairer struct {
 
 	// state persists scrub progress per disk; nil means passes never resume.
 	state ScrubStateStore
+	// verified records and answers when objects were last checked.
+	verified VerificationIndex
 	// walker streams local fragment names; nil falls back to a buffered list.
 	walker FragmentWalker
 }
@@ -70,6 +72,9 @@ type RepairerConfig struct {
 	// ScrubState persists per-disk scrub progress so an interrupted pass
 	// resumes instead of restarting. Nil disables resuming.
 	ScrubState ScrubStateStore
+	// Verification records what the scrub has checked and when. Nil keeps the
+	// in-memory set of swept objects, which grows with the node.
+	Verification VerificationIndex
 	// Fragments streams this node's disks for the scrub sweep. Nil falls back
 	// to a buffered listing over the peer transport, which holds every name on
 	// the disk in memory.
@@ -104,6 +109,7 @@ func NewRepairer(cfg RepairerConfig) (*Repairer, error) {
 		sweepGrace: grace,
 		strays:     make(map[string]map[string]time.Time),
 		state:      cfg.ScrubState,
+		verified:   cfg.Verification,
 		walker:     cfg.Fragments,
 	}, nil
 }
@@ -979,15 +985,70 @@ func (r *Repairer) Scrub(ctx context.Context) (*ScrubReport, error) {
 	}
 
 	report := &ScrubReport{}
-	seen := make(map[string]struct{})
+
+	// sweep is what this pass counts as "already done". With a verification
+	// index the answer is a recorded timestamp; without one it is a set of
+	// keys, which is the memory this replaced — it grew with the objects on the
+	// node, and a node at the design target holds a hundred million of them.
+	sweep := newSweepMarks(r.verified, time.Now().UTC())
 
 	for _, disk := range r.scrubOrder(disks) {
-		if err := r.scrubDisk(ctx, self, disk, seen, report); err != nil {
+		if err := r.scrubDisk(ctx, self, disk, sweep, report); err != nil {
 			return report, err
 		}
 	}
 
+	if r.verified != nil {
+		if err := r.verified.Flush(); err != nil {
+			r.onErr("", "", errors.Wrap(err, "flush verification stamps"))
+		}
+	}
+
 	return report, nil
+}
+
+// sweepMarks answers "has this pass already swept that object", and records
+// that it has.
+type sweepMarks struct {
+	index VerificationIndex
+	// started is when this pass began: an object verified at or after it was
+	// swept by this pass, whichever disk found it.
+	started time.Time
+	// keys is the fallback when nothing records verifications.
+	keys map[string]struct{}
+}
+
+func newSweepMarks(index VerificationIndex, started time.Time) *sweepMarks {
+	m := &sweepMarks{index: index, started: started}
+	if index == nil {
+		m.keys = make(map[string]struct{})
+	}
+
+	return m
+}
+
+// done reports whether this pass has already swept the object.
+func (m *sweepMarks) done(bucket, key string) bool {
+	if m.index == nil {
+		_, ok := m.keys[objectRef(bucket, key)]
+
+		return ok
+	}
+
+	at, ok := m.index.LastVerified(bucket, key)
+
+	return ok && !at.Before(m.started)
+}
+
+// mark records that this pass has swept the object.
+func (m *sweepMarks) mark(bucket, key string) {
+	if m.index == nil {
+		m.keys[objectRef(bucket, key)] = struct{}{}
+
+		return
+	}
+
+	m.index.RecordVerified(bucket, key, time.Now().UTC())
 }
 
 // scrubOrder decides which of this node's disks to sweep first.
@@ -1060,7 +1121,7 @@ func (r *Repairer) saveScrubState(disk cluster.DiskID, st cluster.ScrubState) {
 // next begins, and forgets it. Memory is one namespace at a time rather than
 // one disk at a time, which is what makes this survivable on a disk holding
 // tens of millions of fragments.
-func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID, seen map[string]struct{}, report *ScrubReport) error {
+func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID, sweep *sweepMarks, report *ScrubReport) error {
 	state := r.scrubState(disk)
 	if !state.InProgress() {
 		state.PassStarted = time.Now().UTC()
@@ -1082,7 +1143,7 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 			return
 		}
 
-		r.scrubNamespace(ctx, self, disk, dir, hasMeta, gens, seen, report)
+		r.scrubNamespace(ctx, self, disk, dir, hasMeta, gens, sweep, report)
 
 		state.Cursor = dir
 		unsaved++
@@ -1197,7 +1258,7 @@ func (r *Repairer) scrubNamespace(
 	dir string,
 	hasMeta bool,
 	gens map[string][]int,
-	seen map[string]struct{},
+	sweep *sweepMarks,
 	report *ScrubReport,
 ) {
 	if !hasMeta {
@@ -1217,12 +1278,12 @@ func (r *Repairer) scrubNamespace(
 		return
 	}
 
-	ref := objectRef(sc.Bucket, sc.Key)
-	if _, done := seen[ref]; done {
+	// Two of a node's disks can hold the same object under different epochs;
+	// repairing it twice in one pass is waste.
+	if sweep.done(sc.Bucket, sc.Key) {
 		return
 	}
 
-	seen[ref] = struct{}{}
 	report.Objects++
 
 	rep, err := r.repair(ctx, sc.Bucket, sc.Key, sc, &localFragments{disk: disk, gens: gens})
@@ -1237,6 +1298,10 @@ func (r *Repairer) scrubNamespace(
 	if rep.Changed() {
 		report.Repaired++
 	}
+
+	// Recorded after the repair, so a stamp always means the object was
+	// actually checked — not that a check was attempted and failed.
+	sweep.mark(sc.Bucket, sc.Key)
 
 	report.Totals.add(rep)
 }

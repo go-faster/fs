@@ -2,6 +2,7 @@ package clusterstore
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-faster/fs/internal/cluster"
 )
@@ -53,4 +54,30 @@ type ScrubStateStore interface {
 // correct and is what every non-cluster deployment and most tests use.
 type FragmentWalker interface {
 	WalkFragments(ctx context.Context, disk cluster.DiskID, after string, fn func(name string) error) error
+}
+
+// VerificationIndex records when the scrub last checked an object, and answers
+// when it last did.
+//
+// It replaces the set of objects a pass has already swept, which was held in
+// memory and grew with the objects on the node — the last thing in the scrub
+// that did. Two of a node's disks can hold the same object under different
+// epochs, and repairing it twice per pass is waste; asking when it was last
+// verified answers that without remembering every key.
+//
+// Implementations may batch what they record: a scrub verifying millions of
+// objects should not pay a durable write for each, and the cost of losing the
+// last few stamps to a crash is re-verifying those objects. LastVerified must
+// see what has been recorded but not yet flushed, or the same object is swept
+// twice within one pass — the very thing this replaces.
+//
+// A nil index keeps the in-memory set, which is what a node without one does.
+type VerificationIndex interface {
+	// LastVerified reports when an object was last checked; false when never,
+	// or when the index does not hold it.
+	LastVerified(bucket, key string) (time.Time, bool)
+	// RecordVerified notes that an object has just been checked.
+	RecordVerified(bucket, key string, at time.Time)
+	// Flush makes recorded verifications durable.
+	Flush() error
 }

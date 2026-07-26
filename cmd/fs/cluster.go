@@ -70,6 +70,9 @@ type clusterRuntime struct {
 
 	// scrub accumulates this node's scrub totals for metrics.
 	scrub scrubTotals
+	// coverage is the last computed verification coverage, recomputed in the
+	// background because deriving it scans the index.
+	coverage atomic.Pointer[objindex.Coverage]
 
 	// closeOnce guards teardown. Serve tears the node down when its context
 	// ends, and so does every construction error path, so close can be reached
@@ -310,6 +313,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		// names rather than holding every one on the disk in memory.
 		ScrubState: store.ScrubStateStore(),
 		Fragments:  store,
+		// Verification stamps go to the object index, which is also what lets
+		// the sweep stop remembering every object it has visited.
+		Verification: newObjectVerifier(index, lg),
 	})
 	if err != nil {
 		_ = listener.Close()
