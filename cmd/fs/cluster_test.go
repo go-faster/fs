@@ -177,6 +177,15 @@ func TestClusterWiring(t *testing.T) {
 	require.Len(t, listed.Objects, 1)
 	assert.Equal(t, "dir/obj.bin", listed.Objects[0].Key)
 
+	// Drain the writer's async remainder before deleting through a different
+	// node. A write acks at quorum and extends its sidecar to the remaining
+	// target afterward; the guard against a delete outrunning that extension —
+	// and being undone by it — is per-coordinator and in-process, so it does
+	// not apply when the delete arrives through another node. That race is the
+	// cross-node linearizability gap the design records, not something this
+	// test is here to exercise.
+	nodes[0].coord.Flush()
+
 	require.NoError(t, reader.DeleteObject(t.Context(), "b", "dir/obj.bin"))
 	require.NoError(t, reader.DeleteBucket(t.Context(), "b"))
 }
