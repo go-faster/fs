@@ -162,3 +162,25 @@ ever been maintained incrementally. `updated` is the last delta.
 Multipart uploads are counted only when they complete. Parts in flight are not
 objects — S3 does not list them — so an abandoned upload does not inflate a
 bucket's usage, though it does occupy disk until the scrubber sweeps it.
+
+## Scrub coverage
+
+The scrubber verifies payloads against their recorded checksums, so a pass over
+a disk reads all of it: hours for a large disk, and the sweep runs disk by disk.
+That makes **restarts, not throughput, the thing most likely to stop it** — a
+rolling upgrade or a crash lands mid-pass far more often than not.
+
+Progress is therefore recorded on each disk as it goes (`.scrub.json` at the
+disk root, written every few hundred objects), and a restarted node resumes
+where it stopped instead of re-verifying the front of the disk. Disks are swept
+interrupted-first, then least-recently-completed, so a node that restarts more
+often than a full sweep takes still works its way through every disk rather than
+covering the first few forever.
+
+The number worth watching is **how long ago each disk was last completely
+swept**, not how much repair work the scrubber has done — counters of work say
+nothing about the objects a pass never reached. A pass that is interrupted never
+stamps completion, so that timestamp only ever means what it says.
+
+Losing the cursor file costs a repeated pass and nothing else: it is progress,
+not durability state, and a disk that cannot record it is still scrubbed.
