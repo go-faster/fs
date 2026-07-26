@@ -244,8 +244,13 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// of walking every disk.
 	rt.closers = append(rt.closers, store.Close)
 	rt.node = cluster.Node{
-		ID:    rt.nodeID,
-		Addr:  cc.AdvertiseAddr,
+		ID: rt.nodeID,
+		// Through the accessor, not the raw field: FS_CLUSTER_ADVERTISE_ADDR is
+		// how an instance is told the address peers reach it on, and validation
+		// already accepts it in place of the config value. Reading the field
+		// here registered an empty address for such a node — it started,
+		// reported healthy, and every peer failed to dial it.
+		Addr:  cfg.ClusterAdvertiseAddr(),
 		Rack:  cc.Rack,
 		Disks: disks,
 	}
