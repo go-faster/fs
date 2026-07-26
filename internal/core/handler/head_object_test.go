@@ -37,8 +37,8 @@ func TestHandler_HeadObject(t *testing.T) {
 				Metadata:     fs.ObjectMetadata{ContentType: "text/plain"},
 			}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -62,8 +62,8 @@ func TestHandler_HeadObject_NotFound(t *testing.T) {
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrObjectNotFound
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -84,8 +84,8 @@ func TestHandler_HeadObject_BucketNotFound(t *testing.T) {
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrBucketNotFound
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -114,8 +114,8 @@ func TestHandler_HeadObject_NoETag(t *testing.T) {
 				Metadata:     fs.ObjectMetadata{ContentType: "application/octet-stream"},
 			}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -145,8 +145,8 @@ func TestHandler_HeadObject_NoContentType(t *testing.T) {
 				Metadata:     fs.ObjectMetadata{ContentType: ""},
 			}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -181,8 +181,8 @@ func TestHandler_HeadObject_NestedKey(t *testing.T) {
 				Metadata:     fs.ObjectMetadata{ContentType: "text/plain"},
 			}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -215,8 +215,8 @@ func TestHandler_HeadObject_LargeFile(t *testing.T) {
 				Metadata:     fs.ObjectMetadata{ContentType: "application/octet-stream"},
 			}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -238,8 +238,8 @@ func TestHandler_HeadObject_InvalidBucketName(t *testing.T) {
 		GetObjectFunc: func(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 			return nil, fs.ErrInvalidBucketName
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil

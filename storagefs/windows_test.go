@@ -134,13 +134,13 @@ func TestStorage_ListObjects_WindowsPathCompatibility(t *testing.T) {
 	}
 
 	// List all objects - keys should always use forward slashes (S3 convention).
-	result, err := storage.ListObjects(ctx, "test-bucket", "")
+	result, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "test-bucket", Prefix: ""})
 	require.NoError(t, err)
-	require.Len(t, result, len(objects))
+	require.Len(t, result.Objects, len(objects))
 
 	// Verify all keys use forward slashes, not backslashes.
-	keys := make([]string, len(result))
-	for i, obj := range result {
+	keys := make([]string, len(result.Objects))
+	for i, obj := range result.Objects {
 		keys[i] = obj.Key
 		require.NotContains(t, obj.Key, "\\", "Key should not contain backslashes")
 	}

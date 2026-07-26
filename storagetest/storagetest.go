@@ -31,6 +31,10 @@ import (
 // Names used by every conformance subtest.
 const (
 	testBucket = "bucket"
+	// missingBucket never exists, for the not-found cases.
+	missingBucket = "nonexistent"
+	// firstKey sorts first in the listing fixtures.
+	firstKey = "a.txt"
 	// testObjectKey is the key the single-object cases operate on.
 	testObjectKey = "obj.txt"
 	testKey       = "big.bin"
@@ -80,6 +84,8 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"ListObjects":                           testListObjects,
 	"ListObjects/WithPrefix":                testListObjectsWithPrefix,
 	"ListObjects/BucketNotFound":            testListObjectsBucketNotFound,
+	"ListObjects/Paging":                    testListObjectsPaging,
+	"ListObjects/Delimiter":                 testListObjectsDelimiter,
 	"Multipart/Create":                      testMultipartCreate,
 	"Multipart/Create/BucketNotFound":       testMultipartCreateBucketNotFound,
 	"Multipart/UploadPart":                  testMultipartUploadPart,
@@ -229,6 +235,21 @@ func testDeleteBucketNotEmpty(t *testing.T, storage fs.Storage) {
 // last object under a "directory" prefix leaves the bucket genuinely empty, so
 // it can then be removed. Backends that materialize nested keys as directories
 // must not leave empty parents behind.
+// listObjects returns every object under prefix, for assertions that want the
+// whole bucket. The paged interface is exercised on its own in
+// testListObjectsPaging.
+func listObjects(t *testing.T, storage fs.Storage, prefix string) []fs.Object {
+	t.Helper()
+
+	res, err := storage.ListObjects(t.Context(), &fs.ListObjectsRequest{
+		Bucket: testBucket,
+		Prefix: prefix,
+	})
+	require.NoError(t, err)
+
+	return res.Objects
+}
+
 func testDeleteBucketEmptyAfterNestedDelete(t *testing.T, storage fs.Storage) {
 	ctx := t.Context()
 
@@ -236,8 +257,7 @@ func testDeleteBucketEmptyAfterNestedDelete(t *testing.T, storage fs.Storage) {
 	putObject(t, storage, "a/b/c/deep.txt", []byte("content"))
 	require.NoError(t, storage.DeleteObject(ctx, testBucket, "a/b/c/deep.txt"))
 
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Empty(t, objects)
 
 	// The bucket has no remaining objects, so it must delete cleanly.
@@ -251,8 +271,7 @@ func testPutObject(t *testing.T, storage fs.Storage) {
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 	putObject(t, storage, "test.txt", content)
 
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Len(t, objects, 1)
 	require.Equal(t, "test.txt", objects[0].Key)
 	require.Equal(t, int64(len(content)), objects[0].Size)
@@ -269,8 +288,7 @@ func testPutObjectNestedKey(t *testing.T, storage fs.Storage) {
 	data := readObject(t, storage, key)
 	require.Equal(t, []byte("nested"), data)
 
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Len(t, objects, 1)
 	require.Equal(t, key, objects[0].Key)
 }
@@ -285,15 +303,14 @@ func testPutObjectOverwrite(t *testing.T, storage fs.Storage) {
 	data := readObject(t, storage, "test.txt")
 	require.Equal(t, []byte("second version"), data)
 
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Len(t, objects, 1)
 	require.Equal(t, int64(len("second version")), objects[0].Size)
 }
 
 func testPutObjectBucketNotFound(t *testing.T, storage fs.Storage) {
 	_, err := storage.PutObject(t.Context(), &fs.PutObjectRequest{
-		Bucket: "nonexistent",
+		Bucket: missingBucket,
 		Key:    "test.txt",
 		Reader: strings.NewReader("content"),
 		Size:   7,
@@ -322,7 +339,7 @@ func testGetObject(t *testing.T, storage fs.Storage) {
 }
 
 func testGetObjectBucketNotFound(t *testing.T, storage fs.Storage) {
-	_, err := storage.GetObject(t.Context(), "nonexistent", "test.txt")
+	_, err := storage.GetObject(t.Context(), missingBucket, "test.txt")
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
@@ -343,16 +360,15 @@ func testDeleteObject(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.DeleteObject(ctx, testBucket, "test.txt"))
 
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Empty(t, objects)
 
-	_, err = storage.GetObject(ctx, testBucket, "test.txt")
+	_, err := storage.GetObject(ctx, testBucket, "test.txt")
 	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 }
 
 func testDeleteObjectBucketNotFound(t *testing.T, storage fs.Storage) {
-	err := storage.DeleteObject(t.Context(), "nonexistent", "test.txt")
+	err := storage.DeleteObject(t.Context(), missingBucket, "test.txt")
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
@@ -370,8 +386,7 @@ func testListObjects(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Empty(t, objects)
 
 	keys := []string{"file1.txt", "file2.txt", "dir/file3.txt"}
@@ -379,8 +394,7 @@ func testListObjects(t *testing.T, storage fs.Storage) {
 		putObject(t, storage, key, []byte("content"))
 	}
 
-	objects, err = storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects = listObjects(t, storage, "")
 	require.Len(t, objects, len(keys))
 
 	var listed []string
@@ -407,21 +421,144 @@ func testListObjectsWithPrefix(t *testing.T, storage fs.Storage) {
 		putObject(t, storage, key, []byte("content"))
 	}
 
-	result, err := storage.ListObjects(ctx, testBucket, "docs/")
-	require.NoError(t, err)
+	result := listObjects(t, storage, "docs/")
 	require.Len(t, result, 2)
 
-	result, err = storage.ListObjects(ctx, testBucket, "images/")
-	require.NoError(t, err)
+	result = listObjects(t, storage, "images/")
 	require.Len(t, result, 2)
 
-	result, err = storage.ListObjects(ctx, testBucket, "videos/")
-	require.NoError(t, err)
+	result = listObjects(t, storage, "videos/")
 	require.Empty(t, result)
 }
 
+// testListObjectsPaging covers the paging contract every backend has to get
+// right: keys come back in order, the limit is respected, truncation reports
+// whether anything was actually left behind, and paging through a bucket
+// yields every key exactly once.
+func testListObjectsPaging(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	keys := []string{firstKey, "b.txt", "c.txt", "d.txt", "e.txt"}
+	for _, key := range keys {
+		putObject(t, storage, key, []byte(key))
+	}
+
+	first, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket, Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, first.Objects, 2)
+	require.Equal(t, firstKey, first.Objects[0].Key)
+	require.Equal(t, "b.txt", first.Objects[1].Key)
+	require.True(t, first.IsTruncated, "three keys remain")
+	require.Equal(t, "b.txt", first.NextStartAfter)
+
+	// Paging through the bucket must see every key once, in order.
+	var (
+		seen  []string
+		after string
+	)
+
+	for {
+		page, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{
+			Bucket: testBucket, StartAfter: after, Limit: 2,
+		})
+		require.NoError(t, err)
+
+		for _, o := range page.Objects {
+			seen = append(seen, o.Key)
+		}
+
+		if !page.IsTruncated {
+			break
+		}
+
+		require.NotEmpty(t, page.NextStartAfter, "a truncated page must say where to resume")
+		after = page.NextStartAfter
+	}
+
+	require.Equal(t, keys, seen)
+
+	// A page that ends exactly on the last key is not truncated: there is
+	// nothing after it, and saying otherwise costs the caller a wasted request
+	// and an incorrect IsTruncated in the S3 response.
+	exact, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket: testBucket, StartAfter: "c.txt", Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, exact.Objects, 2)
+	require.False(t, exact.IsTruncated)
+
+	// StartAfter is exclusive.
+	afterAll, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket: testBucket, StartAfter: "e.txt",
+	})
+	require.NoError(t, err)
+	require.Empty(t, afterAll.Objects)
+	require.False(t, afterAll.IsTruncated)
+
+	// No limit means the whole listing.
+	all, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket})
+	require.NoError(t, err)
+	require.Len(t, all.Objects, len(keys))
+	require.False(t, all.IsTruncated)
+}
+
+// testListObjectsDelimiter covers folding, which the backend now owns: keys
+// sharing a prefix collapse into one common prefix, folded entries count
+// toward the limit exactly as S3 counts them, and resuming from a common
+// prefix skips every key beneath it rather than folding them all over again.
+func testListObjectsDelimiter(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	for _, key := range []string{firstKey, "docs/one.txt", "docs/two.txt", "docs/deep/three.txt", "z.txt"} {
+		putObject(t, storage, key, []byte(key))
+	}
+
+	res, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket, Delimiter: "/"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"docs/"}, res.CommonPrefixes, "three keys under docs/ fold into one entry")
+
+	var keys []string
+	for _, o := range res.Objects {
+		keys = append(keys, o.Key)
+	}
+
+	require.Equal(t, []string{firstKey, "z.txt"}, keys)
+
+	// The prefix itself is not folded away: listing inside it descends a level.
+	inside, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket: testBucket, Prefix: "docs/", Delimiter: "/",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"docs/deep/"}, inside.CommonPrefixes)
+	require.Len(t, inside.Objects, 2)
+
+	// A common prefix counts toward the limit like a key does.
+	limited, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket: testBucket, Delimiter: "/", Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, limited.Objects, 1, "a.txt")
+	require.Len(t, limited.CommonPrefixes, 1, "docs/")
+	require.True(t, limited.IsTruncated)
+	require.Equal(t, "docs/", limited.NextStartAfter)
+
+	// Resuming from the common prefix must not re-fold the keys under it.
+	rest, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket: testBucket, Delimiter: "/", StartAfter: limited.NextStartAfter,
+	})
+	require.NoError(t, err)
+	require.Empty(t, rest.CommonPrefixes, "docs/ was already returned")
+	require.Len(t, rest.Objects, 1)
+	require.Equal(t, "z.txt", rest.Objects[0].Key)
+	require.False(t, rest.IsTruncated)
+}
+
 func testListObjectsBucketNotFound(t *testing.T, storage fs.Storage) {
-	_, err := storage.ListObjects(t.Context(), "nonexistent", "")
+	_, err := storage.ListObjects(t.Context(), &fs.ListObjectsRequest{Bucket: missingBucket})
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
@@ -438,7 +575,7 @@ func testMultipartCreate(t *testing.T, storage fs.Storage) {
 }
 
 func testMultipartCreateBucketNotFound(t *testing.T, storage fs.Storage) {
-	_, err := storage.CreateMultipartUpload(t.Context(), &fs.CreateMultipartUploadRequest{Bucket: "nonexistent", Key: testKey})
+	_, err := storage.CreateMultipartUpload(t.Context(), &fs.CreateMultipartUploadRequest{Bucket: missingBucket, Key: testKey})
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
@@ -1285,8 +1422,7 @@ func testOwnerObjectRoundTrip(t *testing.T, storage fs.Storage) {
 	require.Equal(t, owner, got)
 
 	// Listing reports it too, so a fetch-owner listing does not need a stat per key.
-	objects, err := storage.ListObjects(ctx, testBucket, "")
-	require.NoError(t, err)
+	objects := listObjects(t, storage, "")
 	require.Len(t, objects, 1)
 	require.Equal(t, owner, objects[0].Owner)
 

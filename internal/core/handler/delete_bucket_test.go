@@ -20,8 +20,8 @@ func TestHandler_DeleteBucket(t *testing.T) {
 			require.Equal(t, bucketName, bucket)
 			return nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -42,8 +42,8 @@ func TestHandler_DeleteBucket_NotFound(t *testing.T) {
 		DeleteBucketFunc: func(ctx context.Context, bucket string) error {
 			return fs.ErrBucketNotFound
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil

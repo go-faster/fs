@@ -27,8 +27,8 @@ func TestPutObject(t *testing.T) {
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{}, nil
 		},
 		PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 			require.Equal(t, bucketName, req.Bucket)

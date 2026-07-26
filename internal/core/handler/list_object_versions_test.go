@@ -24,9 +24,12 @@ func TestListObjectVersions(t *testing.T) {
 	}
 
 	svc := &mock.StorageMock{
-		ListObjectsFunc: func(_ context.Context, bucket, _ string) ([]fs.Object, error) {
-			require.Equal(t, bucketName, bucket)
-			return objects, nil
+		ListObjectsFunc: func(_ context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			require.Equal(t, bucketName, req.Bucket)
+
+			// Folding and paging are the backend's job now, so the fake does
+			// what a real one does rather than handing back raw keys.
+			return req.FoldPage(objects), nil
 		},
 	}
 
@@ -61,7 +64,7 @@ func TestListObjectVersions(t *testing.T) {
 
 func TestListObjectVersions_BucketNotFound(t *testing.T) {
 	svc := &mock.StorageMock{
-		ListObjectsFunc: func(context.Context, string, string) ([]fs.Object, error) {
+		ListObjectsFunc: func(context.Context, *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
 			return nil, fs.ErrBucketNotFound
 		},
 	}

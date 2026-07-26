@@ -19,16 +19,16 @@ type Service struct {
 	storage fs.Storage
 }
 
-func (s Service) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-	if err := validate.BucketName(bucket); err != nil {
+func (s Service) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+	if err := validate.BucketName(req.Bucket); err != nil {
 		return nil, errors.Wrap(err, "validate bucket name")
 	}
 
-	if err := validate.Prefix(prefix); err != nil {
+	if err := validate.Prefix(req.Prefix); err != nil {
 		return nil, errors.Wrap(err, "validate prefix")
 	}
 
-	return s.storage.ListObjects(ctx, bucket, prefix)
+	return s.storage.ListObjects(ctx, req)
 }
 
 func (s Service) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {

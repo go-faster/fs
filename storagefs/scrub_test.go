@@ -94,9 +94,9 @@ func TestScrub_Quarantine(t *testing.T) {
 	_, err = s.GetObject(ctx, "b", "bad.txt")
 	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 
-	objects, err := s.ListObjects(ctx, "b", "")
+	listed, err := s.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "b"})
 	require.NoError(t, err)
-	require.Empty(t, objects)
+	require.Empty(t, listed.Objects)
 
 	// It lives under the quarantine tree.
 	_, err = os.Stat(filepath.Join(root, quarantineSubdir, "b", "bad.txt"))

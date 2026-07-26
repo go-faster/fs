@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-faster/fs"
 )
 
 // VersionEntry is a single object version in a ListObjectVersions response.
@@ -72,13 +74,17 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	objects, err := h.service.ListObjects(ctx, bucket, prefix)
+	res, err := h.service.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket:     bucket,
+		Prefix:     prefix,
+		Delimiter:  delimiter,
+		StartAfter: keyMarker,
+		Limit:      maxKeys,
+	})
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return
 	}
-
-	entries := buildListEntries(objects, prefix, delimiter)
 
 	maybeEncode := func(s string) string {
 		if encodeURL {
@@ -91,37 +97,25 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 	var (
 		versions       []VersionEntry
 		commonPrefixes []CommonPrefix
-		count          int
-		truncated      bool
-		nextKeyMarker  string
 	)
 
-	for _, e := range entries {
-		if keyMarker != "" && e.key <= keyMarker {
-			continue
-		}
-
-		if count >= maxKeys {
-			truncated = true
-			break
-		}
-
-		if e.isPrefix {
-			commonPrefixes = append(commonPrefixes, CommonPrefix{Prefix: maybeEncode(e.key)})
-		} else {
-			versions = append(versions, VersionEntry{
-				Key:          maybeEncode(e.obj.Key),
-				VersionID:    unversionedVersionID,
-				IsLatest:     true,
-				LastModified: e.obj.LastModified,
-				ETag:         quoteETag(e.obj.ETag),
-				Size:         e.obj.Size,
-			})
-		}
-
-		nextKeyMarker = e.key
-		count++
+	for _, cp := range res.CommonPrefixes {
+		commonPrefixes = append(commonPrefixes, CommonPrefix{Prefix: maybeEncode(cp)})
 	}
+
+	for _, o := range res.Objects {
+		versions = append(versions, VersionEntry{
+			Key:          maybeEncode(o.Key),
+			VersionID:    unversionedVersionID,
+			IsLatest:     true,
+			LastModified: o.LastModified,
+			ETag:         quoteETag(o.ETag),
+			Size:         o.Size,
+		})
+	}
+
+	truncated := res.IsTruncated
+	nextKeyMarker := res.NextStartAfter
 
 	resp := ListVersionsResult{
 		Name:           bucket,

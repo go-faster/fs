@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,22 +30,20 @@ func TestListObjects(t *testing.T) {
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
-			require.Equal(t, bucketName, bucket)
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			require.Equal(t, bucketName, req.Bucket)
 
-			if prefix == "" {
-				return expectedObjects, nil
-			}
-			// Filter by prefix
 			var filtered []fs.Object
 
 			for _, obj := range expectedObjects {
-				if len(obj.Key) >= len(prefix) && obj.Key[:len(prefix)] == prefix {
+				if strings.HasPrefix(obj.Key, req.Prefix) {
 					filtered = append(filtered, obj)
 				}
 			}
 
-			return filtered, nil
+			// Delimiter folding and paging belong to the backend, so the fake
+			// runs the same helper a real one does.
+			return req.FoldPage(filtered), nil
 		},
 	}
 
@@ -110,9 +109,9 @@ func TestListObjects_EmptyBucket(t *testing.T) {
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
-			require.Equal(t, bucketName, bucket)
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			require.Equal(t, bucketName, req.Bucket)
+			return &fs.ListObjectsResponse{}, nil
 		},
 	}
 

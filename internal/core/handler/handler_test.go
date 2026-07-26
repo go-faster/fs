@@ -18,8 +18,8 @@ import (
 // baseMock returns a StorageMock with common stub methods that minio client requires.
 func baseMock() *mock.StorageMock {
 	return &mock.StorageMock{
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil

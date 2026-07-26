@@ -106,12 +106,18 @@ func (s *Storage) BucketExists(ctx context.Context, bucket string) (bool, error)
 }
 
 // ListObjects implements fs.Storage.
-func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-	if err := s.mustBucket(ctx, bucket); err != nil {
+// ListObjects implements fs.Storage.
+//
+// The gather is still cluster-wide — every disk scanned, every sidecar read —
+// so a page costs what the whole bucket costs. Paging bounds what crosses the
+// S3 layer and defines the seam a per-node index plugs into; serving a page
+// without the gather is that index's job, not this one's.
+func (s *Storage) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+	if err := s.mustBucket(ctx, req.Bucket); err != nil {
 		return nil, err
 	}
 
-	sidecars, err := s.coord.ListObjects(ctx, bucket, prefix)
+	sidecars, err := s.coord.ListObjects(ctx, req.Bucket, req.Prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +133,7 @@ func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.
 		})
 	}
 
-	return objects, nil
+	return req.FoldPage(objects), nil
 }
 
 // PutObject implements fs.Storage. The conditional check and the write happen

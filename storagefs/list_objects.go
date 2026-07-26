@@ -11,10 +11,17 @@ import (
 	"github.com/go-faster/fs"
 )
 
-// ListObjects lists all objects in bucket by prefix.
+// ListObjects returns one page of a bucket's objects, sorted by key.
+//
+// The walk still visits the whole bucket before a page can be cut: keys are
+// arbitrary, so directory order is not key order and the set has to be sorted
+// before StartAfter means anything. Paging bounds what the caller holds and
+// what crosses the S3 layer, not yet what this backend reads — serving a page
+// without the walk needs an index, which is the next step, not this one.
 //
 // NB: bucket and prefix are already sanitized.
-func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
+func (s *Storage) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+	bucket, prefix := req.Bucket, req.Prefix
 	bucketPath := filepath.Join(s.root, bucket)
 
 	var objects []fs.Object
@@ -68,5 +75,5 @@ func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.
 		return nil, errors.Wrap(err, "list objects")
 	}
 
-	return objects, nil
+	return req.FoldPage(objects), nil
 }
