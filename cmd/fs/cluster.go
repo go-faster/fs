@@ -55,6 +55,10 @@ type clusterRuntime struct {
 	node  cluster.Node
 	reg   *etcd.Registration
 
+	// usage batches per-bucket object accounting into the control plane. Nil
+	// when the coordinator was built without it.
+	usage *usageReporter
+
 	// scrub accumulates this node's scrub totals for metrics.
 	scrub scrubTotals
 }
@@ -236,6 +240,8 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	secret := transport.Secret(cfg.ClusterSecret())
 
+	rt.usage = newUsageReporter(client, etcdCfg, lg)
+
 	coord, err := clusterstore.New(clusterstore.Config{
 		Topology: source,
 		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, nil),
@@ -244,6 +250,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 			lg.Warn("Async replication remainder failed (repair will complete it)",
 				zap.String("bucket", bucket), zap.String("key", key), zap.Error(err))
 		},
+		Usage: rt.usage,
 	})
 	if err != nil {
 		_ = listener.Close()

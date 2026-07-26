@@ -142,6 +142,7 @@ func runHeadlessAdmin(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg
 		ClusterStatus:        status,
 		Migrations:           migrations,
 		BucketSchemes:        newBucketSchemeSource(cl.coord),
+		BucketUsage:          newBucketUsageSource(cl.client, cl.etcdCfg),
 		ClusterDefaultScheme: clusterDefaultScheme(cfg),
 	})
 }

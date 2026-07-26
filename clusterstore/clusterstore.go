@@ -83,6 +83,10 @@ type Config struct {
 	// already been acknowledged at quorum; the object stays readable and the
 	// repair worker will complete it). May be nil.
 	OnAsyncError func(bucket, key string, err error)
+	// Usage receives per-bucket object accounting deltas. Nil disables
+	// accounting, which is what a cluster without a control plane (tests,
+	// StaticTopology) does — the counters live in etcd.
+	Usage UsageObserver
 }
 
 // Coordinator is the cluster object data plane: quorum writes, failover
@@ -93,6 +97,7 @@ type Coordinator struct {
 	peers     PeerDialer
 	schemeFor SchemeFunc
 	onErr     func(bucket, key string, err error)
+	usage     UsageObserver
 
 	// epochs remembers recent topology snapshots so reads, deletes and repair
 	// can reach fragments still sitting at a previous epoch's placement.
@@ -148,6 +153,7 @@ func New(cfg Config) (*Coordinator, error) {
 		peers:     cfg.Peers,
 		schemeFor: schemeFor,
 		onErr:     onErr,
+		usage:     cfg.Usage,
 		queue:     make(chan func(), queueLen),
 		inflight:  make(map[string]int),
 	}

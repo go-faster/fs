@@ -11,6 +11,7 @@ const (
 	CreateAccessKeyOperation      OperationName = "CreateAccessKey"
 	DeleteAccessKeyOperation      OperationName = "DeleteAccessKey"
 	GetBucketSchemeOperation      OperationName = "GetBucketScheme"
+	GetBucketUsageOperation       OperationName = "GetBucketUsage"
 	GetClusterStatusOperation     OperationName = "GetClusterStatus"
 	GetInfoOperation              OperationName = "GetInfo"
 	GetMigrationStatusOperation   OperationName = "GetMigrationStatus"

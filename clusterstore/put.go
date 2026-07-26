@@ -159,6 +159,16 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		return nil, err
 	}
 
+	// Account for the write now that it is committed. An overwrite replaces an
+	// object rather than adding one, so only its size moves; oldSC is fetched
+	// best-effort above, so an unreachable previous sidecar makes this look like
+	// a create and overcounts by one until the next recount.
+	if oldSC != nil {
+		c.observeUsage(req.Bucket, 0, sc.Size-oldSC.Size)
+	} else {
+		c.observeUsage(req.Bucket, 1, sc.Size)
+	}
+
 	c.enqueue(req.Bucket, req.Key, func() {
 		bg, cancel := context.WithTimeout(context.Background(), asyncTimeout)
 		defer cancel()

@@ -7,6 +7,7 @@ import MatrixRain from "./components/MatrixRain";
 import Overview from "./pages/Overview";
 import AccessKeys from "./pages/AccessKeys";
 import Cluster from "./pages/Cluster";
+import Buckets from "./pages/Buckets";
 
 // useToken re-renders when the stored admin token changes (login/logout, or a
 // 401 clearing a stale token).
@@ -114,6 +115,10 @@ function Layout() {
           <Dot />
           Status
         </NavLink>
+        <NavLink className={navClass} to="/buckets">
+          <Dot />
+          Buckets
+        </NavLink>
         <div className="foot">
           <button onClick={() => clearToken()}>Sign out</button>
         </div>
@@ -126,6 +131,7 @@ function Layout() {
             <Route path="/" element={<Overview />} />
             <Route path="/access-keys" element={<AccessKeys />} />
             <Route path="/cluster" element={<Cluster />} />
+            <Route path="/buckets" element={<Buckets />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

@@ -135,3 +135,30 @@ Each object is a small directory of fragment files plus a replicated sidecar.
 Budget inodes/metadata for ≥ 100 M objects per node; listing is scatter-gather
 with bounded memory (no full-bucket materialization), so listing large buckets is
 IO- and fan-out-bound, not memory-bound.
+
+## Knowing what a bucket holds
+
+`GET /api/v1/buckets/usage` reports each bucket's object count and total size,
+plus the cluster-wide totals. Sizes are logical — what clients stored, not what
+the disks hold; multiply by the bucket's scheme overhead (see [Raw capacity per
+scheme](#raw-capacity-per-scheme)) for the physical figure.
+
+The counters are a **durable index**, not a computed answer. Counting on demand
+means a scatter-gather over every disk that reads every sidecar — the same walk
+a listing does — which is precisely unusable at the object counts above. So each
+write and delete reports its delta, one node folds the batches into the etcd
+control plane, and the totals are read straight back out.
+
+Between recounts a total can drift. A node that dies after committing a write
+but before reporting it leaves its bucket short; a delete that half-failed
+leaves it long. A cluster-wide recount re-derives every bucket's totals from the
+objects themselves every 6 hours, on one elected node, and replaces the drifted
+figures — carrying forward whatever was accounted while it ran.
+
+Read `counted` to know how much to trust a number: it is when a recount last
+verified that bucket, and it is **absent** for a bucket whose totals have only
+ever been maintained incrementally. `updated` is the last delta.
+
+Multipart uploads are counted only when they complete. Parts in flight are not
+objects — S3 does not list them — so an abandoned upload does not inflate a
+bucket's usage, though it does occupy disk until the scrubber sweeps it.

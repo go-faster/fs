@@ -128,6 +128,15 @@ func (c *Coordinator) Delete(ctx context.Context, bucket, key string) error {
 		}
 	}
 
+	// Account for the delete only when every target came away clean. A partial
+	// delete leaves the object counted, which errs toward reporting a bucket as
+	// fuller than it is — the harmless direction, and one the next recount
+	// corrects. Claiming the object left when a target still serves it would
+	// not be.
+	if firstErr == nil {
+		c.observeUsage(bucket, -1, -sc.Size)
+	}
+
 	return firstErr
 }
 
