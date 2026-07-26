@@ -47,7 +47,7 @@ The **Cluster** page is where the demo pays off. Under load you can watch:
 ## Things worth doing to it
 
 ```sh
-docker compose stop fs3          # one node down: reads and writes carry on
+docker compose stop fs3          # one node down: reads carry on, writes pause
 docker compose start fs3         # it rejoins and repair catches it up
 docker compose logs -f loadgen   # what the workload is doing
 ```
