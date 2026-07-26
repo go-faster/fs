@@ -20,4 +20,8 @@ export interface ClusterDisk {
   has_data?: boolean;
   /** Why the disk could not be probed; has_data is then absent. */
   data_error?: string;
+  /** How many fragments the disk holds, from the node's occupancy index. Present only once that index has been anchored by a scan — absent means "not counted yet", never "empty". This is drain progress, not the drain verdict: has_data is what says the disk is safe to remove. */
+  fragments?: number;
+  /** What those fragments occupy, payload only — smaller than the used space implied by total_bytes/free_bytes, which come from statfs and include filesystem overhead. Absent under the same conditions as fragments. */
+  bytes?: number;
 }

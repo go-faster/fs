@@ -68,6 +68,23 @@ func (UnimplementedHandler) GetBucketScheme(ctx context.Context, params GetBucke
 	return r, ht.ErrNotImplemented
 }
 
+// GetBucketUsage implements getBucketUsage operation.
+//
+// How many objects each bucket holds and how many bytes they occupy, read from the cluster's durable
+// usage index rather than computed on demand — counting on demand would mean a scatter-gather over
+// every disk, which is exactly what makes it unusable at the size where the question matters. The
+// totals are maintained incrementally as objects are written and deleted, and re-derived from the
+// objects themselves by a periodic cluster-wide recount. Between recounts a total can drift: a node
+// that dies between committing a write and reporting it leaves its bucket short. Read `counted` to see
+// when a total was last anchored, and `updated` for the last incremental change. Multipart uploads are
+// counted only once completed; parts in flight are not objects and are not charged to the bucket.
+// Returns 501 when the server is not in cluster mode.
+//
+// GET /api/v1/buckets/usage
+func (UnimplementedHandler) GetBucketUsage(ctx context.Context) (r *BucketUsageList, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetClusterStatus implements getClusterStatus operation.
 //
 // Cluster-wide view read from the control plane: the agreed schema version, every node with its disks

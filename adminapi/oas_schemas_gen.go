@@ -141,6 +141,113 @@ func (s *BucketScheme) SetIsDefault(val bool) {
 	s.IsDefault = val
 }
 
+// One bucket's object count and total size.
+// Ref: #/components/schemas/BucketUsage
+type BucketUsage struct {
+	Bucket string `json:"bucket"`
+	// How many objects the bucket holds.
+	Objects int64 `json:"objects"`
+	// What those objects occupy, summed over their sizes. This is logical size, not what the cluster
+	// stores: replication and erasure coding multiply it on disk (see the scheme's overhead).
+	Bytes int64 `json:"bytes"`
+	// When an incremental change last moved these counters.
+	Updated OptDateTime `json:"updated"`
+	// When a full recount last anchored them. Absent means the totals have only ever been maintained
+	// incrementally, so nothing has verified them against the objects themselves yet.
+	Counted OptDateTime `json:"counted"`
+}
+
+// GetBucket returns the value of Bucket.
+func (s *BucketUsage) GetBucket() string {
+	return s.Bucket
+}
+
+// GetObjects returns the value of Objects.
+func (s *BucketUsage) GetObjects() int64 {
+	return s.Objects
+}
+
+// GetBytes returns the value of Bytes.
+func (s *BucketUsage) GetBytes() int64 {
+	return s.Bytes
+}
+
+// GetUpdated returns the value of Updated.
+func (s *BucketUsage) GetUpdated() OptDateTime {
+	return s.Updated
+}
+
+// GetCounted returns the value of Counted.
+func (s *BucketUsage) GetCounted() OptDateTime {
+	return s.Counted
+}
+
+// SetBucket sets the value of Bucket.
+func (s *BucketUsage) SetBucket(val string) {
+	s.Bucket = val
+}
+
+// SetObjects sets the value of Objects.
+func (s *BucketUsage) SetObjects(val int64) {
+	s.Objects = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *BucketUsage) SetBytes(val int64) {
+	s.Bytes = val
+}
+
+// SetUpdated sets the value of Updated.
+func (s *BucketUsage) SetUpdated(val OptDateTime) {
+	s.Updated = val
+}
+
+// SetCounted sets the value of Counted.
+func (s *BucketUsage) SetCounted(val OptDateTime) {
+	s.Counted = val
+}
+
+// Per-bucket object accounting, from the cluster's usage index.
+// Ref: #/components/schemas/BucketUsageList
+type BucketUsageList struct {
+	// One entry per bucket that has been accounted for, sorted by name.
+	Buckets []BucketUsage `json:"buckets"`
+	// Objects across every bucket.
+	Objects OptInt64 `json:"objects"`
+	// Bytes across every bucket.
+	Bytes OptInt64 `json:"bytes"`
+}
+
+// GetBuckets returns the value of Buckets.
+func (s *BucketUsageList) GetBuckets() []BucketUsage {
+	return s.Buckets
+}
+
+// GetObjects returns the value of Objects.
+func (s *BucketUsageList) GetObjects() OptInt64 {
+	return s.Objects
+}
+
+// GetBytes returns the value of Bytes.
+func (s *BucketUsageList) GetBytes() OptInt64 {
+	return s.Bytes
+}
+
+// SetBuckets sets the value of Buckets.
+func (s *BucketUsageList) SetBuckets(val []BucketUsage) {
+	s.Buckets = val
+}
+
+// SetObjects sets the value of Objects.
+func (s *BucketUsageList) SetObjects(val OptInt64) {
+	s.Objects = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *BucketUsageList) SetBytes(val OptInt64) {
+	s.Bytes = val
+}
+
 // Ref: #/components/schemas/ClusterDisk
 type ClusterDisk struct {
 	ID string `json:"id"`
@@ -159,6 +266,14 @@ type ClusterDisk struct {
 	HasData OptBool `json:"has_data"`
 	// Why the disk could not be probed; has_data is then absent.
 	DataError OptString `json:"data_error"`
+	// How many fragments the disk holds, from the node's occupancy index. Present only once that index has
+	// been anchored by a scan — absent means "not counted yet", never "empty". This is drain progress,
+	// not the drain verdict: has_data is what says the disk is safe to remove.
+	Fragments OptInt64 `json:"fragments"`
+	// What those fragments occupy, payload only — smaller than the used space implied by
+	// total_bytes/free_bytes, which come from statfs and include filesystem overhead. Absent under the
+	// same conditions as fragments.
+	Bytes OptInt64 `json:"bytes"`
 }
 
 // GetID returns the value of ID.
@@ -196,6 +311,16 @@ func (s *ClusterDisk) GetDataError() OptString {
 	return s.DataError
 }
 
+// GetFragments returns the value of Fragments.
+func (s *ClusterDisk) GetFragments() OptInt64 {
+	return s.Fragments
+}
+
+// GetBytes returns the value of Bytes.
+func (s *ClusterDisk) GetBytes() OptInt64 {
+	return s.Bytes
+}
+
 // SetID sets the value of ID.
 func (s *ClusterDisk) SetID(val string) {
 	s.ID = val
@@ -229,6 +354,16 @@ func (s *ClusterDisk) SetHasData(val OptBool) {
 // SetDataError sets the value of DataError.
 func (s *ClusterDisk) SetDataError(val OptString) {
 	s.DataError = val
+}
+
+// SetFragments sets the value of Fragments.
+func (s *ClusterDisk) SetFragments(val OptInt64) {
+	s.Fragments = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *ClusterDisk) SetBytes(val OptInt64) {
+	s.Bytes = val
 }
 
 // Ref: #/components/schemas/ClusterNode

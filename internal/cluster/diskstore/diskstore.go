@@ -42,6 +42,9 @@ const tmpPattern = ".tmp-*"
 type Store struct {
 	roots map[cluster.DiskID]string
 	sync  storagefs.SyncPolicy
+	// index tracks per-disk occupancy so a drain can be watched without
+	// walking the tree for every poll. One entry per root, created in New.
+	index map[cluster.DiskID]*diskIndex
 }
 
 var _ transport.Store = (*Store)(nil)
@@ -62,7 +65,10 @@ func New(roots map[cluster.DiskID]string, opts ...Option) (*Store, error) {
 		return nil, errors.New("diskstore: no disk roots")
 	}
 
-	s := &Store{roots: make(map[cluster.DiskID]string, len(roots))}
+	s := &Store{
+		roots: make(map[cluster.DiskID]string, len(roots)),
+		index: make(map[cluster.DiskID]*diskIndex, len(roots)),
+	}
 
 	for disk, root := range roots {
 		if disk == "" {
@@ -79,13 +85,28 @@ func New(roots map[cluster.DiskID]string, opts ...Option) (*Store, error) {
 		}
 
 		s.roots[disk] = abs
+		s.index[disk] = newDiskIndex(abs)
 	}
 
 	for _, o := range opts {
 		o(s)
 	}
 
+	// Invalidate every adopted checkpoint before serving a single write: from
+	// here on the file on disk says "rescan me", so only an orderly Close can
+	// hand the counters to the next start.
+	if err := s.Checkpoint(false); err != nil {
+		return nil, err
+	}
+
 	return s, nil
+}
+
+// Close checkpoints the index so the next start adopts the counters instead of
+// walking every disk. A store that is not closed is not damaged by it — the
+// counters are simply rebuilt by a scan.
+func (s *Store) Close() error {
+	return s.Checkpoint(true)
 }
 
 // path resolves a fragment name under its disk root, rejecting unknown disks
@@ -122,7 +143,7 @@ func (s *Store) Create(_ context.Context, disk cluster.DiskID, name string) (io.
 		return nil, errors.Wrap(err, "create temp file")
 	}
 
-	return &fileWriter{store: s, tmp: tmp, path: path}, nil
+	return &fileWriter{store: s, disk: disk, tmp: tmp, path: path}, nil
 }
 
 // Open implements transport.Store.
@@ -182,8 +203,16 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 		return err
 	}
 
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		return transport.ErrNotFound
+	// The size is read before the unlink because afterwards nobody can: the
+	// index has to be told what left, not just that something did.
+	var size int64
+
+	if info, err := os.Stat(path); err == nil {
+		if info.IsDir() {
+			return transport.ErrNotFound
+		}
+
+		size = info.Size()
 	}
 
 	if err := os.Remove(path); err != nil {
@@ -194,10 +223,20 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 		return errors.Wrap(err, "delete fragment")
 	}
 
+	s.index[disk].removed(size)
 	s.pruneEmptyDirs(filepath.Dir(path), s.roots[disk])
 
 	return nil
 }
+
+// skipEntry reports whether a directory entry is store bookkeeping rather than
+// a fragment: in-flight temp files and the index checkpoint at the disk root.
+//
+// Every dot-prefixed name is store-private. Fragment paths are minted by the
+// coordinator out of "obj", hex hashes, hex generations and "meta", so no
+// segment of one ever begins with a dot — which is what makes the dot a safe
+// namespace to reserve.
+func skipEntry(name string) bool { return strings.HasPrefix(name, ".") }
 
 // pruneEmptyDirs removes now-empty parents of a deleted fragment, stopping at
 // the disk root or the first non-empty directory. Best-effort: a concurrent
@@ -277,7 +316,7 @@ func hasFragment(dir string) (bool, error) {
 
 		for _, entry := range entries {
 			if !entry.IsDir() {
-				if strings.HasPrefix(entry.Name(), ".tmp-") {
+				if skipEntry(entry.Name()) {
 					continue
 				}
 
@@ -322,7 +361,7 @@ func (s *Store) List(_ context.Context, disk cluster.DiskID, prefix string) ([]s
 			return err
 		}
 
-		if d.IsDir() || strings.HasPrefix(d.Name(), ".tmp-") {
+		if d.IsDir() || skipEntry(d.Name()) {
 			return nil
 		}
 
@@ -353,11 +392,20 @@ func (s *Store) List(_ context.Context, disk cluster.DiskID, prefix string) ([]s
 // on a refused write.
 type fileWriter struct {
 	store *Store
+	disk  cluster.DiskID
 	tmp   *os.File
 	path  string
+	// n is what landed in the temp file, which is what the index counts once
+	// the rename commits it.
+	n int64
 }
 
-func (w *fileWriter) Write(p []byte) (int, error) { return w.tmp.Write(p) }
+func (w *fileWriter) Write(p []byte) (int, error) {
+	n, err := w.tmp.Write(p)
+	w.n += int64(n)
+
+	return n, err //nolint:wrapcheck // Pass the write error through untouched.
+}
 
 func (w *fileWriter) Close() error {
 	if err := w.syncFile(); err != nil {
@@ -370,12 +418,31 @@ func (w *fileWriter) Close() error {
 		return errors.Wrap(err, "close temp file")
 	}
 
+	// What this rename is about to displace. A fragment name is
+	// generation-stamped and written once, but the sidecar under it is
+	// replaced on every commit, so overwriting is the common path and the
+	// index would drift upward without this.
+	prev, existed := fileSize(w.path)
+
 	if err := os.Rename(w.tmp.Name(), w.path); err != nil {
 		_ = os.Remove(w.tmp.Name())
 		return errors.Wrap(err, "rename fragment into place")
 	}
 
+	w.store.index[w.disk].added(w.n, prev, existed)
+
 	return w.syncDir()
+}
+
+// fileSize reports an existing file's size. A missing file is not an error
+// here: it is the answer.
+func fileSize(path string) (size int64, ok bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0, false
+	}
+
+	return info.Size(), true
 }
 
 // abort discards the temp file after a failed commit step.

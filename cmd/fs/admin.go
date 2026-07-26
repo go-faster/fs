@@ -73,6 +73,7 @@ type adminServerConfig struct {
 	ClusterStatus        adminhandler.ClusterStatusSource
 	Migrations           adminhandler.MigrationControl
 	BucketSchemes        adminhandler.BucketSchemeStore
+	BucketUsage          adminhandler.BucketUsageSource
 	ClusterDefaultScheme string
 	// Reloader applies hot-reloadable config; nil where there is none.
 	Reloader *reloader
@@ -107,6 +108,7 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 		ClusterStatus:        cfg.ClusterStatus,
 		Migrations:           cfg.Migrations,
 		BucketSchemes:        cfg.BucketSchemes,
+		BucketUsage:          cfg.BucketUsage,
 		ClusterDefaultScheme: cfg.ClusterDefaultScheme,
 	}
 

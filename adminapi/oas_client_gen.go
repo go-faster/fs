@@ -68,6 +68,20 @@ type Invoker interface {
 	//
 	// GET /api/v1/buckets/{bucket}/scheme
 	GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (*BucketScheme, error)
+	// GetBucketUsage invokes getBucketUsage operation.
+	//
+	// How many objects each bucket holds and how many bytes they occupy, read from the cluster's durable
+	// usage index rather than computed on demand — counting on demand would mean a scatter-gather over
+	// every disk, which is exactly what makes it unusable at the size where the question matters. The
+	// totals are maintained incrementally as objects are written and deleted, and re-derived from the
+	// objects themselves by a periodic cluster-wide recount. Between recounts a total can drift: a node
+	// that dies between committing a write and reporting it leaves its bucket short. Read `counted` to see
+	// when a total was last anchored, and `updated` for the last incremental change. Multipart uploads are
+	// counted only once completed; parts in flight are not objects and are not charged to the bucket.
+	// Returns 501 when the server is not in cluster mode.
+	//
+	// GET /api/v1/buckets/usage
+	GetBucketUsage(ctx context.Context) (*BucketUsageList, error)
 	// GetClusterStatus invokes getClusterStatus operation.
 	//
 	// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
@@ -627,6 +641,94 @@ func (c *Client) sendGetBucketScheme(ctx context.Context, params GetBucketScheme
 
 	stage = "DecodeResponse"
 	result, err := decodeGetBucketSchemeResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetBucketUsage invokes getBucketUsage operation.
+//
+// How many objects each bucket holds and how many bytes they occupy, read from the cluster's durable
+// usage index rather than computed on demand — counting on demand would mean a scatter-gather over
+// every disk, which is exactly what makes it unusable at the size where the question matters. The
+// totals are maintained incrementally as objects are written and deleted, and re-derived from the
+// objects themselves by a periodic cluster-wide recount. Between recounts a total can drift: a node
+// that dies between committing a write and reporting it leaves its bucket short. Read `counted` to see
+// when a total was last anchored, and `updated` for the last incremental change. Multipart uploads are
+// counted only once completed; parts in flight are not objects and are not charged to the bucket.
+// Returns 501 when the server is not in cluster mode.
+//
+// GET /api/v1/buckets/usage
+func (c *Client) GetBucketUsage(ctx context.Context) (*BucketUsageList, error) {
+	res, err := c.sendGetBucketUsage(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetBucketUsage(ctx context.Context) (res *BucketUsageList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getBucketUsage"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/usage"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetBucketUsageOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/buckets/usage"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetBucketUsageResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

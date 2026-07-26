@@ -28,6 +28,7 @@ import type {
 import type {
   AccessKeyList,
   BucketScheme,
+  BucketUsageList,
   ClusterStatus,
   CreateAccessKeyRequest,
   CreatedAccessKey,
@@ -847,6 +848,103 @@ export const useDeleteAccessKey = <TError = ErrorResponse,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * How many objects each bucket holds and how many bytes they occupy, read from the cluster's durable usage index rather than computed on demand — counting on demand would mean a scatter-gather over every disk, which is exactly what makes it unusable at the size where the question matters.
+The totals are maintained incrementally as objects are written and deleted, and re-derived from the objects themselves by a periodic cluster-wide recount. Between recounts a total can drift: a node that dies between committing a write and reporting it leaves its bucket short. Read `counted` to see when a total was last anchored, and `updated` for the last incremental change.
+Multipart uploads are counted only once completed; parts in flight are not objects and are not charged to the bucket. Returns 501 when the server is not in cluster mode.
+
+ * @summary Per-bucket object count and size
+ */
+export const getBucketUsage = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<BucketUsageList>(
+      {url: `/api/v1/buckets/usage`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetBucketUsageQueryKey = () => {
+    return [
+    `/api/v1/buckets/usage`
+    ] as const;
+    }
+
+    
+export const getGetBucketUsageQueryOptions = <TData = Awaited<ReturnType<typeof getBucketUsage>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketUsage>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBucketUsageQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBucketUsage>>> = ({ signal }) => getBucketUsage(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBucketUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetBucketUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getBucketUsage>>>
+export type GetBucketUsageQueryError = ErrorResponse
+
+
+export function useGetBucketUsage<TData = Awaited<ReturnType<typeof getBucketUsage>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketUsage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBucketUsage>>,
+          TError,
+          Awaited<ReturnType<typeof getBucketUsage>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBucketUsage<TData = Awaited<ReturnType<typeof getBucketUsage>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketUsage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBucketUsage>>,
+          TError,
+          Awaited<ReturnType<typeof getBucketUsage>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBucketUsage<TData = Awaited<ReturnType<typeof getBucketUsage>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketUsage>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Per-bucket object count and size
+ */
+
+export function useGetBucketUsage<TData = Awaited<ReturnType<typeof getBucketUsage>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBucketUsage>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetBucketUsageQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * The bucket's effective replication scheme, its explicit override (empty when the bucket follows the cluster default) and the cluster default. Returns 404 when the bucket does not exist and 501 when the server is not in cluster mode (a single-node server has no per-bucket schemes).
 

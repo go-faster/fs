@@ -173,6 +173,16 @@ Command-line flags override YAML configuration values.`,
 					// warnings; cluster metrics for the telemetry pipeline.
 					go clusterRT.RunUsageReporter(ctx, cfg.Cluster.Rebalance.FullWatermark)
 
+					// Per-disk occupancy: what this node's disks hold, which
+					// is what a drain is waiting to reach zero.
+					go clusterRT.RunOccupancyIndex(ctx)
+
+					// Per-bucket object accounting: batched deltas from this
+					// node's writes, and the cluster-wide recount that keeps
+					// the totals honest (one elected node runs it).
+					go clusterRT.usage.Run(ctx)
+					go clusterRT.RunUsageRecount(ctx)
+
 					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {
 						return errors.Wrap(err, "register cluster metrics")
 					}
@@ -348,6 +358,7 @@ Command-line flags override YAML configuration values.`,
 						adminCfg.ClusterStatus = clusterRT.status
 						adminCfg.Migrations = clusterRT.migrate
 						adminCfg.BucketSchemes = newBucketSchemeSource(clusterRT.coord)
+						adminCfg.BucketUsage = newBucketUsageSource(clusterRT.client, clusterRT.etcdCfg)
 						adminCfg.ClusterDefaultScheme = clusterRT.schemeID
 					}
 

@@ -68,6 +68,10 @@ type Options struct {
 	// via the control plane; nil outside cluster mode (the scheme endpoints
 	// then return 501).
 	BucketSchemes BucketSchemeStore
+	// BucketUsage reads the durable per-bucket object accounting; nil outside
+	// cluster mode (the endpoint then returns 501), where the index lives in
+	// the control plane.
+	BucketUsage BucketUsageSource
 	// PublicRead reads and writes the cluster-wide public-read bucket list; nil
 	// unless the server uses cluster-wide credentials (the public-read endpoints
 	// then return 501).

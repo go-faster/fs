@@ -193,6 +193,35 @@ paths:
           description: Deleted.
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/buckets/usage:
+    get:
+      operationId: "getBucketUsage"
+      summary: "Per-bucket object count and size"
+      description: >
+        How many objects each bucket holds and how many bytes they occupy, read
+        from the cluster's durable usage index rather than computed on demand —
+        counting on demand would mean a scatter-gather over every disk, which is
+        exactly what makes it unusable at the size where the question matters.
+
+        The totals are maintained incrementally as objects are written and
+        deleted, and re-derived from the objects themselves by a periodic
+        cluster-wide recount. Between recounts a total can drift: a node that
+        dies between committing a write and reporting it leaves its bucket
+        short. Read `counted` to see when a total was last anchored, and
+        `updated` for the last incremental change.
+
+        Multipart uploads are counted only once completed; parts in flight are
+        not objects and are not charged to the bucket. Returns 501 when the
+        server is not in cluster mode.
+      responses:
+        200:
+          description: Per-bucket usage.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/BucketUsageList"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/buckets/{bucket}/scheme:
     get:
       operationId: "getBucketScheme"
@@ -543,6 +572,22 @@ components:
         data_error:
           type: string
           description: "Why the disk could not be probed; has_data is then absent."
+        fragments:
+          type: integer
+          format: int64
+          description: >-
+            How many fragments the disk holds, from the node's occupancy index.
+            Present only once that index has been anchored by a scan — absent
+            means "not counted yet", never "empty". This is drain progress, not
+            the drain verdict: has_data is what says the disk is safe to remove.
+        bytes:
+          type: integer
+          format: int64
+          description: >-
+            What those fragments occupy, payload only — smaller than the used
+            space implied by total_bytes/free_bytes, which come from statfs and
+            include filesystem overhead. Absent under the same conditions as
+            fragments.
     ClusterNode:
       type: object
       required:
@@ -764,6 +809,57 @@ components:
         last_error:
           type: string
           description: "Why the most recent run on this process failed."
+    BucketUsageList:
+      type: object
+      description: "Per-bucket object accounting, from the cluster's usage index."
+      required:
+        - buckets
+      properties:
+        buckets:
+          type: array
+          description: "One entry per bucket that has been accounted for, sorted by name."
+          items:
+            $ref: "#/components/schemas/BucketUsage"
+        objects:
+          type: integer
+          format: int64
+          description: "Objects across every bucket."
+        bytes:
+          type: integer
+          format: int64
+          description: "Bytes across every bucket."
+    BucketUsage:
+      type: object
+      description: "One bucket's object count and total size."
+      required:
+        - bucket
+        - objects
+        - bytes
+      properties:
+        bucket:
+          type: string
+        objects:
+          type: integer
+          format: int64
+          description: "How many objects the bucket holds."
+        bytes:
+          type: integer
+          format: int64
+          description: >-
+            What those objects occupy, summed over their sizes. This is logical
+            size, not what the cluster stores: replication and erasure coding
+            multiply it on disk (see the scheme's overhead).
+        updated:
+          type: string
+          format: date-time
+          description: "When an incremental change last moved these counters."
+        counted:
+          type: string
+          format: date-time
+          description: >-
+            When a full recount last anchored them. Absent means the totals have
+            only ever been maintained incrementally, so nothing has verified
+            them against the objects themselves yet.
     BucketScheme:
       type: object
       description: "A bucket's effective replication scheme and whether it overrides the cluster default."

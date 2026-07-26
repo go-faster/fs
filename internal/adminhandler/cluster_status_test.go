@@ -198,3 +198,56 @@ func TestAccessKeyEndpointsUnavailableWithoutManager(t *testing.T) {
 	err = a.DeleteAccessKey(t.Context(), adminapi.DeleteAccessKeyParams{AccessKey: "x"})
 	requireStatusCode(t, err, http.StatusNotImplemented)
 }
+
+// TestClusterStatusReportsDiskOccupancy covers the progress half of a drain:
+// how much is left to move. The rule mirrors has_data — an index that has not
+// been anchored yet reports nothing rather than a confident zero, because a
+// zero here reads as "done".
+func TestClusterStatusReportsDiskOccupancy(t *testing.T) {
+	src := stubClusterStatus{st: ClusterStatus{
+		Nodes: []ClusterNode{
+			{
+				ID: "n0",
+				Disks: []ClusterDisk{
+					{ID: "d0", Weight: -1, TotalBytes: 1000, FreeBytes: 400},
+					{ID: "d1", Weight: -1},
+					{ID: "d2", Weight: 1},
+				},
+				Live: &NodeLive{Disks: []NodeDisk{
+					// Draining, with the remaining work attached.
+					{ID: "d0", HasData: true, Fragments: 12, Bytes: 4096, Counted: true},
+					// Drained, and counted: the two agree.
+					{ID: "d1", HasData: false, Fragments: 0, Bytes: 0, Counted: true},
+					// Holding data, but the index has not been anchored yet.
+					{ID: "d2", HasData: true},
+				}},
+			},
+		},
+	}}
+
+	a := NewAdminAPI(Options{ClusterStatus: src})
+
+	st, err := a.GetClusterStatus(t.Context())
+	require.NoError(t, err)
+
+	disks := st.Nodes[0].Disks
+	require.Len(t, disks, 3)
+
+	assert.Equal(t, int64(12), disks[0].Fragments.Or(0))
+	assert.Equal(t, int64(4096), disks[0].Bytes.Or(0))
+	// Occupancy is payload only; capacity still comes from statfs.
+	assert.Equal(t, int64(1000), disks[0].TotalBytes.Or(0))
+
+	fragments, ok := disks[1].Fragments.Get()
+	require.True(t, ok, "a counted, empty disk reports zero rather than nothing")
+	assert.Zero(t, fragments)
+
+	_, ok = disks[2].Fragments.Get()
+	assert.False(t, ok, "an unanchored index must not report a count")
+	_, ok = disks[2].Bytes.Get()
+	assert.False(t, ok)
+
+	hasData, ok := disks[2].HasData.Get()
+	require.True(t, ok, "the drain verdict is independent of the index")
+	assert.True(t, hasData)
+}
