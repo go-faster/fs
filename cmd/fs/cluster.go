@@ -274,6 +274,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 			lg.Warn("Object repair failed",
 				zap.String("bucket", bucket), zap.String("key", key), zap.Error(err))
 		},
+		// Scrub cursors live on the disks they describe, so a restart resumes
+		// the sweep instead of starting the disk over.
+		ScrubState: store.ScrubStateStore(),
 	})
 	if err != nil {
 		_ = listener.Close()

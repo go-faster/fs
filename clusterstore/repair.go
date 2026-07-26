@@ -6,6 +6,7 @@ import (
 	"crypto/md5" //nolint:gosec // Object checksums are MD5 by protocol.
 	"encoding/hex"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +44,9 @@ type Repairer struct {
 	// strayMu guards strays: objectRef → generation → first sighting.
 	strayMu sync.Mutex
 	strays  map[string]map[string]time.Time
+
+	// state persists scrub progress per disk; nil means passes never resume.
+	state ScrubStateStore
 }
 
 // RepairerConfig configures a Repairer.
@@ -61,6 +65,9 @@ type RepairerConfig struct {
 	// left alone before the sweep may delete it. Defaults to
 	// DefaultSweepGrace; only tests should lower it.
 	SweepGrace time.Duration
+	// ScrubState persists per-disk scrub progress so an interrupted pass
+	// resumes instead of restarting. Nil disables resuming.
+	ScrubState ScrubStateStore
 }
 
 // DefaultSweepGrace is the default protection window for unattributed
@@ -90,6 +97,7 @@ func NewRepairer(cfg RepairerConfig) (*Repairer, error) {
 		onErr:      onErr,
 		sweepGrace: grace,
 		strays:     make(map[string]map[string]time.Time),
+		state:      cfg.ScrubState,
 	}, nil
 }
 
@@ -935,6 +943,12 @@ type ScrubReport struct {
 	Totals RepairReport
 }
 
+// scrubCheckpointEvery is how many object namespaces a disk sweep processes
+// between cursor saves. Each save is a small local write, and the cost of
+// crashing between them is re-verifying at most that many objects — cheap
+// enough at either end that the exact figure hardly matters.
+const scrubCheckpointEvery = 512
+
 // Scrub walks this node's local disks and repairs every object found,
 // cluster-wide: a missing remainder, a dead peer's fragment or a stale
 // generation anywhere in the object's placement gets fixed, not just local
@@ -960,13 +974,76 @@ func (r *Repairer) Scrub(ctx context.Context) (*ScrubReport, error) {
 	report := &ScrubReport{}
 	seen := make(map[string]struct{})
 
-	for _, disk := range disks {
-		if err := r.scrubDisk(ctx, self, disk.ID, seen, report); err != nil {
+	for _, disk := range r.scrubOrder(disks) {
+		if err := r.scrubDisk(ctx, self, disk, seen, report); err != nil {
 			return report, err
 		}
 	}
 
 	return report, nil
+}
+
+// scrubOrder decides which of this node's disks to sweep first.
+//
+// An interrupted disk goes first so its cursor is consumed rather than aged
+// out, then the least recently completed. Taking the disks in configuration
+// order instead would starve the tail: a pass over a large disk runs for hours,
+// so a node restarted more often than a full sweep takes would re-verify the
+// first disks forever and never reach the last.
+func (r *Repairer) scrubOrder(disks []cluster.Disk) []cluster.DiskID {
+	type entry struct {
+		disk  cluster.DiskID
+		state cluster.ScrubState
+	}
+
+	entries := make([]entry, 0, len(disks))
+	for _, d := range disks {
+		entries = append(entries, entry{disk: d.ID, state: r.scrubState(d.ID)})
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i].state, entries[j].state
+
+		if a.InProgress() != b.InProgress() {
+			return a.InProgress()
+		}
+
+		if !a.LastCompleted.Equal(b.LastCompleted) {
+			return a.LastCompleted.Before(b.LastCompleted)
+		}
+
+		return entries[i].disk < entries[j].disk
+	})
+
+	out := make([]cluster.DiskID, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.disk)
+	}
+
+	return out
+}
+
+// scrubState reads a disk's persisted progress, or the zero state when nothing
+// persists it.
+func (r *Repairer) scrubState(disk cluster.DiskID) cluster.ScrubState {
+	if r.state == nil {
+		return cluster.ScrubState{}
+	}
+
+	return r.state.LoadScrubState(disk)
+}
+
+// saveScrubState records progress, if anything persists it. A failure to save
+// is logged through OnError and otherwise ignored: the cost is a repeated pass,
+// and stopping a scrub because a cursor would not write is the worse trade.
+func (r *Repairer) saveScrubState(disk cluster.DiskID, st cluster.ScrubState) {
+	if r.state == nil {
+		return
+	}
+
+	if err := r.state.SaveScrubState(disk, st); err != nil {
+		r.onErr("", "", errors.Wrapf(err, "save scrub cursor for disk %s", disk))
+	}
 }
 
 // scrubDisk feeds one disk's objects through repair.
@@ -1003,51 +1080,121 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 		frags[dir][gen] = append(frags[dir][gen], idx)
 	}
 
-	for dir, hasMeta := range metas {
+	// Namespaces in lexicographic order. The cursor is a position in this
+	// order, so it means nothing unless the walk is deterministic — and map
+	// iteration, which this used, is deliberately not.
+	dirs := make([]string, 0, len(metas))
+	for dir := range metas {
+		dirs = append(dirs, dir)
+	}
+
+	sort.Strings(dirs)
+
+	state := r.scrubState(disk)
+	if !state.InProgress() {
+		state.PassStarted = time.Now().UTC()
+	}
+
+	unsaved := 0
+
+	for _, dir := range dirs[resumeAt(dirs, state):] {
 		if err := ctx.Err(); err != nil {
+			// A shutdown mid-pass keeps its place: that is the whole point of
+			// the cursor, and it is the most common way a pass is interrupted.
+			r.saveScrubState(disk, state)
+
 			return err
 		}
 
-		if !hasMeta {
-			// Fragments with no local commit record: either a refused write's
-			// garbage or a lost sidecar. Undecidable from names alone (they
-			// are hashes); the object's other targets repair it, and a
-			// mtime-based orphan sweep is a follow-up.
-			report.UnknownDirs++
-			continue
+		r.scrubNamespace(ctx, self, disk, dir, metas[dir], frags[dir], seen, report)
+
+		state.Cursor = dir
+		unsaved++
+
+		if unsaved >= scrubCheckpointEvery {
+			r.saveScrubState(disk, state)
+
+			unsaved = 0
 		}
-
-		sc, err := readSidecarFrom(ctx, self, disk, dir+"/meta")
-		if err != nil || sc == nil {
-			report.UnknownDirs++
-			continue
-		}
-
-		ref := objectRef(sc.Bucket, sc.Key)
-		if _, done := seen[ref]; done {
-			continue
-		}
-
-		seen[ref] = struct{}{}
-		report.Objects++
-
-		rep, err := r.repair(ctx, sc.Bucket, sc.Key, sc, &localFragments{disk: disk, gens: frags[dir]})
-		if err != nil {
-			report.Failed++
-
-			r.onErr(sc.Bucket, sc.Key, err)
-
-			continue
-		}
-
-		if rep.Changed() {
-			report.Repaired++
-		}
-
-		report.Totals.add(rep)
 	}
 
+	// The disk is done: drop the cursor so the next sweep starts fresh, and
+	// record when coverage was last complete.
+	state.Cursor = ""
+	state.LastCompleted = time.Now().UTC()
+	r.saveScrubState(disk, state)
+
 	return nil
+}
+
+// resumeAt finds where an interrupted pass left off. A cursor naming a
+// namespace that has since been deleted still positions correctly: the search
+// is on order, not on the entry existing.
+func resumeAt(dirs []string, state cluster.ScrubState) int {
+	if !state.InProgress() {
+		return 0
+	}
+
+	i := sort.SearchStrings(dirs, state.Cursor)
+	if i < len(dirs) && dirs[i] == state.Cursor {
+		i++
+	}
+
+	return i
+}
+
+// scrubNamespace feeds one object namespace through repair. Every outcome —
+// including the ones that skip the work — leaves the namespace processed, so
+// the caller advances the cursor past it either way.
+func (r *Repairer) scrubNamespace(
+	ctx context.Context,
+	self Peer,
+	disk cluster.DiskID,
+	dir string,
+	hasMeta bool,
+	gens map[string][]int,
+	seen map[string]struct{},
+	report *ScrubReport,
+) {
+	if !hasMeta {
+		// Fragments with no local commit record: either a refused write's
+		// garbage or a lost sidecar. Undecidable from names alone (they
+		// are hashes); the object's other targets repair it, and a
+		// mtime-based orphan sweep is a follow-up.
+		report.UnknownDirs++
+
+		return
+	}
+
+	sc, err := readSidecarFrom(ctx, self, disk, dir+"/meta")
+	if err != nil || sc == nil {
+		report.UnknownDirs++
+
+		return
+	}
+
+	ref := objectRef(sc.Bucket, sc.Key)
+	if _, done := seen[ref]; done {
+		return
+	}
+
+	seen[ref] = struct{}{}
+	report.Objects++
+
+	rep, err := r.repair(ctx, sc.Bucket, sc.Key, sc, &localFragments{disk: disk, gens: gens})
+	if err != nil {
+		report.Failed++
+
+		r.onErr(sc.Bucket, sc.Key, err)
+
+		return
+	}
+
+	if rep.Changed() {
+		report.Repaired++
+	}
+
+	report.Totals.add(rep)
 }
 
 // parseFragmentFile splits a fragment file name "<generation>.f<index>".
