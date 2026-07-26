@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -283,4 +284,101 @@ func (rt *clusterRuntime) RunObjectIndex(ctx context.Context) {
 
 		rt.lg.Warn("Object index build failed; it stays unusable until the next start", zap.Error(err))
 	}
+}
+
+// verifyBatch is how many verification stamps accumulate before they are
+// written. Batching is the point: a scrub verifying millions of objects should
+// not pay a durable write for each, and losing the last few to a crash costs
+// re-verifying those objects — which is the cheapest possible thing to lose.
+const verifyBatch = 512
+
+// objectVerifier records what the scrub has checked into the node's index, and
+// answers what it has.
+//
+// The pending batch doubles as the pass's memory of what it has already swept.
+// That is what lets the scrub drop the set it used to keep of every object in
+// a pass: the set grew with the node, and this is bounded by the batch.
+type objectVerifier struct {
+	index *objindex.Index
+	lg    *zap.Logger
+
+	mu      sync.Mutex
+	pending map[string]time.Time
+}
+
+var _ clusterstore.VerificationIndex = (*objectVerifier)(nil)
+
+func newObjectVerifier(index *objindex.Index, lg *zap.Logger) *objectVerifier {
+	return &objectVerifier{index: index, lg: lg, pending: make(map[string]time.Time)}
+}
+
+// verifyKey is how a pending stamp is keyed. Bucket names cannot contain a NUL
+// and object keys cannot carry one, which is what the coordinator's own object
+// references rest on.
+func verifyKey(bucket, key string) string { return bucket + "\x00" + key }
+
+// LastVerified implements clusterstore.VerificationIndex, answering from the
+// unwritten batch first: a stamp recorded moments ago has not reached the index
+// yet, and missing it would sweep the same object twice in one pass.
+func (v *objectVerifier) LastVerified(bucket, key string) (time.Time, bool) {
+	v.mu.Lock()
+	at, pending := v.pending[verifyKey(bucket, key)]
+	v.mu.Unlock()
+
+	if pending {
+		return at, true
+	}
+
+	entry, found, err := v.index.Get(bucket, key)
+	if err != nil || !found || entry.VerifiedAt.IsZero() {
+		return time.Time{}, false
+	}
+
+	return entry.VerifiedAt, true
+}
+
+// RecordVerified implements clusterstore.VerificationIndex.
+func (v *objectVerifier) RecordVerified(bucket, key string, at time.Time) {
+	v.mu.Lock()
+
+	v.pending[verifyKey(bucket, key)] = at
+	full := len(v.pending) >= verifyBatch
+
+	v.mu.Unlock()
+
+	if !full {
+		return
+	}
+
+	if err := v.Flush(); err != nil {
+		v.lg.Warn("Recording scrub verification failed; those objects re-verify next pass", zap.Error(err))
+	}
+}
+
+// Flush implements clusterstore.VerificationIndex.
+func (v *objectVerifier) Flush() error {
+	v.mu.Lock()
+
+	if len(v.pending) == 0 {
+		v.mu.Unlock()
+
+		return nil
+	}
+
+	records := make([]objindex.Verification, 0, len(v.pending))
+
+	for k, at := range v.pending {
+		bucket, key, ok := strings.Cut(k, "\x00")
+		if !ok {
+			continue
+		}
+
+		records = append(records, objindex.Verification{Bucket: bucket, Key: key, At: at})
+	}
+
+	v.pending = make(map[string]time.Time)
+
+	v.mu.Unlock()
+
+	return v.index.SetVerified(records)
 }

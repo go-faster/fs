@@ -179,8 +179,13 @@ Command-line flags override YAML configuration values.`,
 
 					// The node's object index: built from its disks when it
 					// was not handed over cleanly, maintained by the write
-					// path after that. No reader depends on it yet.
+					// path after that, and read by listings, usage and the
+					// scrub's coverage.
 					go clusterRT.RunObjectIndex(ctx)
+
+					// How stale this node's verification is, recomputed off
+					// the request path.
+					go clusterRT.RunCoverage(ctx)
 
 					// Per-bucket object accounting: batched deltas from this
 					// node's writes, and the cluster-wide recount that keeps

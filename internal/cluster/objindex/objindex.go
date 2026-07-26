@@ -622,3 +622,124 @@ func (i *Index) Reset() error {
 
 // DefaultDir is where a node keeps its index, given the storage root.
 func DefaultDir(root string) string { return filepath.Join(root, "cluster", "index") }
+
+// Verification is one object's verification stamp.
+type Verification struct {
+	Bucket string
+	Key    string
+	At     time.Time
+}
+
+// SetVerified records when the scrub last checked these objects.
+//
+// Verification is written apart from the entry itself because only the scrub
+// knows it and only the write path knows the rest: an object re-indexed by a
+// write keeps whatever the scrub recorded, and a scrub recording a check does
+// not disturb the size or etag a write just stored.
+//
+// Objects the index does not hold are skipped rather than created. The index
+// records what this node holds; a stamp for something it does not hold would
+// be an entry with no object behind it.
+func (i *Index) SetVerified(records []Verification) error {
+	batch := i.db.NewBatch()
+	defer func() { _ = batch.Close() }()
+
+	for _, rec := range records {
+		l := i.lock(rec.Bucket)
+		l.Lock()
+
+		entry, found, err := i.get(rec.Bucket, rec.Key)
+		if err != nil {
+			l.Unlock()
+
+			return err
+		}
+
+		if !found {
+			l.Unlock()
+
+			continue
+		}
+
+		entry.VerifiedAt = rec.At
+
+		data, err := json.Marshal(entry)
+		if err != nil {
+			l.Unlock()
+
+			return errors.Wrap(err, "marshal index entry")
+		}
+
+		err = batch.Set(objectKey(rec.Bucket, rec.Key), data, nil)
+
+		l.Unlock()
+
+		if err != nil {
+			return errors.Wrap(err, "stage verification")
+		}
+	}
+
+	if batch.Empty() {
+		return nil
+	}
+
+	if err := batch.Commit(i.write); err != nil {
+		return errors.Wrap(err, "commit verification")
+	}
+
+	return nil
+}
+
+// Coverage is how well the scrub is keeping up with what a node holds.
+type Coverage struct {
+	// Objects is how many the node holds.
+	Objects int64
+	// Never is how many have not been verified once. A node that has never
+	// completed a cycle reports them all.
+	Never int64
+	// Oldest is the least recent verification among those that have one. With
+	// Never at zero it is the honest age of the node's coverage: every object
+	// has been checked at least since then.
+	Oldest time.Time
+}
+
+// Coverage scans the index and reports how stale the node's verification is.
+//
+// This is the number worth watching, and the one nothing could answer before:
+// counters of scrub work done say how busy the scrubber was, not whether it
+// ever reached the objects at the back of a disk. A cycle that cannot keep up
+// shows here as an Oldest that keeps receding, or a Never that never falls.
+//
+// It reads index entries only — no disk, no network — so it costs a local scan
+// rather than the walk it reports on.
+func (i *Index) Coverage() (Coverage, error) {
+	var cov Coverage
+
+	buckets, err := i.Buckets()
+	if err != nil {
+		return Coverage{}, err
+	}
+
+	for _, bucket := range buckets {
+		err := i.Scan(bucket, "", "", 0, func(e Entry) error {
+			cov.Objects++
+
+			if e.VerifiedAt.IsZero() {
+				cov.Never++
+
+				return nil
+			}
+
+			if cov.Oldest.IsZero() || e.VerifiedAt.Before(cov.Oldest) {
+				cov.Oldest = e.VerifiedAt
+			}
+
+			return nil
+		})
+		if err != nil {
+			return Coverage{}, err
+		}
+	}
+
+	return cov, nil
+}

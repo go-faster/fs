@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/etcd"
 	"github.com/go-faster/fs/internal/cluster/objindex"
+	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
 // indexBucket is the bucket every case here writes to.
@@ -393,4 +395,64 @@ func TestRecountUsesTheIndex(t *testing.T) {
 	assert.Equal(t, int64(3), rec.Objects)
 	assert.Equal(t, int64(192), rec.Bytes)
 	assert.False(t, rec.Counted.IsZero(), "and stamped when it anchored them")
+}
+
+// TestScrubCoverageEndToEnd drives a real node's scrub and checks the coverage
+// it reports: nothing verified before a pass, everything the node holds
+// verified after one, and the numbers reaching the live status a peer reads.
+func TestScrubCoverageEndToEnd(t *testing.T) {
+	nodes := indexCluster(t, "/fs-index-scrub")
+	rt := nodes[0]
+
+	require.NoError(t, rt.Storage.CreateBucket(t.Context(), indexBucket))
+	putObjects(t, rt, 48, "a.jpg", "b.jpg", "c.jpg", "d.jpg")
+
+	for _, node := range nodes {
+		node.RunObjectIndex(t.Context())
+	}
+
+	cov, err := rt.index.Coverage()
+	require.NoError(t, err)
+	require.Positive(t, cov.Objects, "the node must hold something")
+	assert.Equal(t, cov.Objects, cov.Never, "nothing has been verified yet")
+	assert.True(t, cov.Oldest.IsZero())
+
+	// A scrub pass verifies what this node holds and stamps it.
+	report, err := rt.repairer.Scrub(t.Context())
+	require.NoError(t, err)
+	require.Positive(t, report.Objects)
+
+	cov, err = rt.index.Coverage()
+	require.NoError(t, err)
+	assert.Zero(t, cov.Never, "a completed pass leaves nothing unverified")
+	assert.False(t, cov.Oldest.IsZero(), "and the coverage has an age")
+
+	// The status a peer reads carries it, but only after the background
+	// refresh — the request path must not scan the index itself.
+	before := rt.nodeStatusNow(t)
+	assert.Zero(t, before.Scrub.Held, "coverage is not derived on the status path")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	go rt.RunCoverage(ctx)
+
+	require.Eventually(t, func() bool {
+		return rt.nodeStatusNow(t).Scrub.Held > 0
+	}, 5*time.Second, 20*time.Millisecond, "the refresh must publish coverage")
+
+	cancel()
+
+	status := rt.nodeStatusNow(t)
+	assert.Equal(t, cov.Objects, status.Scrub.Held)
+	assert.Zero(t, status.Scrub.NeverVerified)
+	assert.False(t, status.Scrub.OldestVerified.IsZero())
+}
+
+// nodeStatusNow reads the node's live state the way a peer would.
+func (rt *clusterRuntime) nodeStatusNow(t *testing.T) transport.NodeStatus {
+	t.Helper()
+
+	st, err := rt.nodeStatus(t.Context())
+	require.NoError(t, err)
+
+	return st
 }

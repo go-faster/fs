@@ -2,6 +2,7 @@ package adminhandler
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-faster/fs/adminapi"
 )
@@ -48,6 +49,13 @@ type NodeLive struct {
 	// ECUnverified reports that the node's last scrub pass saw an EC set
 	// failing parity verification.
 	ECUnverified bool
+	// OldestVerified, NeverVerified and Held are the node's scrub coverage:
+	// how long ago the least recently checked object was checked, how many
+	// have never been, and how many the node holds. Counts of work done say
+	// how busy a scrubber was; these say whether it is keeping up.
+	OldestVerified time.Time
+	NeverVerified  int64
+	Held           int64
 	// Disks is what each of the node's disks holds, as only the node can know.
 	Disks []NodeDisk
 }
@@ -229,6 +237,18 @@ func liveToAPI(l NodeLive) adminapi.ClusterNodeLive {
 		CorruptReplicas:    l.CorruptReplicas,
 		ConvertedObjects:   l.Converted,
 		EcUnverified:       l.ECUnverified,
+	}
+
+	// Coverage is reported only when the node could derive it. Zeroes would
+	// read as "nothing held, everything just verified", which is the reading
+	// these numbers exist to prevent.
+	if l.Held > 0 {
+		out.ObjectsHeld = adminapi.NewOptInt64(l.Held)
+		out.NeverVerified = adminapi.NewOptInt64(l.NeverVerified)
+
+		if !l.OldestVerified.IsZero() {
+			out.OldestVerified = adminapi.NewOptDateTime(l.OldestVerified)
+		}
 	}
 
 	if l.Version != "" {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-faster/errors"
 )
@@ -97,6 +98,19 @@ type NodeScrub struct {
 	// ECUnverified reports that the last pass saw an EC set failing parity
 	// verification.
 	ECUnverified bool `json:"ec_unverified"`
+	// OldestVerified is the least recent verification among the objects this
+	// node holds, and NeverVerified how many have never been checked.
+	//
+	// Together they are the coverage the totals above cannot give: counts of
+	// work done say how busy a scrubber was, not whether it ever reached the
+	// objects at the back of a disk. A cycle failing to keep up shows as an
+	// oldest that keeps receding, or a never that does not fall.
+	OldestVerified time.Time `json:"oldest_verified,omitzero"`
+	NeverVerified  int64     `json:"never_verified,omitempty"`
+	// Held is how many objects this node holds, the denominator for the two
+	// above. Objects, higher up, counts what its passes have swept, which is a
+	// different number and grows without bound.
+	Held int64 `json:"held,omitempty"`
 }
 
 // StatusFunc reports the node's live state. It runs on a peer's request, so it

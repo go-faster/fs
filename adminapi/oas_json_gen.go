@@ -1252,12 +1252,30 @@ func (s *ClusterNodeLive) encodeFields(e *jx.Encoder) {
 		e.Int64(s.ConvertedObjects)
 	}
 	{
+		if s.ObjectsHeld.Set {
+			e.FieldStart("objects_held")
+			s.ObjectsHeld.Encode(e)
+		}
+	}
+	{
+		if s.NeverVerified.Set {
+			e.FieldStart("never_verified")
+			s.NeverVerified.Encode(e)
+		}
+	}
+	{
+		if s.OldestVerified.Set {
+			e.FieldStart("oldest_verified")
+			s.OldestVerified.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
 		e.FieldStart("ec_unverified")
 		e.Bool(s.EcUnverified)
 	}
 }
 
-var jsonFieldsNameOfClusterNodeLive = [18]string{
+var jsonFieldsNameOfClusterNodeLive = [21]string{
 	0:  "version",
 	1:  "schema_version",
 	2:  "uptime_seconds",
@@ -1275,7 +1293,10 @@ var jsonFieldsNameOfClusterNodeLive = [18]string{
 	14: "swept_stale",
 	15: "corrupt_replicas",
 	16: "converted_objects",
-	17: "ec_unverified",
+	17: "objects_held",
+	18: "never_verified",
+	19: "oldest_verified",
+	20: "ec_unverified",
 }
 
 // Decode decodes ClusterNodeLive from json.
@@ -1481,8 +1502,38 @@ func (s *ClusterNodeLive) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"converted_objects\"")
 			}
+		case "objects_held":
+			if err := func() error {
+				s.ObjectsHeld.Reset()
+				if err := s.ObjectsHeld.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"objects_held\"")
+			}
+		case "never_verified":
+			if err := func() error {
+				s.NeverVerified.Reset()
+				if err := s.NeverVerified.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"never_verified\"")
+			}
+		case "oldest_verified":
+			if err := func() error {
+				s.OldestVerified.Reset()
+				if err := s.OldestVerified.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"oldest_verified\"")
+			}
 		case "ec_unverified":
-			requiredBitSet[2] |= 1 << 1
+			requiredBitSet[2] |= 1 << 4
 			if err := func() error {
 				v, err := d.Bool()
 				s.EcUnverified = bool(v)
@@ -1505,7 +1556,7 @@ func (s *ClusterNodeLive) Decode(d *jx.Decoder) error {
 	for i, mask := range [3]uint8{
 		0b11111000,
 		0b11111110,
-		0b00000011,
+		0b00010001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
