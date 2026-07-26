@@ -33,7 +33,13 @@ func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
 		UploadID:   uploadID,
 		PartNumber: partNumber,
 		Reader:     reader,
-		Size:       r.ContentLength,
+		// The decoded length, not Content-Length. A streaming-signature upload
+		// frames the payload in chunks, so Content-Length counts the framing
+		// too and the reader above — which strips it — yields fewer bytes than
+		// that. A backend that streams exactly the size it is given then runs
+		// off the end of the body, which is how every multipart upload from a
+		// client using streaming signatures failed against a cluster.
+		Size: getDecodedContentLength(r),
 	}
 
 	part, err := h.service.UploadPart(ctx, req)
