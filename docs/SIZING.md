@@ -81,6 +81,24 @@ the node itself, exactly.
 disk — `data_error` then says why. Absent means unknown, and treating unknown as
 drained is how a disk still holding the only copy of something gets deleted.
 
+### Watching a drain make progress
+
+The same response carries `fragments` and `bytes` per disk: how much the disk
+still holds, from the node's own occupancy index. They answer "how much longer",
+which `has_data` cannot — poll them to see a drain converge instead of watching
+a boolean that flips at the very end.
+
+They are **progress, not the verdict**. The index is anchored by a full scan and
+then maintained incrementally by the write path, so a write racing a scan can
+leave it off by a little; `has_data` stays the thing to gate a volume deletion
+on, because it is exact. `bytes` counts payload only, so it is smaller than the
+used space `total_bytes`/`free_bytes` imply — those include filesystem overhead.
+
+Both are **absent** until the node has anchored the index. A node adopts its
+counters instantly across an orderly restart; after a crash it walks its disks
+first, and reports nothing while it does. Absent means "not counted yet" — never
+"empty".
+
 ## etcd
 
 etcd holds only control-plane state (node registry, rebalance/migrate cursors,

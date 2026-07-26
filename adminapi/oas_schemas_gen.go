@@ -159,6 +159,14 @@ type ClusterDisk struct {
 	HasData OptBool `json:"has_data"`
 	// Why the disk could not be probed; has_data is then absent.
 	DataError OptString `json:"data_error"`
+	// How many fragments the disk holds, from the node's occupancy index. Present only once that index has
+	// been anchored by a scan — absent means "not counted yet", never "empty". This is drain progress,
+	// not the drain verdict: has_data is what says the disk is safe to remove.
+	Fragments OptInt64 `json:"fragments"`
+	// What those fragments occupy, payload only — smaller than the used space implied by
+	// total_bytes/free_bytes, which come from statfs and include filesystem overhead. Absent under the
+	// same conditions as fragments.
+	Bytes OptInt64 `json:"bytes"`
 }
 
 // GetID returns the value of ID.
@@ -196,6 +204,16 @@ func (s *ClusterDisk) GetDataError() OptString {
 	return s.DataError
 }
 
+// GetFragments returns the value of Fragments.
+func (s *ClusterDisk) GetFragments() OptInt64 {
+	return s.Fragments
+}
+
+// GetBytes returns the value of Bytes.
+func (s *ClusterDisk) GetBytes() OptInt64 {
+	return s.Bytes
+}
+
 // SetID sets the value of ID.
 func (s *ClusterDisk) SetID(val string) {
 	s.ID = val
@@ -229,6 +247,16 @@ func (s *ClusterDisk) SetHasData(val OptBool) {
 // SetDataError sets the value of DataError.
 func (s *ClusterDisk) SetDataError(val OptString) {
 	s.DataError = val
+}
+
+// SetFragments sets the value of Fragments.
+func (s *ClusterDisk) SetFragments(val OptInt64) {
+	s.Fragments = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *ClusterDisk) SetBytes(val OptInt64) {
+	s.Bytes = val
 }
 
 // Ref: #/components/schemas/ClusterNode

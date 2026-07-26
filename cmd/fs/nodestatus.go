@@ -58,7 +58,14 @@ func liveDisks(disks []transport.NodeDisk) []adminhandler.NodeDisk {
 
 	out := make([]adminhandler.NodeDisk, 0, len(disks))
 	for _, d := range disks {
-		out = append(out, adminhandler.NodeDisk{ID: d.ID, HasData: d.HasData, Err: d.Err})
+		out = append(out, adminhandler.NodeDisk{
+			ID:        d.ID,
+			HasData:   d.HasData,
+			Err:       d.Err,
+			Fragments: d.Fragments,
+			Bytes:     d.Bytes,
+			Counted:   d.Counted,
+		})
 	}
 
 	return out
@@ -85,6 +92,16 @@ func (rt *clusterRuntime) diskStatus(ctx context.Context) []transport.NodeDisk {
 			status.Err = err.Error()
 		} else {
 			status.HasData = hasData
+		}
+
+		// Occupancy rides along as progress, not as a verdict: the probe above
+		// decides whether the disk is empty, and the index only says how much
+		// is left to move. An index error is not worth reporting — the disk
+		// still answered the question that matters.
+		if u, err := rt.store.Occupancy(disk.ID); err == nil && u.Anchored {
+			status.Fragments = u.Fragments
+			status.Bytes = u.Bytes
+			status.Counted = true
 		}
 
 		disks = append(disks, status)

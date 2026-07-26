@@ -173,6 +173,10 @@ Command-line flags override YAML configuration values.`,
 					// warnings; cluster metrics for the telemetry pipeline.
 					go clusterRT.RunUsageReporter(ctx, cfg.Cluster.Rebalance.FullWatermark)
 
+					// Per-disk occupancy: what this node's disks hold, which
+					// is what a drain is waiting to reach zero.
+					go clusterRT.RunOccupancyIndex(ctx)
+
 					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {
 						return errors.Wrap(err, "register cluster metrics")
 					}

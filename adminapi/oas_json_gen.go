@@ -485,9 +485,21 @@ func (s *ClusterDisk) encodeFields(e *jx.Encoder) {
 			s.DataError.Encode(e)
 		}
 	}
+	{
+		if s.Fragments.Set {
+			e.FieldStart("fragments")
+			s.Fragments.Encode(e)
+		}
+	}
+	{
+		if s.Bytes.Set {
+			e.FieldStart("bytes")
+			s.Bytes.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfClusterDisk = [7]string{
+var jsonFieldsNameOfClusterDisk = [9]string{
 	0: "id",
 	1: "weight",
 	2: "total_bytes",
@@ -495,6 +507,8 @@ var jsonFieldsNameOfClusterDisk = [7]string{
 	4: "fullness",
 	5: "has_data",
 	6: "data_error",
+	7: "fragments",
+	8: "bytes",
 }
 
 // Decode decodes ClusterDisk from json.
@@ -502,7 +516,7 @@ func (s *ClusterDisk) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode ClusterDisk to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -580,6 +594,26 @@ func (s *ClusterDisk) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"data_error\"")
 			}
+		case "fragments":
+			if err := func() error {
+				s.Fragments.Reset()
+				if err := s.Fragments.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"fragments\"")
+			}
+		case "bytes":
+			if err := func() error {
+				s.Bytes.Reset()
+				if err := s.Bytes.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"bytes\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -589,8 +623,9 @@ func (s *ClusterDisk) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b00000011,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

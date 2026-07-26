@@ -61,6 +61,12 @@ type NodeDisk struct {
 	// Err is why the disk could not be probed. A disk that failed to answer is
 	// unknown, never drained.
 	Err string
+	// Fragments and Bytes are what the node's occupancy index says the disk
+	// holds, so a drain in progress has a number attached. Meaningful only
+	// when Counted; HasData remains what decides "empty".
+	Fragments int64
+	Bytes     int64
+	Counted   bool
 }
 
 // ClusterStatus is the cluster-wide view assembled from the control plane.
@@ -163,6 +169,15 @@ func clusterStatusToAPI(st ClusterStatus) *adminapi.ClusterStatus {
 					apiDisk.DataError = adminapi.NewOptString(probe.Err)
 				} else {
 					apiDisk.HasData = adminapi.NewOptBool(probe.HasData)
+				}
+
+				// Occupancy is reported only once the node's index has been
+				// anchored. Zeroes from an unanchored index would read as a
+				// drained disk, which is the one reading that must never be
+				// wrong.
+				if probe.Counted {
+					apiDisk.Fragments = adminapi.NewOptInt64(probe.Fragments)
+					apiDisk.Bytes = adminapi.NewOptInt64(probe.Bytes)
 				}
 			}
 

@@ -25,19 +25,29 @@ function band(f: number): Band {
 
 const DRAIN_MARK = 90; // % — the default fullness watermark.
 
-// drainLabel distinguishes a drain in progress from a finished one. Weight
-// only says the disk was taken out of placement; has_data says whether its
-// data has actually moved off, which is what makes removing it safe.
+// drainLabel distinguishes a drain in progress from a finished one, and shows
+// how much of it is left. Weight only says the disk was taken out of placement;
+// has_data says whether its data has actually moved off, which is what makes
+// removing it safe, and bytes says how far along the move is.
 function drainLabel(d: ClusterDisk): string {
   if (d.has_data === false) return "empty";
+  if (d.bytes !== undefined) return `drain ${fmtBytes(d.bytes)}`;
 
   return "drain";
 }
 
 function drainTitle(d: ClusterDisk): string | undefined {
   if (d.data_error) return `Occupancy unknown: ${d.data_error}`;
+
   if (d.has_data === false) return "Drained: this disk holds no fragments.";
-  if (d.has_data) return "Draining: this disk still holds fragments.";
+
+  if (d.has_data) {
+    // Absent counters mean the node has not finished anchoring its index, not
+    // that the disk is nearly empty — say which it is.
+    return d.fragments === undefined
+      ? "Draining: this disk still holds fragments (counting them)."
+      : `Draining: ${d.fragments.toLocaleString()} fragments left, ${fmtBytes(d.bytes ?? 0)}.`;
+  }
 
   return undefined;
 }

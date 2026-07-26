@@ -165,3 +165,38 @@ func TestStatusSourceError(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, transport.ErrUnsupported)
 }
+
+// TestStatusCarriesDiskOccupancy checks the progress counters survive the peer
+// hop, including the distinction the drain readout depends on: counted zero
+// versus not counted at all.
+func TestStatusCarriesDiskOccupancy(t *testing.T) {
+	st := reportedStatus()
+	st.Disks = []transport.NodeDisk{
+		{ID: "d0", HasData: true, Fragments: 9, Bytes: 512, Counted: true},
+		{ID: "d1", HasData: false, Counted: true},
+		{ID: "d2", HasData: true},
+	}
+
+	srv := httptest.NewServer(transport.NewServer(transport.NewMemStore(), secret,
+		transport.WithStatus(func(context.Context) (transport.NodeStatus, error) {
+			return st, nil
+		}),
+	))
+	t.Cleanup(srv.Close)
+
+	client, err := transport.NewClient(srv.URL, secret, "node-a", srv.Client())
+	require.NoError(t, err)
+
+	got, err := client.Status(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, got.Disks, 3)
+	assert.EqualValues(t, 9, got.Disks[0].Fragments)
+	assert.EqualValues(t, 512, got.Disks[0].Bytes)
+	assert.True(t, got.Disks[0].Counted)
+
+	assert.True(t, got.Disks[1].Counted, "a counted empty disk stays counted")
+	assert.Zero(t, got.Disks[1].Fragments)
+
+	assert.False(t, got.Disks[2].Counted, "an unanchored index does not become a zero count")
+}

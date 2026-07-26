@@ -199,6 +199,9 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	)
 
 	rt.store = store
+	// Checkpointing the occupancy index is the last thing the node does, so an
+	// orderly restart adopts the counters instead of walking every disk.
+	rt.closers = append(rt.closers, store.Close)
 	rt.node = cluster.Node{
 		ID:    rt.nodeID,
 		Addr:  cc.AdvertiseAddr,
@@ -408,6 +411,46 @@ func (rt *clusterRuntime) RunUsageReporter(ctx context.Context, watermark float6
 					)
 				}
 			}
+		}
+	}
+}
+
+// occupancyRescanInterval is how often the node re-anchors its per-disk
+// occupancy counters against what the disks actually hold. The counters are
+// maintained incrementally by the write path, so this only sheds the drift a
+// scan-versus-write race can leave behind — hourly is frequent enough for a
+// number an operator watches, and rare enough that the walk stays background
+// noise.
+const occupancyRescanInterval = time.Hour
+
+// RunOccupancyIndex anchors this node's per-disk occupancy counters and keeps
+// them honest.
+//
+// The first scan matters most: until it lands the counters mean nothing and the
+// node reports them as such, so a drain readout says "scanning" rather than a
+// confident, wrong zero. A start that adopted a clean checkpoint is already
+// anchored and only re-anchors on the interval.
+func (rt *clusterRuntime) RunOccupancyIndex(ctx context.Context) {
+	ticker := time.NewTicker(occupancyRescanInterval)
+	defer ticker.Stop()
+
+	for {
+		started := time.Now()
+
+		if err := rt.store.ScanAll(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			rt.lg.Warn("Occupancy scan failed; per-disk counters stay stale until the next pass", zap.Error(err))
+		} else {
+			rt.lg.Debug("Occupancy scan complete", zap.Duration("took", time.Since(started)))
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

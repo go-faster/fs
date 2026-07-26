@@ -58,6 +58,19 @@ type NodeDisk struct {
 	// failed to answer must never read as drained, so HasData stays false and
 	// this says why.
 	Err string `json:"error,omitempty"`
+
+	// Fragments and Bytes are what the node's occupancy index says the disk
+	// holds. They turn a drain from a yes/no into a progress readout — "still
+	// 4.2 GiB to move" — which is the difference between waiting and knowing
+	// how long. Meaningful only when Counted.
+	Fragments int64 `json:"fragments,omitempty"`
+	Bytes     int64 `json:"bytes,omitempty"`
+	// Counted reports that the index has been anchored by a scan. Until it is,
+	// Fragments and Bytes are zero and mean nothing — a node that restarted
+	// uncleanly walks its disks before it can count them. HasData is the
+	// authority on emptiness either way; these two are the progress bar, and a
+	// progress bar is not something to delete a volume over.
+	Counted bool `json:"counted,omitempty"`
 }
 
 // NodeRebalance is the node-local rebalance runner's state and progress. State
