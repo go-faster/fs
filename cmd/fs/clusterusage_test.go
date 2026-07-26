@@ -104,7 +104,8 @@ func TestBucketUsageEndToEnd(t *testing.T) {
 	// now wrong in the way only a recount can fix.
 	require.NoError(t, etcd.AddBucketUsage(t.Context(), nodes[0].client, cfg, "photos", 7, 7_000))
 
-	require.NoError(t, nodes[0].recountUsage(t.Context()))
+	_, err = nodes[0].recountUsage(t.Context())
+	require.NoError(t, err)
 
 	rec, _, err = etcd.LoadBucketUsage(t.Context(), nodes[0].client, cfg, "photos")
 	require.NoError(t, err)
@@ -115,7 +116,8 @@ func TestBucketUsageEndToEnd(t *testing.T) {
 	// A bucket that exists but holds nothing is counted as zero, not left to
 	// read as "never counted".
 	require.NoError(t, storage.CreateBucket(t.Context(), "empty"))
-	require.NoError(t, nodes[0].recountUsage(t.Context()))
+	_, err = nodes[0].recountUsage(t.Context())
+	require.NoError(t, err)
 
 	rec, present, err = etcd.LoadBucketUsage(t.Context(), nodes[0].client, cfg, "empty")
 	require.NoError(t, err)
@@ -125,7 +127,8 @@ func TestBucketUsageEndToEnd(t *testing.T) {
 
 	// A deleted bucket's record does not outlive it.
 	require.NoError(t, storage.DeleteBucket(t.Context(), "empty"))
-	require.NoError(t, nodes[0].recountUsage(t.Context()))
+	_, err = nodes[0].recountUsage(t.Context())
+	require.NoError(t, err)
 
 	_, present, err = etcd.LoadBucketUsage(t.Context(), nodes[0].client, cfg, "empty")
 	require.NoError(t, err)

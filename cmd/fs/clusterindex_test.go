@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/cluster/etcd"
 	"github.com/go-faster/fs/internal/cluster/objindex"
 )
 
@@ -348,4 +349,48 @@ func TestListingServedFromTheIndex(t *testing.T) {
 	}
 
 	assert.Equal(t, keys, paged)
+}
+
+// TestRecountUsesTheIndex drives the usage correction on a real cluster and
+// checks it derives the totals from the indexes rather than from a walk of every
+// sidecar — and that the answer is the same either way.
+func TestRecountUsesTheIndex(t *testing.T) {
+	nodes := indexCluster(t, "/fs-index-usage")
+	rt := nodes[0]
+
+	require.NoError(t, rt.Storage.CreateBucket(t.Context(), indexBucket))
+	putObjects(t, rt, 64, "a.jpg", "b.jpg", "c.jpg")
+
+	for _, node := range nodes {
+		node.RunObjectIndex(t.Context())
+	}
+
+	// Before the indexes are usable the walk still answers, which is what keeps
+	// a rolling upgrade working.
+	walked, err := rt.coord.CountObjects(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(3), walked[indexBucket].Objects)
+
+	require.Eventually(t, func() bool {
+		_, err := rt.coord.CountObjectsIndexed(t.Context())
+
+		return err == nil
+	}, 10*time.Second, 50*time.Millisecond, "the indexes must become usable")
+
+	indexed, err := rt.coord.CountObjectsIndexed(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, walked, indexed, "both paths count the same objects")
+
+	// The recount now prefers the indexes, and writes what it found.
+	fromIndex, err := rt.recountUsage(t.Context())
+	require.NoError(t, err)
+	assert.True(t, fromIndex, "the recount read the indexes")
+
+	rec, present, err := etcd.LoadBucketUsage(t.Context(), rt.client,
+		etcd.Config{Prefix: "/fs-index-usage", TTL: 2}, indexBucket)
+	require.NoError(t, err)
+	require.True(t, present)
+	assert.Equal(t, int64(3), rec.Objects)
+	assert.Equal(t, int64(192), rec.Bytes)
+	assert.False(t, rec.Counted.IsZero(), "and stamped when it anchored them")
 }
