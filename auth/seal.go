@@ -73,7 +73,13 @@ func (s *Sealer) Seal(plaintext string) (string, error) {
 // Open reverses Seal. It fails if the blob is malformed, was sealed with a
 // different cluster secret, or was tampered with (GCM authentication).
 func (s *Sealer) Open(blob string) (string, error) {
-	raw, err := base64.RawStdEncoding.DecodeString(blob)
+	// Strict: the final base64 character of an unpadded blob carries bits the
+	// payload does not use, and a lenient decoder discards them — so several
+	// distinct blob strings decode to the same bytes and open to the same
+	// secret. GCM still authenticates what was decoded, so this is canonical
+	// form, not integrity: it keeps "the blob changed" and "the secret changed"
+	// from being different questions.
+	raw, err := base64.RawStdEncoding.Strict().DecodeString(blob)
 	if err != nil {
 		return "", errors.Wrap(err, "decode sealed secret")
 	}
