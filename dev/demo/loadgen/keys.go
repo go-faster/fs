@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	crypto "crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -143,22 +144,36 @@ func newKey(bucket string) string {
 	)
 }
 
-// newPayload returns a reader of n incompressible bytes.
+// payloadBlock is one buffer of random bytes that every object is cut from.
+//
+// Generated once: the alternative is a fresh stream per object, which costs
+// nothing to produce but cannot be replayed — and a client that cannot replay a
+// body cannot retry a request. That matters exactly when a node goes away
+// mid-upload, which is the failure this demo exists to show.
+var payloadBlock = func() []byte {
+	// Larger than the biggest object, so any size can be cut from it.
+	b := make([]byte, 64<<20)
+	_, _ = crypto.Read(b)
+
+	return b
+}()
+
+// newPayload returns a replayable reader of n incompressible bytes.
 //
 // Random rather than zeroes on purpose: zeroes compress to nothing, and a
 // filesystem or transport that quietly did so would make every size in the
-// dashboard a fiction.
-func newPayload(n int64) io.Reader {
-	return io.LimitReader(rand.NewChaCha8(seed()), n)
-}
+// dashboard a fiction. Seekable on purpose too, so an SDK retrying a request
+// against another node can rewind it.
+func newPayload(n int64) io.ReadSeeker {
+	if n > int64(len(payloadBlock)) {
+		n = int64(len(payloadBlock))
+	}
 
-// seed returns a per-payload seed for the payload stream.
-func seed() [32]byte {
-	var s [32]byte
+	// A different window per object, so two objects of a size are not the same
+	// bytes and their checksums differ.
+	start := sample(len(payloadBlock) - int(n) + 1)
 
-	_, _ = crypto.Read(s[:])
-
-	return s
+	return bytes.NewReader(payloadBlock[start : start+int(n)])
 }
 
 // discard drains a reader, returning how much it held.

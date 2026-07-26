@@ -13,12 +13,22 @@ few minutes; after that it is cached.
 
 | | |
 |---|---|
-| Admin dashboard | <http://127.0.0.1:8091> — token `demo-admin-token` |
-| S3 | `http://127.0.0.1:9001` (also 9002, 9003) |
+| Admin dashboard | <http://127.0.0.1:8095> — token `demo-admin-token` |
+| S3 | `http://127.0.0.1:9000` |
 | Credentials | access key `demo`, secret `demodemodemo` |
 
-Every node serves every key and every node's dashboard shows the whole cluster,
-so 8092 and 8093 are the same view from a different machine's perspective.
+Two ports, and neither belongs to a storage node. The nodes publish nothing:
+
+- **`admin`** runs `fs admin`, the headless control-plane process. It holds no
+  data and serves no S3 — it reads the cluster's state from etcd and its nodes,
+  which is how production runs a dashboard that outlives any single node.
+- **`gateway`** is an nginx round-robin over all three nodes. Any node serves
+  any key, so nothing here understands S3; it exists so that the endpoint does
+  not belong to a node either.
+
+That second point is what makes stopping a node a thing you can actually watch
+from outside: with S3 pinned to one node, stopping it takes the host's endpoint
+with it and the cluster's survival becomes invisible.
 
 ## What to look at
 
@@ -42,10 +52,23 @@ docker compose start fs3         # it rejoins and repair catches it up
 docker compose logs -f loadgen   # what the workload is doing
 ```
 
-Stopping a node is the interesting one. `rf2.5` places two full replicas and a
-parity fragment across three failure domains, so one node down leaves every
-object readable and writable; the dashboard shows the node as not reporting,
-and the repair queue drains once it returns.
+Stopping a node is the interesting one, and what it shows is the design's
+failure model rather than a magic trick:
+
+- **Reads keep working.** `rf2.5` puts two full replicas and a parity fragment
+  on three failure domains, so every object survives losing one of them.
+- **Writes are refused while it is gone.** Three nodes are three failure
+  domains, and the scheme needs three to place a copy, its second copy and the
+  parity apart. With two left there is nowhere safe to put the third fragment,
+  so the cluster refuses rather than quietly under-protecting the data. The
+  load generator logs write failures for as long as the node is down; that is
+  the point, not a fault. A four-node cluster would keep writing, which is the
+  argument for running one.
+- **Both host ports keep answering.** The gateway routes around the stopped
+  node and the admin container was never one of them.
+
+Start it again and it rejoins, the dashboard stops showing it as not reporting,
+and the repair queue drains as its missing fragments are rebuilt.
 
 ## The workload
 

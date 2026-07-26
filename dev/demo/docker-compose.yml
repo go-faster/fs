@@ -74,9 +74,6 @@ services:
     volumes:
       - ./fs.yaml:/etc/fs/fs.yaml:ro
       - fs1-data:/data
-    ports:
-      - "9001:8080"
-      - "8091:8090"
 
   fs2:
     <<: *node
@@ -87,9 +84,6 @@ services:
     volumes:
       - ./fs.yaml:/etc/fs/fs.yaml:ro
       - fs2-data:/data
-    ports:
-      - "9002:8080"
-      - "8092:8090"
 
   fs3:
     <<: *node
@@ -100,9 +94,51 @@ services:
     volumes:
       - ./fs.yaml:/etc/fs/fs.yaml:ro
       - fs3-data:/data
+
+  # The admin API and dashboard, headless: it holds no data and serves no S3,
+  # reading the cluster's state from etcd and its nodes. Running it apart from
+  # the storage nodes is how production does it — the panel outlives any single
+  # node, and stopping a node does not take the view of the cluster with it.
+  admin:
+    <<: *node
+    command: ["admin", "--config", "/etc/fs/fs.yaml"]
+    environment:
+      <<: *node-env
+      # Headless, so it never registers as a node; the identity is only for
+      # the rebalance election it can drive.
+      FS_CLUSTER_NODE_ID: "admin"
+      FS_CLUSTER_ADVERTISE_ADDR: "admin:7080"
+    volumes:
+      - ./fs.yaml:/etc/fs/fs.yaml:ro
     ports:
-      - "9003:8080"
-      - "8093:8090"
+      - "8095:8090"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # One S3 endpoint over the three nodes. Any node serves any key, so this is a
+  # plain round-robin — and it is what makes stopping a node a thing you can do
+  # from the host without losing the endpoint too.
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "9000:9000"
+    depends_on:
+      fs1:
+        condition: service_healthy
+      fs2:
+        condition: service_healthy
+      fs3:
+        condition: service_healthy
+    restart: unless-stopped
 
   # Keeps the cluster busy: several buckets, object sizes from a few KiB to tens
   # of MiB, and a mix of writes, reads, listings and deletes spread across all
@@ -113,7 +149,7 @@ services:
       dockerfile: dev/demo/Dockerfile
       target: loadgen
     environment:
-      FS_ENDPOINTS: "fs1:8080,fs2:8080,fs3:8080"
+      FS_ENDPOINTS: "gateway:9000"
       FS_ACCESS_KEY: "demo"
       FS_SECRET_KEY: "demodemodemo"
       # Ops per second across all workers, and how many run at once. Turned
@@ -122,12 +158,8 @@ services:
       FS_RATE: "12"
       FS_WORKERS: "4"
     depends_on:
-      fs1:
-        condition: service_healthy
-      fs2:
-        condition: service_healthy
-      fs3:
-        condition: service_healthy
+      gateway:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
