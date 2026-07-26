@@ -15,6 +15,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/diskstore"
 	"github.com/go-faster/fs/internal/cluster/objindex"
+	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
 // Object commit records are "obj/<hash>/<hash>/meta". Both halves matter: the
@@ -122,6 +123,8 @@ func indexEntry(disk cluster.DiskID, data []byte) (objindex.Entry, error) {
 		Seq:        sc.Seq,
 		Generation: sc.Generation,
 		Disk:       disk,
+		OwnerID:    sc.Owner.ID,
+		OwnerName:  sc.Owner.DisplayName,
 	}, nil
 }
 
@@ -135,6 +138,45 @@ func readAllClose(rc io.ReadCloser) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// indexPages answers a peer's index query from this node's index.
+//
+// A node whose index is not ready answers so rather than answering short: its
+// objects would simply be missing from the merge, and the caller reads the
+// sidecars instead. Reporting an empty page as if it were complete is how a
+// listing silently loses keys.
+func (rt *clusterRuntime) indexPages(_ context.Context, q transport.IndexQuery) (transport.IndexPage, error) {
+	if rt.index == nil {
+		return transport.IndexPage{}, nil
+	}
+
+	state, err := rt.index.State()
+	if err != nil || state != objindex.StateReady {
+		return transport.IndexPage{}, nil //nolint:nilerr // Not ready is an answer, not a failure.
+	}
+
+	page := transport.IndexPage{Ready: true}
+
+	err = rt.index.Scan(q.Bucket, q.Prefix, q.After, q.Limit, func(e objindex.Entry) error {
+		page.Entries = append(page.Entries, transport.IndexEntry{
+			Key:        e.Key,
+			Size:       e.Size,
+			ETag:       e.ETag,
+			Modified:   e.Modified,
+			Seq:        e.Seq,
+			Generation: e.Generation,
+			OwnerID:    e.OwnerID,
+			OwnerName:  e.OwnerName,
+		})
+
+		return nil
+	})
+	if err != nil {
+		return transport.IndexPage{}, errors.Wrap(err, "scan index")
+	}
+
+	return page, nil
 }
 
 // buildObjectIndex rebuilds a node's index from its own disks.

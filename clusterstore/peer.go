@@ -35,6 +35,20 @@ type PeerDialer interface {
 // bypassing HTTP for the node's own fragments.
 type LocalPeer struct {
 	Store transport.Store
+	// Index answers index queries for this node without a round trip to
+	// itself. Nil reports the index as unusable, which a listing reads as
+	// "fall back to the sidecars" — correct, just slow, and what a store
+	// wired without an index does.
+	Index transport.IndexFunc
+}
+
+// IndexPage implements the optional index half of a peer.
+func (p LocalPeer) IndexPage(ctx context.Context, q transport.IndexQuery) (transport.IndexPage, error) {
+	if p.Index == nil {
+		return transport.IndexPage{}, transport.ErrUnsupported
+	}
+
+	return p.Index(ctx, q)
 }
 
 // Put implements Peer. Exactly size bytes are copied; the fragment becomes
@@ -104,6 +118,17 @@ func NewHTTPPeers(self cluster.NodeID, local transport.Store, secret transport.S
 		http:    httpClient,
 		clients: make(map[string]*transport.Client),
 	}
+}
+
+// WithLocalIndex makes the node's own index reachable without a round trip to
+// itself, so a listing does not pay HTTP to read what is in this process.
+func (h *HTTPPeers) WithLocalIndex(fn transport.IndexFunc) *HTTPPeers {
+	if local, ok := h.local.(LocalPeer); ok {
+		local.Index = fn
+		h.local = local
+	}
+
+	return h
 }
 
 // Peer implements PeerDialer.

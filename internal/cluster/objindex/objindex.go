@@ -39,6 +39,14 @@ const (
 // process.
 var stateKey = []byte{prefixMeta, 's'}
 
+// versionKey holds the entry format the stored entries were written with.
+var versionKey = []byte{prefixMeta, 'v'}
+
+// entryVersion stamps the shape of a stored entry. Bumping it makes the next
+// start discard what it finds and rebuild from the disks, which is what a
+// changed shape needs and what being pre-production makes affordable.
+const entryVersion = 2
+
 // State is what the index believes about itself.
 type State uint8
 
@@ -69,6 +77,11 @@ type Entry struct {
 	// object on two disks under different epochs; the index keeps one entry
 	// per object, naming the disk the winning record came from.
 	Disk cluster.DiskID `json:"disk,omitempty"`
+	// OwnerID and OwnerName are the principal recorded on the object. A V1
+	// listing renders them, so an index that dropped them would quietly change
+	// what an S3 client sees.
+	OwnerID   string `json:"owner_id,omitempty"`
+	OwnerName string `json:"owner_name,omitempty"`
 	// VerifiedAt is when the scrub last checked this object's payload. Zero
 	// means never, which is how a sweep finds what to do first.
 	VerifiedAt time.Time `json:"verified_at,omitzero"`
@@ -167,6 +180,25 @@ func Open(dir string, opts ...Option) (*Index, error) {
 		return nil, err
 	}
 
+	// Entries written in another shape cannot be read as this one, so they are
+	// not adopted: the index reports building and the node rebuilds it.
+	stored, err := idx.entryVersion()
+	if err != nil {
+		_ = db.Close()
+
+		return nil, err
+	}
+
+	if stored != entryVersion {
+		if err := idx.setEntryVersion(entryVersion); err != nil {
+			_ = db.Close()
+
+			return nil, err
+		}
+
+		state = StateBuilding
+	}
+
 	// Invalidate before serving a single write: from here on only an orderly
 	// Close can call the index ready.
 	if state == StateReady {
@@ -228,6 +260,39 @@ func (i *Index) MarkReady() error { return i.setState(StateReady) }
 // MarkBuilding records that the index is being rebuilt and must not be
 // trusted until it is not.
 func (i *Index) MarkBuilding() error { return i.setState(StateBuilding) }
+
+// entryVersion reports the format of the stored entries; a missing marker
+// reads as version zero, which never matches and so rebuilds.
+func (i *Index) entryVersion() (int, error) {
+	value, closer, err := i.db.Get(versionKey)
+	if errors.Is(err, pebble.ErrNotFound) {
+		return 0, nil
+	}
+
+	if err != nil {
+		return 0, errors.Wrap(err, "read index version")
+	}
+
+	defer func() { _ = closer.Close() }()
+
+	if len(value) != 1 {
+		return 0, nil
+	}
+
+	return int(value[0]), nil
+}
+
+func (i *Index) setEntryVersion(v int) error {
+	if v < 0 || v > 255 {
+		return errors.Errorf("index version %d does not fit a byte", v)
+	}
+
+	if err := i.db.Set(versionKey, []byte{byte(v)}, pebble.Sync); err != nil {
+		return errors.Wrap(err, "write index version")
+	}
+
+	return nil
+}
 
 func (i *Index) setState(s State) error {
 	if err := i.db.Set(stateKey, []byte{byte(s)}, pebble.Sync); err != nil {
