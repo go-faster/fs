@@ -1,6 +1,10 @@
 package clusterstore
 
-import "github.com/go-faster/fs/internal/cluster"
+import (
+	"context"
+
+	"github.com/go-faster/fs/internal/cluster"
+)
 
 // ScrubStateStore persists per-disk scrub progress so an interrupted pass
 // resumes instead of restarting.
@@ -27,4 +31,26 @@ type ScrubStateStore interface {
 	// scrubbing, because failing to save a cursor is not a reason to stop
 	// verifying data.
 	SaveScrubState(disk cluster.DiskID, state cluster.ScrubState) error
+}
+
+// FragmentWalker streams the fragment names on one of this node's disks, in
+// lexicographic order, without materializing them.
+//
+// The scrubber used to ask the peer transport for the whole listing, which
+// meant every name on the disk — several per object — held as a string before
+// the first one could be looked at. On a disk holding tens of millions of
+// fragments that is gigabytes of strings, and it was the first thing to fail on
+// a large node.
+//
+// Order is the only thing the sweep needs: an object's entries are contiguous
+// in it, so each namespace can be handled and dropped before the next begins.
+//
+// after is a hint. An implementation may prune names at or before it — that is
+// what makes resuming a pass cheap — so the caller applies its own boundary and
+// must not depend on receiving them.
+//
+// A nil walker falls back to a buffered listing over the transport, which is
+// correct and is what every non-cluster deployment and most tests use.
+type FragmentWalker interface {
+	WalkFragments(ctx context.Context, disk cluster.DiskID, after string, fn func(name string) error) error
 }

@@ -47,6 +47,8 @@ type Repairer struct {
 
 	// state persists scrub progress per disk; nil means passes never resume.
 	state ScrubStateStore
+	// walker streams local fragment names; nil falls back to a buffered list.
+	walker FragmentWalker
 }
 
 // RepairerConfig configures a Repairer.
@@ -68,6 +70,10 @@ type RepairerConfig struct {
 	// ScrubState persists per-disk scrub progress so an interrupted pass
 	// resumes instead of restarting. Nil disables resuming.
 	ScrubState ScrubStateStore
+	// Fragments streams this node's disks for the scrub sweep. Nil falls back
+	// to a buffered listing over the peer transport, which holds every name on
+	// the disk in memory.
+	Fragments FragmentWalker
 }
 
 // DefaultSweepGrace is the default protection window for unattributed
@@ -98,6 +104,7 @@ func NewRepairer(cfg RepairerConfig) (*Repairer, error) {
 		sweepGrace: grace,
 		strays:     make(map[string]map[string]time.Time),
 		state:      cfg.ScrubState,
+		walker:     cfg.Fragments,
 	}, nil
 }
 
@@ -1046,67 +1053,36 @@ func (r *Repairer) saveScrubState(disk cluster.DiskID, st cluster.ScrubState) {
 	}
 }
 
-// scrubDisk feeds one disk's objects through repair.
+// scrubDisk feeds one disk's objects through repair, streaming.
+//
+// Names arrive in lexicographic order, so an object namespace's entries are
+// contiguous: the sweep accumulates one namespace, hands it to repair when the
+// next begins, and forgets it. Memory is one namespace at a time rather than
+// one disk at a time, which is what makes this survivable on a disk holding
+// tens of millions of fragments.
 func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID, seen map[string]struct{}, report *ScrubReport) error {
-	names, err := self.List(ctx, disk, "obj/")
-	if err != nil {
-		return errors.Wrapf(err, "list disk %s", disk)
-	}
-
-	// Group names into object namespaces and find each one's local sidecar.
-	metas := make(map[string]bool)
-
-	for _, n := range names {
-		dir := n[:strings.LastIndex(n, "/")]
-		metas[dir] = metas[dir] || strings.HasSuffix(n, "/meta")
-	}
-
-	// Collect each namespace's locally-present fragment indexes by
-	// generation — relocation sources for repair.
-	frags := make(map[string]map[string][]int)
-
-	for _, n := range names {
-		dir, file := n[:strings.LastIndex(n, "/")], n[strings.LastIndex(n, "/")+1:]
-
-		gen, idx, ok := parseFragmentFile(file)
-		if !ok {
-			continue
-		}
-
-		if frags[dir] == nil {
-			frags[dir] = make(map[string][]int)
-		}
-
-		frags[dir][gen] = append(frags[dir][gen], idx)
-	}
-
-	// Namespaces in lexicographic order. The cursor is a position in this
-	// order, so it means nothing unless the walk is deterministic — and map
-	// iteration, which this used, is deliberately not.
-	dirs := make([]string, 0, len(metas))
-	for dir := range metas {
-		dirs = append(dirs, dir)
-	}
-
-	sort.Strings(dirs)
-
 	state := r.scrubState(disk)
 	if !state.InProgress() {
 		state.PassStarted = time.Now().UTC()
 	}
 
-	unsaved := 0
+	var (
+		// The namespace being accumulated, and what has been seen of it.
+		dir     string
+		hasMeta bool
+		gens    map[string][]int
+		unsaved int
+	)
 
-	for _, dir := range dirs[resumeAt(dirs, state):] {
-		if err := ctx.Err(); err != nil {
-			// A shutdown mid-pass keeps its place: that is the whole point of
-			// the cursor, and it is the most common way a pass is interrupted.
-			r.saveScrubState(disk, state)
-
-			return err
+	// flush hands the accumulated namespace to repair and advances the cursor
+	// past it. Every namespace ends this way, including the ones repair skips,
+	// so the cursor never stalls on an object it cannot use.
+	flush := func() {
+		if dir == "" {
+			return
 		}
 
-		r.scrubNamespace(ctx, self, disk, dir, metas[dir], frags[dir], seen, report)
+		r.scrubNamespace(ctx, self, disk, dir, hasMeta, gens, seen, report)
 
 		state.Cursor = dir
 		unsaved++
@@ -1116,7 +1092,66 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 
 			unsaved = 0
 		}
+
+		dir, hasMeta, gens = "", false, nil
 	}
+
+	resumeFrom := state.Cursor
+
+	err := r.walkFragments(ctx, self, disk, resumeFrom, func(name string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		cut := strings.LastIndex(name, "/")
+		if cut < 0 {
+			return nil
+		}
+
+		entryDir, file := name[:cut], name[cut+1:]
+
+		// The walker's boundary is a hint it may prune past; this is the
+		// authoritative one. Namespaces at or before the cursor were verified
+		// by this same pass before it was interrupted.
+		if entryDir <= resumeFrom {
+			return nil
+		}
+
+		if entryDir != dir {
+			flush()
+
+			dir = entryDir
+		}
+
+		if file == "meta" {
+			hasMeta = true
+
+			return nil
+		}
+
+		gen, idx, ok := parseFragmentFile(file)
+		if !ok {
+			return nil
+		}
+
+		if gens == nil {
+			gens = make(map[string][]int)
+		}
+
+		gens[gen] = append(gens[gen], idx)
+
+		return nil
+	})
+	if err != nil {
+		// A shutdown mid-pass keeps its place: that is the whole point of the
+		// cursor, and it is the most common way a pass is interrupted.
+		r.saveScrubState(disk, state)
+
+		return err
+	}
+
+	// The last namespace has no successor to trigger its flush.
+	flush()
 
 	// The disk is done: drop the cursor so the next sweep starts fresh, and
 	// record when coverage was last complete.
@@ -1127,20 +1162,29 @@ func (r *Repairer) scrubDisk(ctx context.Context, self Peer, disk cluster.DiskID
 	return nil
 }
 
-// resumeAt finds where an interrupted pass left off. A cursor naming a
-// namespace that has since been deleted still positions correctly: the search
-// is on order, not on the entry existing.
-func resumeAt(dirs []string, state cluster.ScrubState) int {
-	if !state.InProgress() {
-		return 0
+// walkFragments streams the disk's fragment names, or falls back to a buffered
+// listing over the peer transport when no walker is configured.
+//
+// The fallback is correct and is what tests and any store without a local
+// walker use; it is also exactly the memory behavior the walker exists to
+// avoid, so it is not what a node serving real disks should be running.
+func (r *Repairer) walkFragments(ctx context.Context, self Peer, disk cluster.DiskID, after string, fn func(name string) error) error {
+	if r.walker != nil {
+		return r.walker.WalkFragments(ctx, disk, after, fn)
 	}
 
-	i := sort.SearchStrings(dirs, state.Cursor)
-	if i < len(dirs) && dirs[i] == state.Cursor {
-		i++
+	names, err := self.List(ctx, disk, "obj/")
+	if err != nil {
+		return errors.Wrapf(err, "list disk %s", disk)
 	}
 
-	return i
+	for _, name := range names {
+		if err := fn(name); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // scrubNamespace feeds one object namespace through repair. Every outcome —

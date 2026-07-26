@@ -184,3 +184,14 @@ stamps completion, so that timestamp only ever means what it says.
 
 Losing the cursor file costs a repeated pass and nothing else: it is progress,
 not durability state, and a disk that cannot record it is still scrubbed.
+
+The sweep streams names rather than listing them. It used to ask for every name
+on the disk at once — several strings per object, so gigabytes before the first
+one could be looked at, and the first thing to fail on a dense node. Names now
+arrive in order, which makes an object's entries contiguous, so each is handled
+and dropped before the next begins and memory tracks the largest single object
+rather than the disk.
+
+What remains proportional to the node is the set of objects already swept in the
+current pass, kept to avoid repairing an object twice when two of a node's disks
+hold it. Budget for it on nodes with very high object counts.
