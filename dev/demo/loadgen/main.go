@@ -94,6 +94,10 @@ func run() error {
 		return err
 	}
 
+	// A refused write is an answer, not a hiccup: retrying it ten times only
+	// keeps a worker busy while the cluster is telling it something true.
+	minio.MaxRetry = 2
+
 	log.Printf("load: %d workers, %.0f ops/s across %d endpoints", workers, rate, len(clients))
 
 	var (
@@ -158,6 +162,17 @@ func ensureBuckets(ctx context.Context, client *minio.Client) error {
 	return nil
 }
 
+// opTimeout bounds one operation.
+//
+// It exists because of what a node loss does to a workload without it. Writes
+// are legitimately refused while a three-node cluster is down to two — rf2.5
+// has nowhere safe to put the third fragment — and an SDK retries a refused
+// request several times with backoff. Four workers then spend the whole outage
+// inside retries of writes that cannot succeed, and the reads that would have
+// worked never get issued: the cluster looks entirely dead when only half of it
+// is.
+const opTimeout = 30 * time.Second
+
 // worker runs operations until the context ends, one per tick.
 func worker(ctx context.Context, client *minio.Client, tick <-chan time.Time, st *stats, keys *keyring) {
 	for {
@@ -167,7 +182,12 @@ func worker(ctx context.Context, client *minio.Client, tick <-chan time.Time, st
 		case <-tick:
 		}
 
-		if err := operate(ctx, client, st, keys); err != nil && ctx.Err() == nil {
+		opCtx, cancel := context.WithTimeout(ctx, opTimeout)
+		err := operate(opCtx, client, st, keys)
+
+		cancel()
+
+		if err != nil && ctx.Err() == nil {
 			st.errors.Add(1)
 
 			log.Printf("op failed: %v", err)
