@@ -1,5 +1,7 @@
 # fs [![Go Reference](https://img.shields.io/badge/go-pkg-00ADD8)](https://pkg.go.dev/github.com/go-faster/fs#section-documentation) [![codecov](https://img.shields.io/codecov/c/github/go-faster/fs?label=cover)](https://codecov.io/gh/go-faster/fs) [![experimental](https://img.shields.io/badge/-experimental-blueviolet)](https://go-faster.org/docs/projects/status#experimental)
 
+<img src="docs/logo/logo.svg" alt="go-faster/fs" width="420" align="center">
+
 S3-compatible object storage that scales from a single binary to a replicated
 cluster. It began as a lightweight server for development and testing, and now
 also runs as a distributed, failure-domain-aware object store — while staying a
