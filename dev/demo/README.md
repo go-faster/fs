@@ -55,8 +55,11 @@ docker compose logs -f loadgen   # what the workload is doing
 Stopping a node is the interesting one, and what it shows is the design's
 failure model rather than a magic trick:
 
-- **Reads keep working.** `rf2.5` puts two full replicas and a parity fragment
-  on three failure domains, so every object survives losing one of them.
+- **Reads keep working, more slowly.** `rf2.5` puts two full replicas and a
+  parity fragment on three failure domains, so every object survives losing one
+  of them — but a read whose nearest copy was on the stopped node has to fail
+  over or rebuild from parity. Measured on a laptop: around 5 reads a second
+  before stopping a node, around 1 during. Degraded, not down.
 - **Writes are refused while it is gone.** Three nodes are three failure
   domains, and the scheme needs three to place a copy, its second copy and the
   parity apart. With two left there is nowhere safe to put the third fragment,
