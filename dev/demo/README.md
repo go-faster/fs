@@ -75,12 +75,19 @@ and the repair queue drains as its missing fragments are rebuilt.
 Four buckets with deliberately different shapes, because one bucket of
 identically sized blobs exercises almost nothing:
 
-| Bucket | Object size | Share of traffic | Reads |
-|---|---|---|---|
-| `thumbnails` | 4–64 KiB | 40% | 80% |
-| `documents` | 64 KiB–2 MiB | 30% | 60% |
-| `logs` | 16–512 KiB | 20% | 10% |
-| `media` | 8–48 MiB | 10% | 50% |
+| Bucket | Object size | Share of traffic |
+|---|---|---|
+| `thumbnails` | 4–64 KiB | 40% |
+| `documents` | 64 KiB–2 MiB | 30% |
+| `logs` | 16–512 KiB | 20% |
+| `media` | 8–48 MiB | 10% |
+
+Half the workers write and half read, and no worker does both. That is closer
+to a real deployment — the thing uploading is rarely the thing browsing — and
+it is what makes a node loss legible: a write to a cluster that is refusing
+writes holds its worker for as long as the body takes to be streamed and
+rejected, so workers that did both would all end up parked in writes and the
+reads that were working fine would never be issued.
 
 `media` objects are large enough that the client uploads them in parts, so
 multipart is exercised too. Keys are nested under sixteen prefixes so that

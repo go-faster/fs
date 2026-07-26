@@ -35,18 +35,32 @@ type bucketSpec struct {
 	name string
 	// min and max bound the object size, in bytes.
 	min, max int64
-	// weight is how much of the total operation mix lands here.
+	// weight is how much of the traffic lands here.
 	weight int
-	// readRatio is the share of that traffic which reads rather than writes.
-	readRatio float64
 }
 
 var buckets = []bucketSpec{
-	{name: "thumbnails", min: 4 << 10, max: 64 << 10, weight: 40, readRatio: 0.8},
-	{name: "documents", min: 64 << 10, max: 2 << 20, weight: 30, readRatio: 0.6},
-	{name: "logs", min: 16 << 10, max: 512 << 10, weight: 20, readRatio: 0.1},
-	{name: "media", min: 8 << 20, max: 48 << 20, weight: 10, readRatio: 0.5},
+	{name: "thumbnails", min: 4 << 10, max: 64 << 10, weight: 40},
+	{name: "documents", min: 64 << 10, max: 2 << 20, weight: 30},
+	{name: "logs", min: 16 << 10, max: 512 << 10, weight: 20},
+	{name: "media", min: 8 << 20, max: 48 << 20, weight: 10},
 }
+
+// A worker either writes or reads, and never both.
+//
+// Mixing them in one worker looks more natural and behaves worse: a write to a
+// cluster that is refusing them occupies its worker for as long as the body
+// takes to stream and be rejected, and with every worker doing both, all of
+// them end up parked in writes. The reads that would have succeeded are then
+// never issued, and a cluster that is serving reads perfectly well looks
+// completely dead. Separating them is also what a real deployment looks like —
+// the thing uploading is rarely the thing browsing.
+type role int
+
+const (
+	roleWriter role = iota
+	roleReader
+)
 
 // stats counts what happened, for the line printed every few seconds.
 type stats struct {
@@ -118,9 +132,15 @@ func run() error {
 
 	go report(ctx, &st)
 
+	// Half write, half read, with at least one of each however few there are.
 	for i := range workers {
+		r := roleWriter
+		if i%2 == 1 || workers == 1 {
+			r = roleReader
+		}
+
 		wg.Go(func() {
-			worker(ctx, clients[i%len(clients)], ticker.C, &st, keys)
+			worker(ctx, clients[i%len(clients)], r, ticker.C, &st, keys)
 		})
 	}
 
@@ -174,7 +194,7 @@ func ensureBuckets(ctx context.Context, client *minio.Client) error {
 const opTimeout = 30 * time.Second
 
 // worker runs operations until the context ends, one per tick.
-func worker(ctx context.Context, client *minio.Client, tick <-chan time.Time, st *stats, keys *keyring) {
+func worker(ctx context.Context, client *minio.Client, r role, tick <-chan time.Time, st *stats, keys *keyring) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -183,7 +203,7 @@ func worker(ctx context.Context, client *minio.Client, tick <-chan time.Time, st
 		}
 
 		opCtx, cancel := context.WithTimeout(ctx, opTimeout)
-		err := operate(opCtx, client, st, keys)
+		err := operate(opCtx, client, r, st, keys)
 
 		cancel()
 
@@ -195,21 +215,25 @@ func worker(ctx context.Context, client *minio.Client, tick <-chan time.Time, st
 	}
 }
 
-// operate performs one operation, chosen to keep the mix read-heavy with
-// listings and deletes threaded through it — the shape traffic actually has.
-func operate(ctx context.Context, client *minio.Client, st *stats, keys *keyring) error {
+// operate performs one operation for a worker of this role, with listings and
+// deletes threaded through — the shape traffic actually has.
+func operate(ctx context.Context, client *minio.Client, r role, st *stats, keys *keyring) error {
 	spec := pickBucket()
+	roll := sampleChance()
 
-	switch roll := sampleChance(); {
-	case roll < 0.05:
-		return list(ctx, client, spec, st)
-	case roll < 0.10:
-		return remove(ctx, client, spec, st, keys)
-	case roll < 0.10+0.90*spec.readRatio:
+	if r == roleReader {
+		if roll < 0.15 {
+			return list(ctx, client, spec, st)
+		}
+
 		return get(ctx, client, spec, st, keys)
-	default:
-		return put(ctx, client, spec, st, keys)
 	}
+
+	if roll < 0.15 {
+		return remove(ctx, client, spec, st, keys)
+	}
+
+	return put(ctx, client, spec, st, keys)
 }
 
 // pickBucket chooses a bucket by weight.
@@ -256,8 +280,10 @@ func put(ctx context.Context, client *minio.Client, spec bucketSpec, st *stats, 
 func get(ctx context.Context, client *minio.Client, spec bucketSpec, st *stats, keys *keyring) error {
 	key, ok := keys.pick(spec.name)
 	if !ok {
-		// Nothing written to this bucket yet: write instead of reading nothing.
-		return put(ctx, client, spec, st, keys)
+		// Nothing written to this bucket yet. A reader does not write instead:
+		// that would put it back in the way of the writes it is meant to be
+		// independent of.
+		return nil
 	}
 
 	obj, err := client.GetObject(ctx, spec.name, key, minio.GetObjectOptions{})
