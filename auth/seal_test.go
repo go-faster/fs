@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -65,20 +66,42 @@ func TestSealerTamperFails(t *testing.T) {
 	blob, err := s.Seal("top-secret")
 	require.NoError(t, err)
 
-	// Flip the last base64 character to a different one; GCM authentication
-	// must reject the corrupted ciphertext.
-	last := blob[len(blob)-1]
+	// Tamper with the sealed bytes, not with their encoding: flipping a base64
+	// character is not guaranteed to change what it decodes to, since the last
+	// character of an unpadded blob carries unused bits. Flip a bit in the GCM
+	// tag instead — authentication must reject it, every time.
+	raw, err := base64.RawStdEncoding.DecodeString(blob)
+	require.NoError(t, err)
 
-	repl := byte('A')
-	if last == 'A' {
-		repl = 'B'
-	}
+	raw[len(raw)-1] ^= 1
 
-	tampered := blob[:len(blob)-1] + string(repl)
+	_, err = s.Open(base64.RawStdEncoding.EncodeToString(raw))
+	require.Error(t, err, "a corrupted tag must fail authentication")
+}
+
+// TestSealerRejectsNonCanonical checks that a blob whose unused trailing bits
+// were changed is rejected outright, rather than decoding to the same bytes and
+// opening as if untouched.
+func TestSealerRejectsNonCanonical(t *testing.T) {
+	s, err := auth.NewSealer([]byte("cluster-secret-0123456789"))
+	require.NoError(t, err)
+
+	blob, err := s.Seal("top-secret")
+	require.NoError(t, err)
+
+	// The payload is 12-byte nonce + 10-byte ciphertext + 16-byte tag = 38
+	// bytes, so the final character holds four significant bits and two spare
+	// ones. Flipping only the spare bits leaves the decoded bytes identical.
+	last := strings.IndexByte(base64Alphabet, blob[len(blob)-1])
+	require.GreaterOrEqual(t, last, 0)
+
+	tampered := blob[:len(blob)-1] + string(base64Alphabet[last^0b11])
 
 	_, err = s.Open(tampered)
-	require.Error(t, err)
+	require.Error(t, err, "a non-canonical blob must not open")
 }
+
+const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 func TestSealerRejectsMalformed(t *testing.T) {
 	s, err := auth.NewSealer([]byte("cluster-secret-0123456789"))

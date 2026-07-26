@@ -24,8 +24,8 @@ const spoolThreshold = 1 << 20 // 1 MiB
 // it is to draw the body first and measure it.
 //
 // Small bodies stay in memory; anything past spoolThreshold spills to a temp
-// file, which is unlinked as soon as it is created so a crash cannot leak it.
-// cleanup is never nil.
+// file, which never outlives cleanup — and on POSIX is unlinked the moment it
+// is created, so not even a crash leaks it. cleanup is never nil.
 func spool(r io.Reader) (body io.Reader, size int64, cleanup func(), err error) {
 	buf := make([]byte, spoolThreshold)
 
@@ -43,13 +43,10 @@ func spool(r io.Reader) (body io.Reader, size int64, cleanup func(), err error) 
 		return nil, 0, func() {}, errors.Wrap(err, "create spool file")
 	}
 
-	cleanup = func() { _ = f.Close() }
-
-	// Unlink now: the open descriptor keeps the data reachable, and nothing is
-	// left behind if this process dies mid-upload.
-	if err := os.Remove(f.Name()); err != nil {
-		cleanup()
-		return nil, 0, func() {}, errors.Wrap(err, "unlink spool file")
+	cleanup, err = discardSpool(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, 0, func() {}, err
 	}
 
 	if _, err := f.Write(buf); err != nil {

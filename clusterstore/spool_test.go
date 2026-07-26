@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/go-faster/errors"
@@ -46,6 +47,26 @@ func TestSpool(t *testing.T) {
 			require.Equal(t, want, got, "body round-trips byte for byte")
 		})
 	}
+}
+
+// TestSpoolLeavesNothingBehind checks that a spilled body's temp file is gone
+// once cleanup has run. How it gets there is platform-specific — POSIX unlinks
+// at creation, Windows cannot remove an open file and defers it to cleanup —
+// so the invariant is asserted where both must agree.
+func TestSpoolLeavesNothingBehind(t *testing.T) {
+	body, _, cleanup, err := spool(unsized{r: bytes.NewReader(make([]byte, spoolThreshold+1))})
+	require.NoError(t, err)
+
+	f, ok := body.(*os.File)
+	require.True(t, ok, "a body past the threshold spills to a file")
+
+	name := f.Name()
+	require.NotEmpty(t, name)
+
+	cleanup()
+
+	_, err = os.Stat(name)
+	require.ErrorIs(t, err, os.ErrNotExist, "the spool file must not outlive cleanup")
 }
 
 // TestSpoolReadError checks that a body that fails mid-stream surfaces the
