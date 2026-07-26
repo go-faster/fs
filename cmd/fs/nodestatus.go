@@ -136,6 +136,13 @@ func (rt *clusterRuntime) scrubCoverage() objindex.Coverage {
 // what the node holds, which is why it is not on a request path.
 const coverageInterval = 10 * time.Minute
 
+// coverageRetryInterval is how long to wait before looking again when the index
+// is not ready yet. A node that has just started is building one, and waiting a
+// full interval to notice would leave its coverage unreported for ten minutes
+// after it became available — on exactly the node an operator is most likely to
+// be looking at.
+const coverageRetryInterval = 15 * time.Second
+
 // RunCoverage keeps this node's verification coverage current.
 //
 // An index that is missing or still building leaves the coverage unset rather
@@ -146,22 +153,31 @@ func (rt *clusterRuntime) RunCoverage(ctx context.Context) {
 		return
 	}
 
-	ticker := time.NewTicker(coverageInterval)
-	defer ticker.Stop()
-
 	for {
-		if state, err := rt.index.State(); err == nil && state == objindex.StateReady {
+		wait := coverageInterval
+
+		state, err := rt.index.State()
+		switch {
+		case err != nil || state != objindex.StateReady:
+			wait = coverageRetryInterval
+		default:
 			if cov, err := rt.index.Coverage(); err == nil {
 				rt.coverage.Store(&cov)
 			} else if ctx.Err() == nil {
 				rt.lg.Warn("Computing scrub coverage failed", zap.Error(err))
+
+				wait = coverageRetryInterval
 			}
 		}
 
+		timer := time.NewTimer(wait)
+
 		select {
 		case <-ctx.Done():
+			timer.Stop()
+
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
