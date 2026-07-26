@@ -2,6 +2,7 @@ package clusterstore
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -251,4 +252,146 @@ func TestScrubOrderPrefersInterruptedThenStalest(t *testing.T) {
 
 	assert.Equal(t, []cluster.DiskID{"d2", "d1", "d0"}, order,
 		"interrupted first, then least recently completed")
+}
+
+// listWalker streams a store's names through the FragmentWalker interface by
+// reusing its buffered listing. It exercises the scrubber's streaming consumer
+// — the accumulate-one-namespace-at-a-time loop — independently of the disk
+// walker that feeds it in production.
+type listWalker struct {
+	store interface {
+		List(ctx context.Context, disk cluster.DiskID, prefix string) ([]string, error)
+	}
+	walked int
+}
+
+func (w *listWalker) WalkFragments(ctx context.Context, disk cluster.DiskID, after string, fn func(string) error) error {
+	names, err := w.store.List(ctx, disk, "obj/")
+	if err != nil {
+		return err
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		if name <= after {
+			continue
+		}
+
+		w.walked++
+
+		if err := fn(name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// TestScrubStreamingMatchesBuffered pins the rewrite: sweeping a disk by
+// streaming names must find and repair exactly what materializing them did.
+func TestScrubStreamingMatchesBuffered(t *testing.T) {
+	run := func(t *testing.T, withWalker bool) *ScrubReport {
+		t.Helper()
+
+		fc := newFakeCluster(3, 2)
+		c := fc.coordinator(t, Config{})
+
+		for _, key := range []string{"a", "b/c", "d", "e/f/g", "h"} {
+			mustPut(t, c, key, randBytes(400))
+		}
+
+		c.Flush()
+
+		self := fc.topo.Nodes[0].ID
+
+		cfg := RepairerConfig{Coordinator: c, Self: self, Verify: true}
+		if withWalker {
+			cfg.Fragments = &listWalker{store: fc.stores[self]}
+		}
+
+		r, err := NewRepairer(cfg)
+		require.NoError(t, err)
+
+		rep, err := r.Scrub(t.Context())
+		require.NoError(t, err)
+
+		return rep
+	}
+
+	buffered := run(t, false)
+	streamed := run(t, true)
+
+	assert.Equal(t, buffered.Objects, streamed.Objects, "the same objects are swept")
+	assert.Equal(t, buffered.UnknownDirs, streamed.UnknownDirs)
+	assert.Equal(t, buffered.Failed, streamed.Failed)
+	assert.Positive(t, buffered.Objects, "and there was something to sweep")
+}
+
+// TestScrubStreamingResumeSkipsWalkedNames checks the two halves fit together:
+// a resumed pass tells the walker where it stopped, so the names it already
+// verified are never streamed again — the point of pruning on a large disk.
+func TestScrubStreamingResumeSkipsWalkedNames(t *testing.T) {
+	fc := newFakeCluster(3, 1)
+	c := fc.coordinator(t, Config{})
+
+	for _, key := range []string{"a", "b", "c", "d", "e"} {
+		mustPut(t, c, key, randBytes(300))
+	}
+
+	c.Flush()
+
+	self := fc.topo.Nodes[0].ID
+	state := newMemScrubState()
+
+	newR := func() (*Repairer, *listWalker) {
+		w := &listWalker{store: fc.stores[self]}
+
+		r, err := NewRepairer(RepairerConfig{
+			Coordinator: c,
+			Self:        self,
+			ScrubState:  state,
+			Fragments:   w,
+		})
+		require.NoError(t, err)
+
+		return r, w
+	}
+
+	first, fullWalk := newR()
+	_, err := first.Scrub(t.Context())
+	require.NoError(t, err)
+	require.Positive(t, fullWalk.walked)
+
+	// Interrupt partway and sweep again. The cursor is a namespace directory,
+	// and that namespace's own entries sort after it, so only the namespaces
+	// strictly before it are pruned — pick one with some behind it.
+	names, err := fc.stores[self].List(context.Background(), "d0", "obj/")
+	require.NoError(t, err)
+	require.NotEmpty(t, names)
+
+	sort.Strings(names)
+
+	var dirs []string
+
+	for _, name := range names {
+		dir := name[:strings.LastIndex(name, "/")]
+		if len(dirs) == 0 || dirs[len(dirs)-1] != dir {
+			dirs = append(dirs, dir)
+		}
+	}
+
+	require.Greater(t, len(dirs), 1, "the disk must hold more than one namespace")
+
+	state.set("d0", cluster.ScrubState{
+		Cursor:      dirs[len(dirs)/2],
+		PassStarted: time.Now().UTC(),
+	})
+
+	second, resumedWalk := newR()
+	_, err = second.Scrub(t.Context())
+	require.NoError(t, err)
+
+	assert.Less(t, resumedWalk.walked, fullWalk.walked,
+		"a resumed sweep does not re-stream what it already verified")
 }

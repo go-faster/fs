@@ -275,8 +275,10 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 				zap.String("bucket", bucket), zap.String("key", key), zap.Error(err))
 		},
 		// Scrub cursors live on the disks they describe, so a restart resumes
-		// the sweep instead of starting the disk over.
+		// the sweep instead of starting the disk over, and the sweep streams
+		// names rather than holding every one on the disk in memory.
 		ScrubState: store.ScrubStateStore(),
+		Fragments:  store,
 	})
 	if err != nil {
 		_ = listener.Close()
