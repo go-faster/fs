@@ -61,6 +61,9 @@ type Sidecar struct {
 	UserMetadata       map[string]string `json:"user_metadata,omitempty"`
 	Tags               []fs.Tag          `json:"tags,omitempty"`
 	ACL                fs.ACL            `json:"acl,omitempty"`
+	// Owner is the principal that wrote the object; absent in sidecars written
+	// before owners were modeled.
+	Owner fs.Owner `json:"owner,omitzero"`
 }
 
 // ObjectMetadata converts the sidecar's header fields to the domain type.

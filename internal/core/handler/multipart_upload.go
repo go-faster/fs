@@ -55,6 +55,7 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 		Metadata: extractObjectMetadata(r.Header),
 		Tags:     tags,
 		ACL:      fs.ParseACL(r.Header.Get("X-Amz-Acl")),
+		Owner:    callerOwner(ctx),
 	})
 	if err != nil {
 		renderError(ctx, w, r, err)

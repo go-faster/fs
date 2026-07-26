@@ -150,6 +150,30 @@ func (s Service) ObjectACL(ctx context.Context, bucket, key string) (fs.ACL, err
 	return s.storage.ObjectACL(ctx, bucket, key)
 }
 
+func (s Service) SetObjectACL(ctx context.Context, bucket, key string, acl fs.ACL) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.SetObjectACL(ctx, bucket, key, acl)
+}
+
+func (s Service) ObjectOwner(ctx context.Context, bucket, key string) (fs.Owner, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return fs.Owner{}, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return fs.Owner{}, errors.Wrap(err, "validate object key")
+	}
+
+	return s.storage.ObjectOwner(ctx, bucket, key)
+}
+
 func (s Service) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
 	return s.storage.ListBuckets(ctx)
 }

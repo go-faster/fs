@@ -83,11 +83,41 @@ type Grant struct {
 	Permission Permission
 }
 
-// Key is a credential: an access/secret pair and its grants.
+// Identity is the S3 owner a credential acts as. It appears as the <Owner> of
+// buckets, objects and ACLs; S3 clients compare these values to decide what a
+// caller owns, so they must be stable for a given credential.
+type Identity struct {
+	// UserID is the canonical user ID. Defaults to the access key.
+	UserID string
+	// DisplayName is the human-readable owner name. Defaults to UserID.
+	DisplayName string
+}
+
+// Key is a credential: an access/secret pair, the identity it acts as, and its
+// grants.
 type Key struct {
 	AccessKey string
 	SecretKey string
-	Grants    []Grant
+	// UserID is the canonical owner ID reported for objects this key writes.
+	// Empty means "use the access key".
+	UserID string
+	// DisplayName is the human-readable owner name. Empty means "use UserID".
+	DisplayName string
+	Grants      []Grant
+}
+
+// identity resolves the key's owner, applying the documented defaults.
+func (k Key) identity() Identity {
+	id := Identity{UserID: k.UserID, DisplayName: k.DisplayName}
+	if id.UserID == "" {
+		id.UserID = k.AccessKey
+	}
+
+	if id.DisplayName == "" {
+		id.DisplayName = id.UserID
+	}
+
+	return id
 }
 
 // Config is the declarative auth configuration, suitable for loading from a
@@ -183,6 +213,16 @@ func (s *Store) Secret(accessKey string) (string, bool) {
 	}
 
 	return k.SecretKey, true
+}
+
+// Owner returns the identity an access key acts as. Unknown keys report false.
+func (s *Store) Owner(accessKey string) (Identity, bool) {
+	k, ok := s.snap.Load().keys[accessKey]
+	if !ok {
+		return Identity{}, false
+	}
+
+	return k.identity(), true
 }
 
 // Allow reports whether the access key may perform action on bucket. A bucket

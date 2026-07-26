@@ -123,6 +123,7 @@ func (s *Storage) ListObjects(ctx context.Context, bucket, prefix string) ([]fs.
 			Size:         sc.Size,
 			LastModified: sc.Modified,
 			ETag:         sc.ETag,
+			Owner:        sc.Owner,
 		})
 	}
 
@@ -176,6 +177,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		Metadata: req.Metadata,
 		Tags:     append([]fs.Tag(nil), req.Tags...),
 		ACL:      req.ACL,
+		Owner:    req.Owner,
 	})
 	if err != nil {
 		return nil, err
@@ -260,6 +262,23 @@ func (s *Storage) ObjectACL(ctx context.Context, bucket, key string) (fs.ACL, er
 	}
 
 	return normalizeACL(sc.ACL), nil
+}
+
+// SetObjectACL implements fs.Storage.
+func (s *Storage) SetObjectACL(ctx context.Context, bucket, key string, acl fs.ACL) error {
+	return s.updateObject(ctx, bucket, key, func(sc *Sidecar) {
+		sc.ACL = acl
+	})
+}
+
+// ObjectOwner implements fs.Storage.
+func (s *Storage) ObjectOwner(ctx context.Context, bucket, key string) (fs.Owner, error) {
+	sc, err := s.statObject(ctx, bucket, key)
+	if err != nil {
+		return fs.Owner{}, err
+	}
+
+	return sc.Owner, nil
 }
 
 // statObject fetches an object's sidecar with fs.Storage error mapping.

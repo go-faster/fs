@@ -36,6 +36,10 @@ type sidecar struct {
 	UserMetadata       map[string]string `json:"user_metadata,omitempty"`
 	Tags               []fs.Tag          `json:"tags,omitempty"`
 	ACL                fs.ACL            `json:"acl,omitempty"`
+	// OwnerID and OwnerDisplayName record the principal that wrote the object.
+	// Absent in sidecars written before owners were modeled.
+	OwnerID          string `json:"owner_id,omitempty"`
+	OwnerDisplayName string `json:"owner_display_name,omitempty"`
 	// Checksum is the hex MD5 of the full object content, used by the scrubber
 	// and verify-on-read for bit-rot detection. Distinct from ETag, which for a
 	// multipart object is the "-N" composite, not a content hash.
@@ -56,7 +60,7 @@ func (sc *sidecar) metadata() fs.ObjectMetadata {
 // newSidecar builds a sidecar document for an object. checksum is the hex MD5
 // of the full content (equal to etag for single-part PUTs, distinct for
 // multipart).
-func newSidecar(key, etag, checksum string, meta fs.ObjectMetadata, tags []fs.Tag, acl fs.ACL) *sidecar {
+func newSidecar(key, etag, checksum string, meta fs.ObjectMetadata, tags []fs.Tag, acl fs.ACL, owner fs.Owner) *sidecar {
 	return &sidecar{
 		Version:            sidecarVersion,
 		Key:                key,
@@ -68,8 +72,15 @@ func newSidecar(key, etag, checksum string, meta fs.ObjectMetadata, tags []fs.Ta
 		UserMetadata:       meta.UserMetadata,
 		Tags:               tags,
 		ACL:                acl,
+		OwnerID:            owner.ID,
+		OwnerDisplayName:   owner.DisplayName,
 		Checksum:           checksum,
 	}
+}
+
+// owner converts the sidecar's owner fields to the domain type.
+func (sc *sidecar) owner() fs.Owner {
+	return fs.Owner{ID: sc.OwnerID, DisplayName: sc.OwnerDisplayName}
 }
 
 // sidecarPath returns the sidecar location for an object. The key is hashed so
@@ -130,9 +141,26 @@ func (s *Storage) deleteBucketMeta(bucket string) {
 // objectETag resolves an object's ETag, preferring the sidecar's stored value
 // and falling back to (cached) recompute-on-read for sidecar-less files.
 func (s *Storage) objectETag(bucket, key, path string, info os.FileInfo) (string, error) {
-	if sc, err := s.readSidecar(bucket, key); err == nil && sc != nil && sc.ETag != "" {
-		return sc.ETag, nil
+	etag, _, err := s.objectETagOwner(bucket, key, path, info)
+
+	return etag, err
+}
+
+// objectETagOwner reads the ETag and recorded owner in a single sidecar load,
+// which is what listing needs per object. A missing sidecar falls back to
+// recomputing the ETag and reports no owner.
+func (s *Storage) objectETagOwner(bucket, key, path string, info os.FileInfo) (string, fs.Owner, error) {
+	if sc, err := s.readSidecar(bucket, key); err == nil && sc != nil {
+		if sc.ETag != "" {
+			return sc.ETag, sc.owner(), nil
+		}
+
+		etag, err := s.etagFor(path, info)
+
+		return etag, sc.owner(), err
 	}
 
-	return s.etagFor(path, info)
+	etag, err := s.etagFor(path, info)
+
+	return etag, fs.Owner{}, err
 }

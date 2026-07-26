@@ -84,6 +84,7 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		Metadata:    extractObjectMetadata(r.Header),
 		Tags:        tags,
 		ACL:         fs.ParseACL(r.Header.Get("X-Amz-Acl")),
+		Owner:       callerOwner(ctx),
 		IfNoneMatch: r.Header.Get("If-None-Match"),
 		IfMatch:     r.Header.Get("If-Match"),
 	}

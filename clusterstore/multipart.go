@@ -59,6 +59,7 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		Metadata: req.Metadata,
 		Tags:     append([]fs.Tag(nil), req.Tags...),
 		ACL:      req.ACL,
+		Owner:    req.Owner,
 	})
 	if err != nil {
 		return nil, err
@@ -264,6 +265,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		Metadata: rec.ObjectMetadata(),
 		Tags:     append([]fs.Tag(nil), rec.Tags...),
 		ACL:      rec.ACL,
+		Owner:    rec.Owner,
 		ETag:     etag,
 	})
 

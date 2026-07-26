@@ -36,6 +36,7 @@ type object struct {
 	metadata     fs.ObjectMetadata
 	tags         []fs.Tag
 	acl          fs.ACL
+	owner        fs.Owner
 }
 
 type bucket struct {
@@ -61,6 +62,7 @@ type multipartUpload struct {
 	metadata  fs.ObjectMetadata
 	tags      []fs.Tag
 	acl       fs.ACL
+	owner     fs.Owner
 }
 
 // Storage implements fs.Storage interface using in-memory storage.
@@ -146,6 +148,7 @@ func (s *Storage) ListObjects(ctx context.Context, bucketName, prefix string) ([
 				Size:         int64(len(obj.data)),
 				LastModified: obj.lastModified,
 				ETag:         obj.etag,
+				Owner:        obj.owner,
 			})
 		}
 	}
@@ -193,6 +196,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		metadata:     req.Metadata,
 		tags:         append([]fs.Tag(nil), req.Tags...),
 		acl:          req.ACL,
+		owner:        req.Owner,
 	}
 
 	return &fs.PutObjectResponse{ETag: etag}, nil
@@ -291,6 +295,34 @@ func (s *Storage) ObjectACL(_ context.Context, bucketName, key string) (fs.ACL, 
 	return normalizeACL(obj.acl), nil
 }
 
+// SetObjectACL records the object's canned ACL, leaving its content untouched.
+func (s *Storage) SetObjectACL(_ context.Context, bucketName, key string, acl fs.ACL) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return err
+	}
+
+	obj.acl = acl
+
+	return nil
+}
+
+// ObjectOwner returns the principal recorded when the object was written.
+func (s *Storage) ObjectOwner(_ context.Context, bucketName, key string) (fs.Owner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return fs.Owner{}, err
+	}
+
+	return obj.owner, nil
+}
+
 // normalizeACL defaults an unset (zero-value) ACL to ACLPrivate.
 func normalizeACL(a fs.ACL) fs.ACL {
 	if a == "" {
@@ -371,6 +403,7 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		metadata:  req.Metadata,
 		tags:      append([]fs.Tag(nil), req.Tags...),
 		acl:       req.ACL,
+		owner:     req.Owner,
 	}
 
 	s.uploads[uploadID] = upload
@@ -541,6 +574,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		metadata:     upload.metadata,
 		tags:         upload.tags,
 		acl:          upload.acl,
+		owner:        upload.owner,
 	}
 
 	delete(s.uploads, req.UploadID)

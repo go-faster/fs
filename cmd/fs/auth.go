@@ -55,7 +55,13 @@ func buildAuthConfig(cfg Config, insecureNoAuth bool) (ac auth.Config, enabled b
 			return auth.Config{}, true, errors.Wrapf(err, "key %q", k.AccessKey)
 		}
 
-		keys = append(keys, auth.Key{AccessKey: k.AccessKey, SecretKey: k.SecretKey, Grants: grants})
+		keys = append(keys, auth.Key{
+			AccessKey:   k.AccessKey,
+			SecretKey:   k.SecretKey,
+			UserID:      k.UserID,
+			DisplayName: k.DisplayName,
+			Grants:      grants,
+		})
 	}
 
 	if len(keys) == 0 {

@@ -13,6 +13,9 @@ type ObjectInfo struct {
 	ETag         string    `xml:"ETag,omitempty"`
 	Size         int64     `xml:"Size"`
 	StorageClass string    `xml:"StorageClass,omitempty"`
+	// Owner is present on V1 listings and on V2 only when fetch-owner=true,
+	// which is what S3 does.
+	Owner *OwnerXML `xml:"Owner,omitempty"`
 }
 
 // CommonPrefix is a grouped key prefix produced by delimiter-based listing.

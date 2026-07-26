@@ -31,7 +31,9 @@ import (
 // Names used by every conformance subtest.
 const (
 	testBucket = "bucket"
-	testKey    = "big.bin"
+	// testObjectKey is the key the single-object cases operate on.
+	testObjectKey = "obj.txt"
+	testKey       = "big.bin"
 
 	// Names and values reused by the metadata/tagging subtests.
 	metaKey = "meta.txt"
@@ -111,6 +113,10 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
 	"ACL/ObjectFromPut":                     testACLObjectFromPut,
 	"ACL/ObjectDefaultPrivate":              testACLObjectDefaultPrivate,
+	"ACL/ObjectSetRoundTrip":                testACLObjectSetRoundTrip,
+	"ACL/ObjectSetNotFound":                 testACLObjectSetNotFound,
+	"Owner/ObjectRoundTrip":                 testOwnerObjectRoundTrip,
+	"Owner/Unset":                           testOwnerUnset,
 }
 
 func putObject(t *testing.T, storage fs.Storage, key string, content []byte) {
@@ -1185,14 +1191,14 @@ func testACLObjectFromPut(t *testing.T, storage fs.Storage) {
 
 	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
 		Bucket: testBucket,
-		Key:    "obj.txt",
+		Key:    testObjectKey,
 		Reader: strings.NewReader("x"),
 		Size:   1,
 		ACL:    fs.ACLPublicRead,
 	})
 	require.NoError(t, err)
 
-	acl, err := storage.ObjectACL(ctx, testBucket, "obj.txt")
+	acl, err := storage.ObjectACL(ctx, testBucket, testObjectKey)
 	require.NoError(t, err)
 	require.Equal(t, fs.ACLPublicRead, acl)
 
@@ -1205,9 +1211,116 @@ func testACLObjectDefaultPrivate(t *testing.T, storage fs.Storage) {
 	ctx := t.Context()
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
-	putObject(t, storage, "obj.txt", []byte("x"))
+	putObject(t, storage, testObjectKey, []byte("x"))
 
-	acl, err := storage.ObjectACL(ctx, testBucket, "obj.txt")
+	acl, err := storage.ObjectACL(ctx, testBucket, testObjectKey)
 	require.NoError(t, err)
 	require.Equal(t, fs.ACLPrivate, acl)
+}
+
+// SetObjectACL changes only the access level: content, metadata and tags must
+// survive, since PUT ?acl carries none of them.
+func testACLObjectSetRoundTrip(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket:   testBucket,
+		Key:      testObjectKey,
+		Reader:   strings.NewReader("payload"),
+		Size:     int64(len("payload")),
+		Metadata: fs.ObjectMetadata{ContentType: "text/plain"},
+		Tags:     []fs.Tag{{Key: "env", Value: "prod"}},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, storage.SetObjectACL(ctx, testBucket, testObjectKey, fs.ACLPublicRead))
+
+	acl, err := storage.ObjectACL(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPublicRead, acl)
+
+	got, err := storage.GetObject(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, got.Reader.Close()) }()
+
+	body, err := io.ReadAll(got.Reader)
+	require.NoError(t, err)
+	require.Equal(t, "payload", string(body), "PUT ?acl must not touch object content")
+	require.Equal(t, "text/plain", got.Metadata.ContentType)
+
+	tags, err := storage.GetObjectTagging(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+	require.Equal(t, []fs.Tag{{Key: "env", Value: "prod"}}, tags)
+
+	// The level is replaced, not merged.
+	require.NoError(t, storage.SetObjectACL(ctx, testBucket, testObjectKey, fs.ACLPrivate))
+
+	acl, err = storage.ObjectACL(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+	require.Equal(t, fs.ACLPrivate, acl)
+}
+
+// The owner is recorded at write time and is a property of the object, not of
+// whoever reads it back — ACL responses depend on that.
+func testOwnerObjectRoundTrip(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	owner := fs.Owner{ID: "user-1", DisplayName: "User One"}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket: testBucket,
+		Key:    testObjectKey,
+		Reader: strings.NewReader("x"),
+		Size:   1,
+		Owner:  owner,
+	})
+	require.NoError(t, err)
+
+	got, err := storage.ObjectOwner(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+	require.Equal(t, owner, got)
+
+	// Listing reports it too, so a fetch-owner listing does not need a stat per key.
+	objects, err := storage.ListObjects(ctx, testBucket, "")
+	require.NoError(t, err)
+	require.Len(t, objects, 1)
+	require.Equal(t, owner, objects[0].Owner)
+
+	// Changing the ACL must not disturb the owner.
+	require.NoError(t, storage.SetObjectACL(ctx, testBucket, testObjectKey, fs.ACLPublicRead))
+
+	got, err = storage.ObjectOwner(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+	require.Equal(t, owner, got)
+
+	_, err = storage.ObjectOwner(ctx, testBucket, "nope.txt")
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	_, err = storage.ObjectOwner(ctx, "missing", testObjectKey)
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+}
+
+// An object written without an owner reports the zero owner rather than failing.
+func testOwnerUnset(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	putObject(t, storage, testObjectKey, []byte("x"))
+
+	got, err := storage.ObjectOwner(ctx, testBucket, testObjectKey)
+	require.NoError(t, err)
+	require.True(t, got.IsZero())
+}
+
+func testACLObjectSetNotFound(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	require.ErrorIs(t, storage.SetObjectACL(ctx, testBucket, "nope.txt", fs.ACLPublicRead), fs.ErrObjectNotFound)
+	require.ErrorIs(t, storage.SetObjectACL(ctx, "missing", testObjectKey, fs.ACLPublicRead), fs.ErrBucketNotFound)
 }

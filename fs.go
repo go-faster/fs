@@ -12,12 +12,31 @@ type Bucket struct {
 	CreationDate time.Time
 }
 
+// Owner identifies the S3 principal that owns a bucket or object. It is
+// recorded when the object is written and reported in ACL and listing
+// responses; clients compare it to decide what a caller owns, so it must not
+// change when a different credential reads the object.
+type Owner struct {
+	// ID is the canonical user ID.
+	ID string
+	// DisplayName is the human-readable owner name.
+	DisplayName string
+}
+
+// IsZero reports whether no owner was recorded (objects written before owners
+// were modeled, or by an unauthenticated server).
+func (o Owner) IsZero() bool {
+	return o.ID == "" && o.DisplayName == ""
+}
+
 // Object represents an S3 object.
 type Object struct {
 	Key          string
 	Size         int64
 	LastModified time.Time
 	ETag         string
+	// Owner is the principal that wrote the object; zero when unrecorded.
+	Owner Owner
 }
 
 // ObjectMetadata holds the user-controlled metadata stored with an object:
@@ -54,6 +73,9 @@ type PutObjectRequest struct {
 	// ACL is the canned access-control level for the object (default
 	// ACLPrivate). Governs anonymous access only.
 	ACL ACL
+	// Owner is the principal writing the object, recorded with it and reported
+	// in ACL and listing responses. Zero leaves the object unowned.
+	Owner Owner
 
 	// IfNoneMatch and IfMatch carry the raw conditional-write header values
 	// (e.g. "*" or a quoted ETag list). When set, the storage backend must
@@ -94,6 +116,8 @@ type CreateMultipartUploadRequest struct {
 	Metadata ObjectMetadata
 	Tags     []Tag
 	ACL      ACL
+	// Owner is the principal starting the upload; it owns the completed object.
+	Owner Owner
 }
 
 // Part represents a part of a multipart upload.

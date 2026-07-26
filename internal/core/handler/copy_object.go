@@ -91,6 +91,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		Metadata: metadata,
 		Tags:     tags,
 		ACL:      fs.ParseACL(r.Header.Get("X-Amz-Acl")),
+		Owner:    callerOwner(ctx),
 	}
 
 	resp, err := h.service.PutObject(ctx, put)

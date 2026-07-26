@@ -23,7 +23,38 @@ type Authenticator interface {
 	Allow(accessKey, bucket string, action auth.Action) bool
 	// PublicRead reports whether bucket permits anonymous reads.
 	PublicRead(bucket string) bool
+	// Owner returns the identity an access key acts as, for the <Owner> element
+	// of ACL and listing responses.
+	Owner(accessKey string) (auth.Identity, bool)
 }
+
+// ownerKey is the context key under which the authenticated caller's identity
+// is stored.
+type ownerKey struct{}
+
+// withOwner returns ctx carrying the authenticated caller's identity.
+func withOwner(ctx context.Context, id auth.Identity) context.Context {
+	return context.WithValue(ctx, ownerKey{}, id)
+}
+
+// callerOwner returns the authenticated caller as an fs.Owner, to record on
+// objects they write. Anonymous requests — and handlers running without an
+// authenticator — report the anonymous owner, so every object has an owner and
+// responses always carry a well-formed <Owner>.
+func callerOwner(ctx context.Context) fs.Owner {
+	if id, ok := ctx.Value(ownerKey{}).(auth.Identity); ok {
+		return fs.Owner{ID: id.UserID, DisplayName: id.DisplayName}
+	}
+
+	return fs.Owner{ID: anonymousUserID, DisplayName: anonymousDisplayName}
+}
+
+// The owner reported for unauthenticated requests. S3 has no anonymous owner
+// concept; these are the canonical values RGW uses.
+const (
+	anonymousUserID      = "anonymous"
+	anonymousDisplayName = "anonymous"
+)
 
 // authMiddleware authenticates and authorizes every request before it reaches
 // the router. Signed requests (SigV4 header or presigned query) are verified
@@ -51,6 +82,10 @@ func authMiddleware(a Authenticator, store fs.Storage, next http.Handler) http.H
 
 			if res.SignedStreaming() {
 				replaceWithVerifiedBody(r, res)
+			}
+
+			if id, ok := a.Owner(res.AccessKey); ok {
+				r = r.WithContext(withOwner(r.Context(), id))
 			}
 
 			next.ServeHTTP(w, r)

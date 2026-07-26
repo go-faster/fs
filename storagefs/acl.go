@@ -100,6 +100,45 @@ func (s *Storage) ObjectACL(_ context.Context, bucket, key string) (fs.ACL, erro
 	return normalizeACL(sc.ACL), nil
 }
 
+// SetObjectACL rewrites the object's sidecar with the new canned ACL, creating
+// a sidecar for pre-sidecar objects. The object content is not touched.
+func (s *Storage) SetObjectACL(_ context.Context, bucket, key string, acl fs.ACL) error {
+	if err := s.statObject(bucket, key); err != nil {
+		return err
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	sc, err := s.readSidecar(bucket, key)
+	if err != nil {
+		return err
+	}
+
+	if sc == nil {
+		sc = newSidecar(key, "", "", fs.ObjectMetadata{}, nil, acl, fs.Owner{})
+	}
+
+	sc.ACL = acl
+
+	return s.writeSidecar(bucket, sc)
+}
+
+// ObjectOwner returns the principal recorded when the object was written.
+// Objects stored before owners were modeled report the zero owner.
+func (s *Storage) ObjectOwner(_ context.Context, bucket, key string) (fs.Owner, error) {
+	if err := s.statObject(bucket, key); err != nil {
+		return fs.Owner{}, err
+	}
+
+	sc, err := s.readSidecar(bucket, key)
+	if err != nil || sc == nil {
+		return fs.Owner{}, err
+	}
+
+	return sc.owner(), nil
+}
+
 // normalizeACL defaults an unset (zero-value) ACL to ACLPrivate.
 func normalizeACL(a fs.ACL) fs.ACL {
 	if a == "" {

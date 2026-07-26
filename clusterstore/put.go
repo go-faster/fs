@@ -34,6 +34,7 @@ type PutRequest struct {
 	Metadata fs.ObjectMetadata
 	Tags     []fs.Tag
 	ACL      fs.ACL
+	Owner    fs.Owner
 	// ETag overrides the stored ETag (multipart composite ETags); empty means
 	// the content MD5.
 	ETag string
@@ -147,6 +148,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		UserMetadata:       req.Metadata.UserMetadata,
 		Tags:               req.Tags,
 		ACL:                req.ACL,
+		Owner:              req.Owner,
 	}
 
 	// Commit: replace the sidecar on every quorum target. This is what makes

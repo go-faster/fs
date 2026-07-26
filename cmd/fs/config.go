@@ -141,11 +141,16 @@ type AdminConfig struct {
 	KeysFile string `yaml:"keys_file,omitempty"`
 }
 
-// KeyConfig is one credential and its grants.
+// KeyConfig is one credential, the owner identity it acts as, and its grants.
 type KeyConfig struct {
-	AccessKey string        `yaml:"access_key"`
-	SecretKey string        `yaml:"secret_key"`
-	Grants    []GrantConfig `yaml:"grants,omitempty"`
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	// UserID is the canonical owner ID reported in <Owner> elements for
+	// objects this key writes. Defaults to the access key.
+	UserID string `yaml:"user_id,omitempty"`
+	// DisplayName is the human-readable owner name. Defaults to UserID.
+	DisplayName string        `yaml:"display_name,omitempty"`
+	Grants      []GrantConfig `yaml:"grants,omitempty"`
 }
 
 // GrantConfig authorizes an access key for buckets matching Bucket (a glob) up

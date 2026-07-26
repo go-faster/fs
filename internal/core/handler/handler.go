@@ -176,16 +176,22 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 			h.ListParts(w, r)
 		case q.Has("tagging"):
 			h.GetObjectTagging(w, r)
+		case q.Has("acl"):
+			h.GetObjectACL(w, r)
 		default:
 			h.GetObject(w, r)
 		}
 	case http.MethodPut:
-		if q.Has("tagging") {
+		switch {
+		case q.Has("tagging"):
 			h.PutObjectTagging(w, r)
-			return
+		case q.Has("acl"):
+			// Must precede PutObject: without this the ACL document would be
+			// stored as the object's content, destroying it.
+			h.PutObjectACL(w, r)
+		default:
+			h.PutObject(w, r)
 		}
-
-		h.PutObject(w, r)
 	case http.MethodHead:
 		h.HeadObject(w, r)
 	case http.MethodDelete:

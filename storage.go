@@ -33,6 +33,12 @@ type Storage interface {
 	// ObjectACL returns the object's canned ACL (ACLPrivate default);
 	// ErrBucketNotFound/ErrObjectNotFound when absent.
 	ObjectACL(ctx context.Context, bucket, key string) (ACL, error)
+	// SetObjectACL records the object's canned ACL, leaving its content and
+	// other metadata untouched; ErrBucketNotFound/ErrObjectNotFound when absent.
+	SetObjectACL(ctx context.Context, bucket, key string, acl ACL) error
+	// ObjectOwner returns the principal recorded when the object was written
+	// (zero when unrecorded); ErrBucketNotFound/ErrObjectNotFound when absent.
+	ObjectOwner(ctx context.Context, bucket, key string) (Owner, error)
 
 	CreateMultipartUpload(ctx context.Context, req *CreateMultipartUploadRequest) (*MultipartUpload, error)
 	UploadPart(ctx context.Context, req *UploadPartRequest) (*Part, error)

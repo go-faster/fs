@@ -68,6 +68,9 @@ var _ fs.Storage = &StorageMock{}
 //			ObjectACLFunc: func(ctx context.Context, bucket string, key string) (fs.ACL, error) {
 //				panic("mock out the ObjectACL method")
 //			},
+//			ObjectOwnerFunc: func(ctx context.Context, bucket string, key string) (fs.Owner, error) {
+//				panic("mock out the ObjectOwner method")
+//			},
 //			PutObjectFunc: func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 //				panic("mock out the PutObject method")
 //			},
@@ -76,6 +79,9 @@ var _ fs.Storage = &StorageMock{}
 //			},
 //			SetBucketACLFunc: func(ctx context.Context, bucket string, acl fs.ACL) error {
 //				panic("mock out the SetBucketACL method")
+//			},
+//			SetObjectACLFunc: func(ctx context.Context, bucket string, key string, acl fs.ACL) error {
+//				panic("mock out the SetObjectACL method")
 //			},
 //			UploadPartFunc: func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 //				panic("mock out the UploadPart method")
@@ -135,6 +141,9 @@ type StorageMock struct {
 	// ObjectACLFunc mocks the ObjectACL method.
 	ObjectACLFunc func(ctx context.Context, bucket string, key string) (fs.ACL, error)
 
+	// ObjectOwnerFunc mocks the ObjectOwner method.
+	ObjectOwnerFunc func(ctx context.Context, bucket string, key string) (fs.Owner, error)
+
 	// PutObjectFunc mocks the PutObject method.
 	PutObjectFunc func(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error)
 
@@ -143,6 +152,9 @@ type StorageMock struct {
 
 	// SetBucketACLFunc mocks the SetBucketACL method.
 	SetBucketACLFunc func(ctx context.Context, bucket string, acl fs.ACL) error
+
+	// SetObjectACLFunc mocks the SetObjectACL method.
+	SetObjectACLFunc func(ctx context.Context, bucket string, key string, acl fs.ACL) error
 
 	// UploadPartFunc mocks the UploadPart method.
 	UploadPartFunc func(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error)
@@ -279,6 +291,15 @@ type StorageMock struct {
 			// Key is the key argument value.
 			Key string
 		}
+		// ObjectOwner holds details about calls to the ObjectOwner method.
+		ObjectOwner []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
+		}
 		// PutObject holds details about calls to the PutObject method.
 		PutObject []struct {
 			// Ctx is the ctx argument value.
@@ -306,6 +327,17 @@ type StorageMock struct {
 			// ACL is the acl argument value.
 			ACL fs.ACL
 		}
+		// SetObjectACL holds details about calls to the SetObjectACL method.
+		SetObjectACL []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Bucket is the bucket argument value.
+			Bucket string
+			// Key is the key argument value.
+			Key string
+			// ACL is the acl argument value.
+			ACL fs.ACL
+		}
 		// UploadPart holds details about calls to the UploadPart method.
 		UploadPart []struct {
 			// Ctx is the ctx argument value.
@@ -330,9 +362,11 @@ type StorageMock struct {
 	lockListObjects             sync.RWMutex
 	lockListParts               sync.RWMutex
 	lockObjectACL               sync.RWMutex
+	lockObjectOwner             sync.RWMutex
 	lockPutObject               sync.RWMutex
 	lockPutObjectTagging        sync.RWMutex
 	lockSetBucketACL            sync.RWMutex
+	lockSetObjectACL            sync.RWMutex
 	lockUploadPart              sync.RWMutex
 }
 
@@ -948,6 +982,46 @@ func (mock *StorageMock) ObjectACLCalls() []struct {
 	return calls
 }
 
+// ObjectOwner calls ObjectOwnerFunc.
+func (mock *StorageMock) ObjectOwner(ctx context.Context, bucket string, key string) (fs.Owner, error) {
+	if mock.ObjectOwnerFunc == nil {
+		panic("StorageMock.ObjectOwnerFunc: method is nil but Storage.ObjectOwner was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		Key:    key,
+	}
+	mock.lockObjectOwner.Lock()
+	mock.calls.ObjectOwner = append(mock.calls.ObjectOwner, callInfo)
+	mock.lockObjectOwner.Unlock()
+	return mock.ObjectOwnerFunc(ctx, bucket, key)
+}
+
+// ObjectOwnerCalls gets all the calls that were made to ObjectOwner.
+// Check the length with:
+//
+//	len(mockedStorage.ObjectOwnerCalls())
+func (mock *StorageMock) ObjectOwnerCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	Key    string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+	}
+	mock.lockObjectOwner.RLock()
+	calls = mock.calls.ObjectOwner
+	mock.lockObjectOwner.RUnlock()
+	return calls
+}
+
 // PutObject calls PutObjectFunc.
 func (mock *StorageMock) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 	if mock.PutObjectFunc == nil {
@@ -1065,6 +1139,50 @@ func (mock *StorageMock) SetBucketACLCalls() []struct {
 	mock.lockSetBucketACL.RLock()
 	calls = mock.calls.SetBucketACL
 	mock.lockSetBucketACL.RUnlock()
+	return calls
+}
+
+// SetObjectACL calls SetObjectACLFunc.
+func (mock *StorageMock) SetObjectACL(ctx context.Context, bucket string, key string, acl fs.ACL) error {
+	if mock.SetObjectACLFunc == nil {
+		panic("StorageMock.SetObjectACLFunc: method is nil but Storage.SetObjectACL was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+		ACL    fs.ACL
+	}{
+		Ctx:    ctx,
+		Bucket: bucket,
+		Key:    key,
+		ACL:    acl,
+	}
+	mock.lockSetObjectACL.Lock()
+	mock.calls.SetObjectACL = append(mock.calls.SetObjectACL, callInfo)
+	mock.lockSetObjectACL.Unlock()
+	return mock.SetObjectACLFunc(ctx, bucket, key, acl)
+}
+
+// SetObjectACLCalls gets all the calls that were made to SetObjectACL.
+// Check the length with:
+//
+//	len(mockedStorage.SetObjectACLCalls())
+func (mock *StorageMock) SetObjectACLCalls() []struct {
+	Ctx    context.Context
+	Bucket string
+	Key    string
+	ACL    fs.ACL
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Bucket string
+		Key    string
+		ACL    fs.ACL
+	}
+	mock.lockSetObjectACL.RLock()
+	calls = mock.calls.SetObjectACL
+	mock.lockSetObjectACL.RUnlock()
 	return calls
 }
 
