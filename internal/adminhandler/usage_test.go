@@ -26,8 +26,12 @@ func TestBucketUsageReported(t *testing.T) {
 	counted := time.Date(2026, 7, 26, 9, 0, 0, 0, time.UTC)
 	updated := counted.Add(time.Hour)
 
+	// Explicitly int64: a bucket's size does not fit in an int on a 32-bit
+	// build, and an untyped constant handed to EqualValues becomes one.
+	const photoBytes int64 = 8 << 30
+
 	a := NewAdminAPI(Options{BucketUsage: stubBucketUsage{records: []BucketUsage{
-		{Bucket: "photos", Objects: 1200, Bytes: 8 << 30, Updated: updated, Counted: counted},
+		{Bucket: "photos", Objects: 1200, Bytes: photoBytes, Updated: updated, Counted: counted},
 		// Never recounted: maintained only by deltas so far.
 		{Bucket: "logs", Objects: 4, Bytes: 512, Updated: updated},
 	}}})
@@ -38,7 +42,7 @@ func TestBucketUsageReported(t *testing.T) {
 
 	assert.Equal(t, "photos", out.Buckets[0].Bucket)
 	assert.EqualValues(t, 1200, out.Buckets[0].Objects)
-	assert.EqualValues(t, 8<<30, out.Buckets[0].Bytes)
+	assert.EqualValues(t, photoBytes, out.Buckets[0].Bytes)
 	assert.Equal(t, counted, out.Buckets[0].Counted.Or(time.Time{}))
 
 	_, ok := out.Buckets[1].Counted.Get()
@@ -46,7 +50,7 @@ func TestBucketUsageReported(t *testing.T) {
 
 	// The cluster-wide totals are summed here so a caller does not have to.
 	assert.EqualValues(t, 1204, out.Objects.Or(0))
-	assert.EqualValues(t, (8<<30)+512, out.Bytes.Or(0))
+	assert.EqualValues(t, photoBytes+512, out.Bytes.Or(0))
 }
 
 // TestBucketUsageDisabled: a single-node server has no usage index — the
