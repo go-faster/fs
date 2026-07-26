@@ -473,14 +473,28 @@ func (s *ClusterDisk) encodeFields(e *jx.Encoder) {
 			s.Fullness.Encode(e)
 		}
 	}
+	{
+		if s.HasData.Set {
+			e.FieldStart("has_data")
+			s.HasData.Encode(e)
+		}
+	}
+	{
+		if s.DataError.Set {
+			e.FieldStart("data_error")
+			s.DataError.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfClusterDisk = [5]string{
+var jsonFieldsNameOfClusterDisk = [7]string{
 	0: "id",
 	1: "weight",
 	2: "total_bytes",
 	3: "free_bytes",
 	4: "fullness",
+	5: "has_data",
+	6: "data_error",
 }
 
 // Decode decodes ClusterDisk from json.
@@ -545,6 +559,26 @@ func (s *ClusterDisk) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"fullness\"")
+			}
+		case "has_data":
+			if err := func() error {
+				s.HasData.Reset()
+				if err := s.HasData.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"has_data\"")
+			}
+		case "data_error":
+			if err := func() error {
+				s.DataError.Reset()
+				if err := s.DataError.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"data_error\"")
 			}
 		default:
 			return d.Skip()
@@ -2643,6 +2677,41 @@ func (s *MigrationStatus) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *MigrationStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes bool as json.
+func (o OptBool) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Bool(bool(o.Value))
+}
+
+// Decode decodes bool from json.
+func (o *OptBool) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptBool to nil")
+	}
+	o.Set = true
+	v, err := d.Bool()
+	if err != nil {
+		return err
+	}
+	o.Value = bool(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptBool) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptBool) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

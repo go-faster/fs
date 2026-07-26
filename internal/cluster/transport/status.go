@@ -38,6 +38,26 @@ type NodeStatus struct {
 	Rebalance NodeRebalance `json:"rebalance"`
 	// Scrub is the node's cumulative scrub and repair totals.
 	Scrub NodeScrub `json:"scrub"`
+	// Disks is what each of the node's disks currently holds. Only the node
+	// itself can answer this: the control plane records capacity, and capacity
+	// cannot tell an emptied disk from a lightly used one.
+	Disks []NodeDisk `json:"disks,omitempty"`
+}
+
+// NodeDisk is what one of the node's disks holds right now. It is the drain
+// signal: an orchestrator decommissioning a node watches HasData go false
+// before it deletes the volume.
+type NodeDisk struct {
+	// ID is the disk's registry identity, matching the topology.
+	ID string `json:"id"`
+	// HasData reports whether the disk still holds any fragment. False means
+	// drained — exactly, not approximately, which is why this is a boolean and
+	// not a byte count (see diskstore.Store.HasData).
+	HasData bool `json:"has_data"`
+	// Err is why the disk could not be probed, if it could not. A disk that
+	// failed to answer must never read as drained, so HasData stays false and
+	// this says why.
+	Err string `json:"error,omitempty"`
 }
 
 // NodeRebalance is the node-local rebalance runner's state and progress. State

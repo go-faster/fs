@@ -55,8 +55,31 @@ add capacity or lower a full disk's weight (drain). A practical target is
 
 Placement is weighted-HRW: a disk receives data in proportion to its `weight`
 (default 1). Set weights proportional to capacity when disks differ in size, and
-lower a disk's weight (toward 0 = drain) to migrate data off it. Weight changes
-are a membership change the auto-rebalancer converges automatically.
+lower a disk's weight to migrate data off it. Weight changes are a membership
+change the auto-rebalancer converges automatically.
+
+**To drain a disk, give it a negative weight** (`weight: -1`), not `0`. In the
+config file an omitted `weight` and an explicit `weight: 0` are indistinguishable,
+so `0` is read as "unset" and becomes the default 1 — a disk written as
+`weight: 0` is placed at *full* weight, the opposite of what is intended.
+Placement skips any disk whose weight is not positive, so a negative weight is
+what actually takes one out of rotation.
+
+### Knowing when a drain has finished
+
+Weight says a disk was taken out of placement; it does not say its data has
+finished moving. `GET /api/v1/cluster/status` reports `has_data` per disk — false
+once the disk holds no fragments, which is when it is safe to remove.
+
+Do not infer this from capacity. `total_bytes`/`free_bytes` come from `statfs`,
+so they describe the whole filesystem: a disk holding no fragments still reports
+bytes in use, and no threshold reliably means "empty". `has_data` is answered by
+the node itself, exactly.
+
+`has_data` is **absent**, not false, when the node did not report live state
+(unreachable, or running a binary that predates the field) or could not read the
+disk — `data_error` then says why. Absent means unknown, and treating unknown as
+drained is how a disk still holding the only copy of something gets deleted.
 
 ## etcd
 

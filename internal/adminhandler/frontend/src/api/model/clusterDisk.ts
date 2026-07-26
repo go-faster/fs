@@ -9,11 +9,15 @@
 
 export interface ClusterDisk {
   id: string;
-  /** Relative placement weight (0 = drained). */
+  /** Relative placement weight; not positive means drained (out of placement). */
   weight: number;
   /** Reported filesystem size; 0 when the node has not reported capacity. */
   total_bytes?: number;
   free_bytes?: number;
   /** Used fraction (0..1); omitted when capacity is unknown. */
   fullness?: number;
+  /** Whether the disk still holds any fragment, as the node itself reports it. False means drained: its data has been moved off and the volume can be deleted. Omitted when the node did not report live state, or could not probe the disk (see data_error) — absent means unknown, never drained. Capacity cannot answer this, since it comes from statfs: a disk holding no fragments still reports bytes used. */
+  has_data?: boolean;
+  /** Why the disk could not be probed; has_data is then absent. */
+  data_error?: string;
 }

@@ -58,7 +58,8 @@ storage:
 #   scheme: "rf2.5"
 #
 #   # This node's disks (default: one disk under <storage.root>/cluster/d0).
-#   # Weight is the relative capacity for placement; 0 drains a disk.
+#   # Weight is the relative capacity for placement; a NEGATIVE weight
+#   # drains a disk (0 means "unset" and is read as the default 1).
 #   disks:
 #     - id: "d0"
 #       path: "/data/d0"

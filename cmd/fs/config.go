@@ -273,8 +273,12 @@ type ClusterDiskConfig struct {
 	ID string `yaml:"id"`
 	// Path is the disk's root directory. Required.
 	Path string `yaml:"path"`
-	// Weight is the relative capacity weight for placement (default 1; 0 or
-	// negative drains the disk — no new data placed on it).
+	// Weight is the relative capacity weight for placement (default 1). A
+	// negative weight drains the disk — no new data is placed on it.
+	//
+	// Not zero: omitempty makes an absent key and an explicit `weight: 0`
+	// indistinguishable here, so 0 is read as "unset" and becomes the default
+	// 1. A disk written as `weight: 0` is placed at full weight.
 	Weight float64 `yaml:"weight,omitempty"`
 }
 

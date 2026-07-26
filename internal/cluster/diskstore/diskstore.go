@@ -212,6 +212,94 @@ func (*Store) pruneEmptyDirs(dir, root string) {
 	}
 }
 
+// dirBatch is how many directory entries a drain probe reads at a time. It
+// exists so HasData never materializes a directory: one bucket directory holds
+// one entry per object, which on a full disk is millions.
+const dirBatch = 32
+
+// HasData reports whether the disk holds any fragment at all.
+//
+// This is the drain question — "has this disk been emptied yet?" — and it is
+// deliberately a boolean rather than an object count. An orchestrator
+// decommissioning a node needs to know when its data is gone and the volume
+// can be deleted, and capacity cannot tell it: the bytes come from statfs, so
+// they include filesystem overhead and a disk holding nothing never reports
+// zero used. A count cannot be produced cheaply — there is no index, so
+// counting means walking the tree — while the boolean is answerable exactly,
+// and in constant time on a drained disk, which is the case that must be fast.
+//
+// Cost: it descends to the first fragment and stops, reading directories in
+// batches, so it never lists a large one. A drained disk costs a single failed
+// open of the root (Delete prunes emptied directories, so the tree is gone);
+// a loaded disk costs one batch per level down to the first fragment.
+// In-flight temp files do not count: they are not fragments yet, and a crash
+// leaves them behind.
+func (s *Store) HasData(_ context.Context, disk cluster.DiskID) (bool, error) {
+	root, ok := s.roots[disk]
+	if !ok {
+		return false, errors.Errorf("unknown disk %q", disk)
+	}
+
+	found, err := hasFragment(root)
+	if err != nil {
+		return false, errors.Wrap(err, "probe disk")
+	}
+
+	return found, nil
+}
+
+// hasFragment reports whether dir holds a fragment at any depth, stopping at
+// the first one found.
+func hasFragment(dir string) (bool, error) {
+	f, err := os.Open(dir) //nolint:gosec // Path is the disk root, or a directory found beneath it.
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Pruned by a concurrent Delete, or never created.
+			return false, nil
+		}
+
+		return false, errors.Wrap(err, "open directory")
+	}
+
+	defer func() {
+		_ = f.Close()
+	}()
+
+	for {
+		entries, err := f.ReadDir(dirBatch)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+
+			return false, errors.Wrap(err, "read directory")
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				if strings.HasPrefix(entry.Name(), ".tmp-") {
+					continue
+				}
+
+				return true, nil
+			}
+
+			found, err := hasFragment(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				return false, err
+			}
+
+			if found {
+				return true, nil
+			}
+		}
+
+		if len(entries) < dirBatch {
+			return false, nil
+		}
+	}
+}
+
 // List returns the fragment names on a disk with the given slash-separated
 // prefix, sorted lexicographically. It is store-local (not part of the
 // transport API) — the scrubber and repair worker enumerate their own node's

@@ -25,6 +25,23 @@ function band(f: number): Band {
 
 const DRAIN_MARK = 90; // % — the default fullness watermark.
 
+// drainLabel distinguishes a drain in progress from a finished one. Weight
+// only says the disk was taken out of placement; has_data says whether its
+// data has actually moved off, which is what makes removing it safe.
+function drainLabel(d: ClusterDisk): string {
+  if (d.has_data === false) return "empty";
+
+  return "drain";
+}
+
+function drainTitle(d: ClusterDisk): string | undefined {
+  if (d.data_error) return `Occupancy unknown: ${d.data_error}`;
+  if (d.has_data === false) return "Drained: this disk holds no fragments.";
+  if (d.has_data) return "Draining: this disk still holds fragments.";
+
+  return undefined;
+}
+
 function Disk({ d }: { d: ClusterDisk }) {
   const known = (d.total_bytes ?? 0) > 0;
   const drained = d.weight <= 0;
@@ -61,8 +78,11 @@ function Disk({ d }: { d: ClusterDisk }) {
       <span className={`disk__pct ${known ? b : "muted"}`}>
         {known ? `${Math.round(f * 100)}%` : "—"}
       </span>
-      <span className={`disk__w ${drained ? "drained" : ""}`}>
-        {drained ? "drain" : `w${d.weight}`}
+      <span
+        className={`disk__w ${drained ? "drained" : ""}`}
+        title={drainTitle(d)}
+      >
+        {drained ? drainLabel(d) : `w${d.weight}`}
       </span>
       <span className="disk__cap">
         {known

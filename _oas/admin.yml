@@ -519,7 +519,7 @@ components:
         weight:
           type: number
           format: double
-          description: "Relative placement weight (0 = drained)."
+          description: "Relative placement weight; not positive means drained (out of placement)."
         total_bytes:
           type: integer
           format: int64
@@ -531,6 +531,18 @@ components:
           type: number
           format: double
           description: "Used fraction (0..1); omitted when capacity is unknown."
+        has_data:
+          type: boolean
+          description: >-
+            Whether the disk still holds any fragment, as the node itself
+            reports it. False means drained: its data has been moved off and the
+            volume can be deleted. Omitted when the node did not report live
+            state, or could not probe the disk (see data_error) — absent means
+            unknown, never drained. Capacity cannot answer this, since it comes
+            from statfs: a disk holding no fragments still reports bytes used.
+        data_error:
+          type: string
+          description: "Why the disk could not be probed; has_data is then absent."
     ClusterNode:
       type: object
       required:

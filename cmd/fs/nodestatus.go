@@ -19,7 +19,7 @@ import (
 // runner state that exists only inside the running process. It touches no
 // control plane, so a peer poll never waits on etcd — and keeps answering
 // during an etcd outage, which is exactly when an operator looks.
-func (rt *clusterRuntime) nodeStatus(context.Context) (transport.NodeStatus, error) {
+func (rt *clusterRuntime) nodeStatus(ctx context.Context) (transport.NodeStatus, error) {
 	reb := rt.rebalance.localStatus()
 
 	return transport.NodeStatus{
@@ -46,7 +46,51 @@ func (rt *clusterRuntime) nodeStatus(context.Context) (transport.NodeStatus, err
 			Converted:        rt.scrub.converted.Load(),
 			ECUnverified:     rt.scrub.ecUnverifiedLastScrub.Load() != 0,
 		},
+		Disks: rt.diskStatus(ctx),
 	}, nil
+}
+
+// liveDisks maps a peer's reported disks into the admin domain type.
+func liveDisks(disks []transport.NodeDisk) []adminhandler.NodeDisk {
+	if len(disks) == 0 {
+		return nil
+	}
+
+	out := make([]adminhandler.NodeDisk, 0, len(disks))
+	for _, d := range disks {
+		out = append(out, adminhandler.NodeDisk{ID: d.ID, HasData: d.HasData, Err: d.Err})
+	}
+
+	return out
+}
+
+// diskStatus probes each of the node's disks for whether it still holds data —
+// the drain signal an orchestrator gates a decommission on.
+//
+// A probe that fails carries its error instead of a verdict: reporting a disk
+// the node could not read as drained would invite deleting a volume still
+// holding the only copy of something.
+func (rt *clusterRuntime) diskStatus(ctx context.Context) []transport.NodeDisk {
+	if len(rt.node.Disks) == 0 {
+		return nil
+	}
+
+	disks := make([]transport.NodeDisk, 0, len(rt.node.Disks))
+
+	for _, disk := range rt.node.Disks {
+		status := transport.NodeDisk{ID: string(disk.ID)}
+
+		hasData, err := rt.store.HasData(ctx, disk.ID)
+		if err != nil {
+			status.Err = err.Error()
+		} else {
+			status.HasData = hasData
+		}
+
+		disks = append(disks, status)
+	}
+
+	return disks
 }
 
 // peerStatusTimeout bounds one node's live-state fetch. A status view is a
@@ -191,5 +235,6 @@ func (p *peerStatus) fetchOne(ctx context.Context, node cluster.Node) (*adminhan
 		CorruptReplicas:    st.Scrub.CorruptReplicas,
 		Converted:          st.Scrub.Converted,
 		ECUnverified:       st.Scrub.ECUnverified,
+		Disks:              liveDisks(st.Disks),
 	}, nil
 }

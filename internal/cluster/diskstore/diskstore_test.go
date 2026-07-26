@@ -305,3 +305,99 @@ func TestClusterstoreOverDiskStore(t *testing.T) {
 		}
 	}
 }
+
+// TestHasData covers the drain probe: it is what an orchestrator polls to
+// decide a decommissioned node's volume can be deleted, so a false "empty" is
+// data loss.
+func TestHasData(t *testing.T) {
+	s := newStore(t, "d0", "d1")
+
+	// A fresh disk holds nothing.
+	empty, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.False(t, empty, "a fresh disk holds no data")
+
+	put(t, s, "d0", "obj/aa/g1.f0", []byte("0"))
+	put(t, s, "d0", "obj/aa/meta", []byte("m"))
+
+	held, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.True(t, held, "a disk with fragments holds data")
+
+	// Disks are independent: one node's loaded disk says nothing about another.
+	other, err := s.HasData(t.Context(), "d1")
+	require.NoError(t, err)
+	assert.False(t, other, "d1 was never written to")
+
+	// Draining to empty flips it back — Delete prunes the namespace, so the
+	// probe stops costing anything at exactly the point it is polled hardest.
+	require.NoError(t, s.Delete(t.Context(), "d0", "obj/aa/g1.f0"))
+
+	held, err = s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.True(t, held, "one fragment left is still data")
+
+	require.NoError(t, s.Delete(t.Context(), "d0", "obj/aa/meta"))
+
+	drained, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.False(t, drained, "the last fragment gone means drained")
+
+	_, err = s.HasData(t.Context(), "nope")
+	require.Error(t, err, "an unknown disk is an error, never a quiet false")
+}
+
+// TestHasDataIgnoresNonFragments covers what must not read as data: in-flight
+// temp files (a crash leaves them behind, and they are not fragments yet) and
+// directories left behind by a prune that lost a race.
+func TestHasDataIgnoresNonFragments(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "d0")
+
+	s, err := diskstore.New(map[cluster.DiskID]string{"d0": root})
+	require.NoError(t, err)
+
+	// An empty namespace tree, as a failed prune would leave it.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "obj", "aa", "bb"), 0o750))
+
+	drained, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.False(t, drained, "empty directories are not data")
+
+	// An in-flight write, not yet renamed into place.
+	w, err := s.Create(t.Context(), "d0", "obj/aa/g1.f0")
+	require.NoError(t, err)
+
+	inflight, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.False(t, inflight, "a staged temp file is not a fragment")
+
+	// Committing it is what makes it data.
+	_, err = w.Write([]byte("x"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	held, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.True(t, held, "the commit makes it data")
+}
+
+// TestHasDataFindsDeepFragment covers a fragment past the first batch of
+// directory entries, so the batched read cannot stop early and miss it.
+func TestHasDataFindsDeepFragment(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "d0")
+
+	s, err := diskstore.New(map[cluster.DiskID]string{"d0": root})
+	require.NoError(t, err)
+
+	// More empty directories than one ReadDir batch, with the only fragment
+	// under the last of them.
+	for i := range 100 {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "obj", strconv.Itoa(i)), 0o750))
+	}
+
+	put(t, s, "d0", "obj/99/g1.f0", []byte("x"))
+
+	held, err := s.HasData(t.Context(), "d0")
+	require.NoError(t, err)
+	assert.True(t, held, "a fragment past the first batch must still be found")
+}
