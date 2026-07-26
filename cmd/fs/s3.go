@@ -177,6 +177,11 @@ Command-line flags override YAML configuration values.`,
 					// is what a drain is waiting to reach zero.
 					go clusterRT.RunOccupancyIndex(ctx)
 
+					// The node's object index: built from its disks when it
+					// was not handed over cleanly, maintained by the write
+					// path after that. No reader depends on it yet.
+					go clusterRT.RunObjectIndex(ctx)
+
 					// Per-bucket object accounting: batched deltas from this
 					// node's writes, and the cluster-wide recount that keeps
 					// the totals honest (one elected node runs it).

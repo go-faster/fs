@@ -229,3 +229,31 @@ rather than the disk.
 What remains proportional to the node is the set of objects already swept in the
 current pass, kept to avoid repairing an object twice when two of a node's disks
 hold it. Budget for it on nodes with very high object counts.
+
+## The node object index
+
+Each node keeps a local index of the objects its disks hold, under
+`<storage.root>/cluster/index`. It exists because the only cluster-wide record
+of an object is its sidecar, so listing a bucket, counting it, or sweeping it
+otherwise means reading every sidecar on every disk — the walk that does not
+finish at the object counts above.
+
+Budget roughly **200 bytes per object held**, plus the log-structured store's
+own overhead. A node at the 100M-object target should expect tens of GB. It can
+live on a data disk or a separate faster one; it is rebuildable either way, so
+the choice is about performance, not durability.
+
+The index is **derived, never authoritative**. Sidecars remain the commit point,
+which is what keeps a disk interpretable on its own: move it to another chassis
+and every fragment still carries its bucket, key, size and scheme. Losing the
+index costs a rebuild from those same disks and nothing else.
+
+That is also why index writes are not synced by default: a node that stops
+uncleanly rebuilds rather than trusting counters a crash may have swallowed. A
+deployment that would rather pay a write-ahead-log fsync per object than rebuild
+after a crash can have the index durable instead — the trade is one knob, and it
+removes the staleness window without moving the commit point.
+
+Nothing reads the index yet. Listings, usage and the scrub still take their own
+walks; they move onto it in later work, and will consult its state first, the
+way per-disk occupancy reports "not counted yet" rather than a confident zero.

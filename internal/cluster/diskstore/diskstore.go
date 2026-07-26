@@ -36,12 +36,36 @@ const dirPermissions = 0o750
 // place with their final name).
 const tmpPattern = ".tmp-*"
 
+// CommitObserver watches records land on and leave a disk.
+//
+// It exists so a node can index what its disks hold without the store learning
+// what any of it means: Wants selects the names worth reporting — the object
+// commit records, not the payload fragments — and the store reads content only
+// for those. Every write to a disk passes through here, whichever node's
+// coordinator issued it, which is what makes this the one place a node sees its
+// whole object set.
+//
+// Calls happen after the write has committed or the file has been removed, so
+// an observer can never fail one. It is bookkeeping about work already done.
+type CommitObserver interface {
+	// Wants reports whether this name's content should be reported.
+	Wants(name string) bool
+	// Committed reports a record that is now visible, with its content.
+	Committed(disk cluster.DiskID, name string, data []byte)
+	// Deleted reports a record that is gone, with the content it had. The
+	// content comes with it because the name is a hash: nothing could
+	// reconstruct which object it was afterward.
+	Deleted(disk cluster.DiskID, name string, data []byte)
+}
+
 // Store is a transport.Store over one filesystem root per disk. It is safe
 // for concurrent use; concurrent writes to the same name last-close-wins,
 // matching MemStore.
 type Store struct {
 	roots map[cluster.DiskID]string
 	sync  storagefs.SyncPolicy
+	// observer, when set, is told about records the index cares about.
+	observer CommitObserver
 	// index tracks per-disk occupancy so a drain can be watched without
 	// walking the tree for every poll. One entry per root, created in New.
 	index map[cluster.DiskID]*diskIndex
@@ -56,6 +80,11 @@ type Option func(*Store)
 // binary passes storagefs.SyncFileDir).
 func WithSyncPolicy(p storagefs.SyncPolicy) Option {
 	return func(s *Store) { s.sync = p }
+}
+
+// WithObserver reports committed and deleted records to o.
+func WithObserver(o CommitObserver) Option {
+	return func(s *Store) { s.observer = o }
 }
 
 // New builds a Store serving the given disk roots, creating each root
@@ -143,7 +172,7 @@ func (s *Store) Create(_ context.Context, disk cluster.DiskID, name string) (io.
 		return nil, errors.Wrap(err, "create temp file")
 	}
 
-	return &fileWriter{store: s, disk: disk, tmp: tmp, path: path}, nil
+	return &fileWriter{store: s, disk: disk, name: name, tmp: tmp, path: path}, nil
 }
 
 // Open implements transport.Store.
@@ -215,6 +244,14 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 		size = info.Size()
 	}
 
+	// Same reason, for the content: the name is a hash, so once the record is
+	// gone nothing can say which object it named.
+	var record []byte
+
+	if s.observer != nil && s.observer.Wants(name) {
+		record, _ = os.ReadFile(path) //nolint:gosec // Path is root-joined from a ValidName-checked name.
+	}
+
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
 			return transport.ErrNotFound
@@ -225,6 +262,10 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 
 	s.index[disk].removed(size)
 	s.pruneEmptyDirs(filepath.Dir(path), s.roots[disk])
+
+	if record != nil {
+		s.observer.Deleted(disk, name, record)
+	}
 
 	return nil
 }
@@ -393,8 +434,11 @@ func (s *Store) List(_ context.Context, disk cluster.DiskID, prefix string) ([]s
 type fileWriter struct {
 	store *Store
 	disk  cluster.DiskID
-	tmp   *os.File
-	path  string
+	// name is the logical fragment name, which is what an observer reasons
+	// about; path is where it lives.
+	name string
+	tmp  *os.File
+	path string
 	// n is what landed in the temp file, which is what the index counts once
 	// the rename commits it.
 	n int64
@@ -431,7 +475,33 @@ func (w *fileWriter) Close() error {
 
 	w.store.index[w.disk].added(w.n, prev, existed)
 
-	return w.syncDir()
+	if err := w.syncDir(); err != nil {
+		return err
+	}
+
+	w.report()
+
+	return nil
+}
+
+// report hands a committed record to the observer. The content is read back
+// rather than captured on the way through: these records are small, the read
+// comes straight from the page cache that just took the write, and the write
+// path stays free of buffering it would otherwise do for every fragment.
+func (w *fileWriter) report() {
+	o := w.store.observer
+	if o == nil || !o.Wants(w.name) {
+		return
+	}
+
+	data, err := os.ReadFile(w.path) //nolint:gosec // Path is root-joined from a ValidName-checked name.
+	if err != nil {
+		// Racing a delete, or a disk that just failed. Either way the index
+		// misses an entry, which a rebuild or the scrub's reconcile repairs.
+		return
+	}
+
+	o.Committed(w.disk, w.name, data)
 }
 
 // fileSize reports an existing file's size. A missing file is not an error

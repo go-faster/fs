@@ -17,6 +17,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/diskstore"
 	"github.com/go-faster/fs/internal/cluster/etcd"
+	"github.com/go-faster/fs/internal/cluster/objindex"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/cluster/transport"
 	"github.com/go-faster/fs/storagefs"
@@ -58,6 +59,11 @@ type clusterRuntime struct {
 	// usage batches per-bucket object accounting into the control plane. Nil
 	// when the coordinator was built without it.
 	usage *usageReporter
+
+	// index is this node's local index of the objects its disks hold. Nothing
+	// reads it yet; it is maintained so the listing, usage and scrub paths can
+	// stop walking once they are moved onto it.
+	index *objindex.Index
 
 	// scrub accumulates this node's scrub totals for metrics.
 	scrub scrubTotals
@@ -128,8 +134,22 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		disks = append(disks, cluster.Disk{ID: cluster.DiskID(d.ID), Weight: d.PlacementWeight()})
 	}
 
-	store, err := diskstore.New(roots, diskstore.WithSyncPolicy(syncPolicy))
+	// The object index is opened before the store so the store can report
+	// records to it as they land.
+	index, err := objindex.Open(objindex.DefaultDir(absRoot))
 	if err != nil {
+		return nil, errors.Wrap(err, "cluster object index")
+	}
+
+	indexer := newObjectIndexer(index, lg)
+
+	store, err := diskstore.New(roots,
+		diskstore.WithSyncPolicy(syncPolicy),
+		diskstore.WithObserver(indexer),
+	)
+	if err != nil {
+		_ = index.Close()
+
 		return nil, errors.Wrap(err, "cluster disk store")
 	}
 
@@ -201,9 +221,11 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	)
 
 	rt.store = store
-	// Checkpointing the occupancy index is the last thing the node does, so an
-	// orderly restart adopts the counters instead of walking every disk.
-	rt.closers = append(rt.closers, store.Close)
+	rt.index = index
+	// Checkpointing the occupancy index and marking the object index clean are
+	// the last things the node does, so an orderly restart adopts both instead
+	// of walking every disk.
+	rt.closers = append(rt.closers, store.Close, index.Close)
 	rt.node = cluster.Node{
 		ID:    rt.nodeID,
 		Addr:  cc.AdvertiseAddr,
