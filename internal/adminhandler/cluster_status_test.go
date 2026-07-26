@@ -115,6 +115,70 @@ func TestClusterStatusCarriesLiveState(t *testing.T) {
 	assert.Equal(t, "dial tcp: connection refused", st.Nodes[2].LiveError.Or(""))
 }
 
+// TestClusterStatusMergesDiskDrainState covers the drain signal an
+// orchestrator gates a decommission on. Capacity comes from the control plane
+// and what a disk holds only from the node, and the two are merged onto one
+// disk — so the rule that matters is which states leave has_data absent:
+// absent is unknown, and unknown must never be read as drained.
+func TestClusterStatusMergesDiskDrainState(t *testing.T) {
+	src := stubClusterStatus{st: ClusterStatus{
+		Nodes: []ClusterNode{
+			{
+				ID: "n0",
+				Disks: []ClusterDisk{
+					{ID: "d0", Weight: 1, TotalBytes: 100, FreeBytes: 40},
+					{ID: "d1", Weight: -1, TotalBytes: 100, FreeBytes: 99},
+					{ID: "d2", Weight: 1},
+				},
+				Live: &NodeLive{Disks: []NodeDisk{
+					{ID: "d0", HasData: true},
+					// Drained: weight is negative and the data has moved off.
+					{ID: "d1", HasData: false},
+					// Probed and failed: unknown, not drained.
+					{ID: "d2", Err: "open /mnt/d2: input/output error"},
+				}},
+			},
+			// A node that did not report at all: every disk is unknown.
+			{
+				ID:        "n1",
+				Disks:     []ClusterDisk{{ID: "d0", Weight: 1}},
+				LiveError: "dial tcp: connection refused",
+			},
+		},
+	}}
+
+	a := NewAdminAPI(Options{ClusterStatus: src})
+
+	st, err := a.GetClusterStatus(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, st.Nodes, 2)
+	disks := st.Nodes[0].Disks
+	require.Len(t, disks, 3)
+
+	// Still holding fragments.
+	hasData, ok := disks[0].HasData.Get()
+	require.True(t, ok, "a reported disk must carry a verdict")
+	assert.True(t, hasData)
+	// Capacity is merged onto the same disk, not replaced by the probe.
+	assert.Equal(t, int64(100), disks[0].TotalBytes.Or(0))
+
+	// Drained: the volume can be deleted.
+	hasData, ok = disks[1].HasData.Get()
+	require.True(t, ok)
+	assert.False(t, hasData)
+
+	// A disk the node could not probe says why, and stays absent — reading it
+	// as drained is how a volume still holding the only copy gets deleted.
+	_, ok = disks[2].HasData.Get()
+	assert.False(t, ok, "an unprobeable disk must not carry a verdict")
+	assert.Equal(t, "open /mnt/d2: input/output error", disks[2].DataError.Or(""))
+
+	// A silent node leaves its disks unknown too.
+	_, ok = st.Nodes[1].Disks[0].HasData.Get()
+	assert.False(t, ok, "a node that did not report leaves has_data absent")
+}
+
 func TestClusterStatusPropagatesError(t *testing.T) {
 	a := NewAdminAPI(Options{ClusterStatus: stubClusterStatus{err: assert.AnError}})
 

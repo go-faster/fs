@@ -37,6 +37,13 @@ func reportedStatus() transport.NodeStatus {
 			CorruptReplicas:  1,
 			ECUnverified:     true,
 		},
+		Disks: []transport.NodeDisk{
+			{ID: "d0", HasData: true},
+			// Drained, and one the node could not probe: an orchestrator must
+			// be able to tell those apart before it deletes a volume.
+			{ID: "d1", HasData: false},
+			{ID: "d2", Err: "open /mnt/d2: input/output error"},
+		},
 	}
 }
 

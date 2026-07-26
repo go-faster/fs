@@ -144,13 +144,21 @@ func (s *BucketScheme) SetIsDefault(val bool) {
 // Ref: #/components/schemas/ClusterDisk
 type ClusterDisk struct {
 	ID string `json:"id"`
-	// Relative placement weight (0 = drained).
+	// Relative placement weight; not positive means drained (out of placement).
 	Weight float64 `json:"weight"`
 	// Reported filesystem size; 0 when the node has not reported capacity.
 	TotalBytes OptInt64 `json:"total_bytes"`
 	FreeBytes  OptInt64 `json:"free_bytes"`
 	// Used fraction (0..1); omitted when capacity is unknown.
 	Fullness OptFloat64 `json:"fullness"`
+	// Whether the disk still holds any fragment, as the node itself reports it. False means drained: its
+	// data has been moved off and the volume can be deleted. Omitted when the node did not report live
+	// state, or could not probe the disk (see data_error) — absent means unknown, never drained.
+	// Capacity cannot answer this, since it comes from statfs: a disk holding no fragments still reports
+	// bytes used.
+	HasData OptBool `json:"has_data"`
+	// Why the disk could not be probed; has_data is then absent.
+	DataError OptString `json:"data_error"`
 }
 
 // GetID returns the value of ID.
@@ -178,6 +186,16 @@ func (s *ClusterDisk) GetFullness() OptFloat64 {
 	return s.Fullness
 }
 
+// GetHasData returns the value of HasData.
+func (s *ClusterDisk) GetHasData() OptBool {
+	return s.HasData
+}
+
+// GetDataError returns the value of DataError.
+func (s *ClusterDisk) GetDataError() OptString {
+	return s.DataError
+}
+
 // SetID sets the value of ID.
 func (s *ClusterDisk) SetID(val string) {
 	s.ID = val
@@ -201,6 +219,16 @@ func (s *ClusterDisk) SetFreeBytes(val OptInt64) {
 // SetFullness sets the value of Fullness.
 func (s *ClusterDisk) SetFullness(val OptFloat64) {
 	s.Fullness = val
+}
+
+// SetHasData sets the value of HasData.
+func (s *ClusterDisk) SetHasData(val OptBool) {
+	s.HasData = val
+}
+
+// SetDataError sets the value of DataError.
+func (s *ClusterDisk) SetDataError(val OptString) {
+	s.DataError = val
 }
 
 // Ref: #/components/schemas/ClusterNode
@@ -1100,6 +1128,52 @@ func (s *MigrationStatus) SetLastApplied(val []int) {
 // SetLastError sets the value of LastError.
 func (s *MigrationStatus) SetLastError(val OptString) {
 	s.LastError = val
+}
+
+// NewOptBool returns new OptBool with value set to v.
+func NewOptBool(v bool) OptBool {
+	return OptBool{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBool is optional bool.
+type OptBool struct {
+	Value bool
+	Set   bool
+}
+
+// IsSet returns true if OptBool was set.
+func (o OptBool) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBool) Reset() {
+	var v bool
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBool) SetTo(v bool) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBool) Get() (v bool, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptClusterNodeLive returns new OptClusterNodeLive with value set to v.

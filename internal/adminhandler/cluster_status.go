@@ -48,6 +48,19 @@ type NodeLive struct {
 	// ECUnverified reports that the node's last scrub pass saw an EC set
 	// failing parity verification.
 	ECUnverified bool
+	// Disks is what each of the node's disks holds, as only the node can know.
+	Disks []NodeDisk
+}
+
+// NodeDisk is what one of a node's disks holds right now, reported by the node
+// itself. It is the drain signal: an orchestrator decommissioning a node waits
+// for HasData to go false before it deletes the volume.
+type NodeDisk struct {
+	ID      string
+	HasData bool
+	// Err is why the disk could not be probed. A disk that failed to answer is
+	// unknown, never drained.
+	Err string
 }
 
 // ClusterStatus is the cluster-wide view assembled from the control plane.
@@ -130,8 +143,28 @@ func clusterStatusToAPI(st ClusterStatus) *adminapi.ClusterStatus {
 
 		out.DiskCount += len(n.Disks)
 
+		// Capacity comes from the control plane, what a disk holds only from
+		// the node. Merge the two so one disk reads as one thing; a node that
+		// did not report leaves has_data absent, which is "unknown" and not
+		// "drained".
+		held := make(map[string]NodeDisk)
+
+		if n.Live != nil {
+			for _, d := range n.Live.Disks {
+				held[d.ID] = d
+			}
+		}
+
 		for _, d := range n.Disks {
 			apiDisk := adminapi.ClusterDisk{ID: d.ID, Weight: d.Weight}
+
+			if probe, ok := held[d.ID]; ok {
+				if probe.Err != "" {
+					apiDisk.DataError = adminapi.NewOptString(probe.Err)
+				} else {
+					apiDisk.HasData = adminapi.NewOptBool(probe.HasData)
+				}
+			}
 
 			if d.TotalBytes > 0 {
 				apiDisk.TotalBytes = adminapi.NewOptInt64(clampInt64(d.TotalBytes))
