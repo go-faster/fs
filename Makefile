@@ -17,6 +17,12 @@ fuzz:
 	./scripts/fuzz.sh
 .PHONY: fuzz
 
+# Check that fuzz.sh still fails on real findings and only retries a search
+# stopped by its own deadline. Seconds, no fuzzing — it replays recorded output.
+fuzz_selftest:
+	./scripts/fuzz_selftest.sh
+.PHONY: fuzz_selftest
+
 # Performance gates from DESIGN.md NFR-3 (throughput ratio, O(1) PUT allocs,
 # 4 KiB GET p99). FS_PERF_GATES enables the wall-clock gates (throughput,
 # latency); the deterministic allocation gate runs regardless.

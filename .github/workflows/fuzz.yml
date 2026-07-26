@@ -7,6 +7,11 @@ name: fuzz
 # are permanent regressions independent of this search.
 #
 # Runs on PRs (short) and nightly (longer) via scripts/fuzz.sh.
+#
+# A -fuzztime run always ends by hitting its deadline, and a worker still
+# executing as it fires turns a finished search into a failure. fuzz.sh retries
+# that one case; scripts/fuzz_selftest.sh pins what it will and will not
+# tolerate.
 
 on:
   push:
@@ -22,7 +27,10 @@ permissions:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Room for every target to use its full budget twice: a retried target
+    # costs double, and a job killed by its own timeout is the failure this
+    # workflow is supposed to distinguish from a finding.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -32,8 +40,14 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Check the fuzz runner itself
+        run: ./scripts/fuzz_selftest.sh
+
       - name: Fuzz wire parsers
         env:
-          # Longer search on the nightly schedule, quick smoke on PRs.
-          FUZZTIME: ${{ github.event_name == 'schedule' && '10s' || '2s' }}
+          # Longer search on the nightly schedule, quick smoke on PRs. Two
+          # seconds barely outlasts the baseline-coverage pass, which left the
+          # PR job spending most of its time not fuzzing and made the
+          # deadline-expiry failure common enough to see.
+          FUZZTIME: ${{ github.event_name == 'schedule' && '90s' || '15s' }}
         run: ./scripts/fuzz.sh

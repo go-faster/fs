@@ -57,6 +57,9 @@ about HTTP or S3; don't import upward.
   (CI drift-checks it).
 - `make cli-smoke` — drive a live binary with aws-cli/mc/s3cmd/rclone over
   edge-case keys (installed clients only; CI runs all four).
+- `make fuzz` — actively fuzz the wire parsers (`FUZZTIME=5m` to search
+  longer); `make fuzz_selftest` checks the runner's own failure handling in
+  seconds, without fuzzing.
 
 ## Conventions
 
