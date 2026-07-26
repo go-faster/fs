@@ -412,15 +412,18 @@ func TestBucketName(t *testing.T) {
 			bucket:    "my-test-bucket",
 			wantError: false,
 		},
+		// Every dot-separated label must itself start and end with a letter or
+		// digit, so a hyphen adjacent to a dot is invalid even though the whole
+		// name starts and ends legally.
 		{
 			name:      "hyphen before dot",
 			bucket:    "my-.bucket",
-			wantError: false,
+			wantError: true,
 		},
 		{
 			name:      "dot before hyphen",
 			bucket:    "my.-bucket",
-			wantError: false,
+			wantError: true,
 		},
 
 		// Unicode and non-ASCII characters

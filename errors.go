@@ -12,6 +12,10 @@ var (
 	ErrUnsupportedOperation = errors.New("unsupported operation")
 	ErrPreconditionFailed   = errors.New("precondition failed")
 
+	// ErrInvalidKey reports an object key the server cannot address: not valid
+	// UTF-8, over the 1024-byte limit, or carrying path elements that would
+	// escape the bucket.
+	ErrInvalidKey = errors.New("invalid object key")
 	// ErrInvalidPart reports that a part referenced by CompleteMultipartUpload
 	// was never uploaded or its ETag does not match.
 	ErrInvalidPart = errors.New("invalid part")

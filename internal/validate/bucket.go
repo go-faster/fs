@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/go-faster/errors"
+
+	"github.com/go-faster/fs"
 )
 
 // BucketName validates the bucket name according to AWS S3 naming rules
@@ -12,43 +14,43 @@ import (
 func BucketName(name string) error {
 	// Check for empty name
 	if name == "" {
-		return errors.New("bucket name cannot be empty")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name cannot be empty")
 	}
 
 	// Check length (3-63 characters for AWS S3)
 	if len(name) < 3 || len(name) > 63 {
-		return errors.New("bucket name must be between 3 and 63 characters")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name must be between 3 and 63 characters")
 	}
 
 	// Prevent path traversal attacks
 	if strings.Contains(name, "..") {
-		return errors.New("bucket name cannot contain '..'")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name cannot contain '..'")
 	}
 
 	if strings.Contains(name, "/") {
-		return errors.New("bucket name cannot contain '/'")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name cannot contain '/'")
 	}
 
 	if strings.Contains(name, "\\") {
-		return errors.New("bucket name cannot contain '\\'")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name cannot contain '\\'")
 	}
 
 	// Check for absolute paths
 	if filepath.IsAbs(name) {
-		return errors.New("bucket name cannot be an absolute path")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name cannot be an absolute path")
 	}
 
 	// Ensure the name doesn't try to escape root
 	// Clean path and compare with original
 	cleaned := filepath.Clean(name)
 	if cleaned != name {
-		return errors.New("bucket name contains invalid path elements")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name contains invalid path elements")
 	}
 
 	// AWS S3 rules: lowercase letters, numbers, dots, and hyphens
 	// Must start and end with letter or number
 	if !isValidS3BucketName(name) {
-		return errors.New("bucket name must start and end with lowercase letter or number, and contain only lowercase letters, numbers, dots, and hyphens")
+		return errors.Wrap(fs.ErrInvalidBucketName, "bucket name must start and end with lowercase letter or number, and contain only lowercase letters, numbers, dots, and hyphens")
 	}
 
 	return nil
@@ -77,6 +79,13 @@ func isValidS3BucketName(name string) bool {
 
 	// Cannot contain consecutive periods (already checked in BucketName but double-check)
 	if strings.Contains(name, "..") {
+		return false
+	}
+
+	// Every dot-separated label must itself start and end with a letter or
+	// digit, so "foo-.bar" and "foo.-bar" are invalid even though the name as a
+	// whole starts and ends legally.
+	if strings.Contains(name, "-.") || strings.Contains(name, ".-") {
 		return false
 	}
 

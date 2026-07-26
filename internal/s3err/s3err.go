@@ -33,6 +33,7 @@ var (
 	BucketAlreadyOwnedByYou = APIError{"BucketAlreadyOwnedByYou", http.StatusConflict, "The bucket you tried to create already exists and you own it."}
 	BucketNotEmpty          = APIError{"BucketNotEmpty", http.StatusConflict, "The bucket you tried to delete is not empty."}
 	InvalidBucketName       = APIError{"InvalidBucketName", http.StatusBadRequest, "The specified bucket is not valid."}
+	InvalidURI              = APIError{"InvalidURI", http.StatusBadRequest, "Couldn't parse the specified URI."}
 	InvalidArgument         = APIError{"InvalidArgument", http.StatusBadRequest, "Invalid Argument."}
 	InvalidRequest          = APIError{"InvalidRequest", http.StatusBadRequest, "Invalid Request."}
 	MalformedXML            = APIError{"MalformedXML", http.StatusBadRequest, "The XML you provided was not well-formed or did not validate against our published schema."}
@@ -86,6 +87,9 @@ func FromError(err error) APIError {
 		return BucketNotEmpty
 	case errors.Is(err, fs.ErrInvalidBucketName):
 		return InvalidBucketName
+	case errors.Is(err, fs.ErrInvalidKey):
+		// S3 reports keys it cannot address as an unparseable URI.
+		return InvalidURI
 	case errors.Is(err, fs.ErrPreconditionFailed):
 		return PreconditionFailed
 	case errors.Is(err, fs.ErrInvalidPart):

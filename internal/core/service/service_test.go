@@ -128,9 +128,27 @@ func TestService_ListObjects(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		_, err := svc.ListObjects(ctx, "valid-bucket", "invalid\x00prefix")
+		// A prefix is a filter, not a path, so only length and encoding are
+		// rejected — see validate.Prefix.
+		_, err := svc.ListObjects(ctx, "valid-bucket", "invalid\xffprefix")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "validate prefix")
+	})
+
+	t.Run("PrefixWithControlCharactersIsFiltered", func(t *testing.T) {
+		storage := &mock.StorageMock{
+			ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
+				require.Equal(t, "\n", prefix)
+
+				return nil, nil
+			},
+		}
+
+		svc := service.New(storage)
+
+		// S3 accepts any prefix and simply matches nothing.
+		_, err := svc.ListObjects(t.Context(), "valid-bucket", "\n")
+		require.NoError(t, err)
 	})
 }
 
