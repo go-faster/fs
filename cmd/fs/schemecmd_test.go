@@ -37,6 +37,7 @@ func TestClusterSchemeCommand(t *testing.T) {
 
 		rt, err := buildCluster(t.Context(), lg, cfg, cfg.Storage.Root)
 		require.NoError(t, err)
+		t.Cleanup(func() { _ = rt.close() })
 
 		grp.Go(func() error { return rt.Serve(grpCtx) })
 

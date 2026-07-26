@@ -17,11 +17,20 @@ import (
 	"github.com/go-faster/fs/internal/cluster/objindex"
 )
 
-// sidecarSuffix marks the object commit records among a disk's names. The
-// coordinator mints them; this is the one place the node's wiring has to know
-// the shape, because the store below deals in opaque names and the index above
-// deals in objects.
-const sidecarSuffix = "/meta"
+// Object commit records are "obj/<hash>/<hash>/meta". Both halves matter: the
+// coordinator keeps bucket records under "bkt/" and ends those with "/meta"
+// too, so matching the suffix alone feeds bucket records to an index that only
+// understands objects — where they fail to decode and, worse, count as records
+// the index missed, which is the signal that it has fallen behind.
+const (
+	objectPrefix  = "obj/"
+	sidecarSuffix = "/meta"
+)
+
+// isObjectRecord reports whether a name is an object's commit record.
+func isObjectRecord(name string) bool {
+	return strings.HasPrefix(name, objectPrefix) && strings.HasSuffix(name, sidecarSuffix)
+}
 
 // objectIndexer keeps a node's object index in step with what lands on its
 // disks.
@@ -53,7 +62,7 @@ func newObjectIndexer(index *objindex.Index, lg *zap.Logger) *objectIndexer {
 // Wants implements diskstore.CommitObserver: only commit records carry object
 // identity, so only they are worth reading back. Payload fragments are named
 // by generation and hold no metadata at all.
-func (o *objectIndexer) Wants(name string) bool { return strings.HasSuffix(name, sidecarSuffix) }
+func (o *objectIndexer) Wants(name string) bool { return isObjectRecord(name) }
 
 // Committed implements diskstore.CommitObserver.
 func (o *objectIndexer) Committed(disk cluster.DiskID, name string, data []byte) {
@@ -154,7 +163,7 @@ func (rt *clusterRuntime) buildObjectIndex(ctx context.Context) error {
 
 	for _, disk := range rt.node.Disks {
 		err := rt.store.WalkFragments(ctx, disk.ID, "", func(name string) error {
-			if !strings.HasSuffix(name, sidecarSuffix) {
+			if !isObjectRecord(name) {
 				return nil
 			}
 

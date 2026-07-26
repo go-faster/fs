@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,9 +65,16 @@ type clusterRuntime struct {
 	// reads it yet; it is maintained so the listing, usage and scrub paths can
 	// stop walking once they are moved onto it.
 	index *objindex.Index
+	// indexer feeds it from the disk store, and counts what it could not take.
+	indexer *objectIndexer
 
 	// scrub accumulates this node's scrub totals for metrics.
 	scrub scrubTotals
+
+	// closeOnce guards teardown. Serve tears the node down when its context
+	// ends, and so does every construction error path, so close can be reached
+	// twice and from two goroutines at once.
+	closeOnce sync.Once
 }
 
 // scrubTotals are cumulative scrub counters, updated by RunScrubber and read
@@ -163,6 +171,13 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		started:  time.Now(),
 	}
 
+	// Registered first so it closes last, after everything that might still
+	// write to it — and so a failure anywhere below this line does not leave an
+	// open database behind. On Windows an unclosed one cannot even be deleted.
+	rt.index = index
+	rt.indexer = indexer
+	rt.closers = append(rt.closers, index.Close)
+
 	// Bind the peer listener BEFORE registering in etcd: the moment the node
 	// appears in the topology, peers may dial it — a registered node without
 	// an accepting socket serves connection-refused to its cluster.
@@ -221,11 +236,10 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	)
 
 	rt.store = store
-	rt.index = index
 	// Checkpointing the occupancy index and marking the object index clean are
 	// the last things the node does, so an orderly restart adopts both instead
 	// of walking every disk.
-	rt.closers = append(rt.closers, store.Close, index.Close)
+	rt.closers = append(rt.closers, store.Close)
 	rt.node = cluster.Node{
 		ID:    rt.nodeID,
 		Addr:  cc.AdvertiseAddr,
@@ -540,16 +554,24 @@ func (rt *clusterRuntime) RunScrubber(ctx context.Context, interval time.Duratio
 // close tears down the node in reverse construction order: coordinator (async
 // queue drained), topology watch, registration (lease revoked — the node
 // leaves the topology promptly), etcd client.
+// Teardown runs once. A second caller gets nil and returns only after the
+// first has finished, so nothing observes a half-closed node.
+//
+// Without that, two callers race between reading the length of the closer list
+// and the nil that follows it, and the loser indexes past the end — a panic on
+// the shutdown path, which is the worst place to have one.
 func (rt *clusterRuntime) close() error {
 	var firstErr error
 
-	for i := len(rt.closers) - 1; i >= 0; i-- {
-		if err := rt.closers[i](); err != nil && firstErr == nil {
-			firstErr = err
+	rt.closeOnce.Do(func() {
+		for i := len(rt.closers) - 1; i >= 0; i-- {
+			if err := rt.closers[i](); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
-	}
 
-	rt.closers = nil
+		rt.closers = nil
+	})
 
 	return firstErr
 }

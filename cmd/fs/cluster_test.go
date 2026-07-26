@@ -139,6 +139,7 @@ func TestClusterWiring(t *testing.T) {
 
 		rt, err := buildCluster(t.Context(), lg, cfg, t.TempDir())
 		require.NoError(t, err)
+		t.Cleanup(func() { _ = rt.close() })
 
 		nodes[i] = rt
 

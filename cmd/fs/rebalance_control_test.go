@@ -48,6 +48,7 @@ func TestRebalanceController(t *testing.T) {
 
 		rt, err := buildCluster(t.Context(), lg, cfg, cfg.Storage.Root)
 		require.NoError(t, err)
+		t.Cleanup(func() { _ = rt.close() })
 
 		nodes[i] = rt
 

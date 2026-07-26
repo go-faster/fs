@@ -40,6 +40,7 @@ func indexNode(t *testing.T, endpoint, prefix, root string, index int) *clusterR
 
 	rt, err := buildCluster(t.Context(), zaptest.NewLogger(t), cfg, root)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.close() })
 
 	return rt
 }
@@ -241,4 +242,33 @@ func TestObjectIndexSkipsUnreadableRecords(t *testing.T) {
 
 	assert.Equal(t, held, indexedKeys(t, rt),
 		"the readable records are indexed and the broken one is skipped")
+}
+
+// TestObjectIndexIgnoresBucketRecords pins the distinction that a suffix match
+// alone gets wrong: bucket records live under "bkt/" and end in "/meta" too.
+// Feeding them to an object index fails to decode them and — worse — counts
+// them as records the index missed, which is the signal that it has fallen
+// behind and needs a rebuild.
+func TestObjectIndexIgnoresBucketRecords(t *testing.T) {
+	assert.True(t, isObjectRecord("obj/aa/bb/meta"))
+	assert.False(t, isObjectRecord("bkt/aa/meta"), "a bucket record is not an object")
+	assert.False(t, isObjectRecord("obj/aa/bb/gen1.f0"), "a payload fragment carries no identity")
+
+	nodes := indexCluster(t, "/fs-objindex-buckets")
+	rt := nodes[0]
+
+	indexer := newObjectIndexer(rt.index, zaptest.NewLogger(t))
+	assert.False(t, indexer.Wants("bkt/aa/meta"))
+
+	// Creating buckets writes bucket records to every node; none of them may
+	// register as a miss.
+	for _, bucket := range []string{"photos", "logs", "backups"} {
+		require.NoError(t, rt.Storage.CreateBucket(t.Context(), bucket))
+	}
+
+	putObjects(t, rt, indexBucket, 10, "a.jpg")
+
+	for _, node := range nodes {
+		assert.Zero(t, node.indexer.Dropped(), "node %s counted a record as missed", node.nodeID)
+	}
 }

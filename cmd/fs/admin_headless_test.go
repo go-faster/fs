@@ -43,6 +43,7 @@ func TestHeadlessAdminClusterStatus(t *testing.T) {
 
 	rt, err := buildCluster(t.Context(), lg, cfg, cfg.Storage.Root)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.close() })
 
 	grp, grpCtx := errgroup.WithContext(t.Context())
 	grp.Go(func() error { return rt.Serve(grpCtx) })
