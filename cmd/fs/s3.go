@@ -359,6 +359,7 @@ Command-line flags override YAML configuration values.`,
 						adminCfg.Migrations = clusterRT.migrate
 						adminCfg.BucketSchemes = newBucketSchemeSource(clusterRT.coord)
 						adminCfg.BucketUsage = newBucketUsageSource(clusterRT.client, clusterRT.etcdCfg)
+						adminCfg.DiskWeights = newDiskWeightSource(clusterRT.client, clusterRT.etcdCfg)
 						adminCfg.ClusterDefaultScheme = clusterRT.schemeID
 					}
 

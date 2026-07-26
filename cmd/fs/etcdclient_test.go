@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // clusterCfg is a valid cluster-mode config with the given etcd settings.
@@ -218,4 +219,58 @@ func TestValidateEtcdSecurity(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+// TestDiskWeightZeroDrains is the trap this closes. `weight: 0` was documented
+// as draining a disk in four places and did the opposite: with a plain float64
+// and omitempty, an omitted key and an explicit 0 were the same value, so 0 was
+// read as "unset" and became the default 1 — full weight, on a disk the
+// operator had asked to empty.
+func TestDiskWeightZeroDrains(t *testing.T) {
+	for name, tc := range map[string]struct {
+		disk ClusterDiskConfig
+		want float64
+	}{
+		"omitted defaults to 1": {
+			disk: ClusterDiskConfig{ID: "d0", Path: "/data/d0"},
+			want: DefaultDiskWeight,
+		},
+		"explicit zero drains": {
+			disk: ClusterDiskConfig{ID: "d0", Path: "/data/d0", Weight: diskWeight(0)},
+			want: 0,
+		},
+		"negative drains": {
+			disk: ClusterDiskConfig{ID: "d0", Path: "/data/d0", Weight: diskWeight(-1)},
+			want: -1,
+		},
+		"explicit weight is kept": {
+			disk: ClusterDiskConfig{ID: "d0", Path: "/data/d0", Weight: diskWeight(2.5)},
+			want: 2.5,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.disk.PlacementWeight())
+		})
+	}
+}
+
+// TestDiskWeightZeroSurvivesYAML: the distinction has to survive the config
+// file, which is where it was lost before.
+func TestDiskWeightZeroSurvivesYAML(t *testing.T) {
+	var cfg struct {
+		Disks []ClusterDiskConfig `yaml:"disks"`
+	}
+
+	require.NoError(t, yaml.Unmarshal([]byte(`
+disks:
+  - id: d0
+    path: /data/d0
+  - id: d1
+    path: /data/d1
+    weight: 0
+`), &cfg))
+
+	require.Len(t, cfg.Disks, 2)
+	assert.Equal(t, DefaultDiskWeight, cfg.Disks[0].PlacementWeight(), "an omitted weight defaults")
+	assert.Zero(t, cfg.Disks[1].PlacementWeight(), "an explicit 0 must drain, not default")
 }
