@@ -11,11 +11,28 @@ docker compose up --build
 The first build compiles the admin dashboard and the Go binaries, so it takes a
 few minutes; after that it is cached.
 
+Then open <http://127.0.0.1:8095>. It asks for a token:
+
+```
+demo-admin-token
+```
+
+That is `FS_ADMIN_TOKEN` in [`docker-compose.yml`](docker-compose.yml), shared
+by every fs process here. Change it there and every node and the admin pick up
+the new one on the next `up`. The dashboard keeps it in the browser and sends
+it as a bearer token, which is also how to use the API directly:
+
+```sh
+curl -H "Authorization: Bearer demo-admin-token" \
+  http://127.0.0.1:8095/api/v1/cluster/status
+```
+
 | | |
 |---|---|
-| Admin dashboard | <http://127.0.0.1:8095> — token `demo-admin-token` |
-| S3 | `http://127.0.0.1:9000` |
-| Credentials | access key `demo`, secret `demodemodemo` |
+| Admin dashboard | <http://127.0.0.1:8095> |
+| Admin token | `demo-admin-token` (`FS_ADMIN_TOKEN`) |
+| S3 endpoint | `http://127.0.0.1:9000` |
+| S3 credentials | access key `demo`, secret `demodemodemo` |
 
 Two ports, and neither belongs to a storage node. The nodes publish nothing:
 

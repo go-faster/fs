@@ -11,7 +11,9 @@ Three ways to run fs on one machine, for three different questions.
 
 **`demo/`** is the one to reach for first: etcd, three nodes, the admin
 dashboard and a load generator writing across several buckets at sizes from a
-few KiB to tens of MiB. Stop a node and watch the cluster carry on.
+few KiB to tens of MiB. Stop a node and watch the cluster carry on. The
+dashboard is on <http://127.0.0.1:8095> and asks for a token —
+`demo-admin-token`, set as `FS_ADMIN_TOKEN` in its compose file.
 
 **`kind/`** deploys the same cluster the way production does, through
 fs-operator and etcd-operator, so it is where operator and Kubernetes questions
