@@ -8,6 +8,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +59,18 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 
 	w.Header().Set("Accept-Ranges", "bytes")
 
+	// A range against a zero-length object is unsatisfiable in S3. ServeContent
+	// deliberately ignores it instead ("some clients add a Range header to
+	// disable caching"), which would answer 200 where a client expects 416.
+	if resp.Size == 0 && isByteRangeRequest(r) {
+		renderAPIError(r.Context(), w, r, s3err.InvalidRange, errors.Errorf("range %q against an empty object", r.Header.Get("Range")))
+		return
+	}
+
+	// ServeContent reports Range and conditional failures the net/http way — a
+	// text/plain body — which carries no S3 error Code for an SDK to parse.
+	w = &s3ErrorInterceptor{ResponseWriter: w, req: r}
+
 	rs, seekable := resp.Reader.(io.ReadSeeker)
 	if !seekable {
 		// streamSeeker can only move forward, and ServeContent seeks back and
@@ -78,6 +91,67 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 // isMultiRange reports whether a Range header names more than one range.
 func isMultiRange(header string) bool {
 	return strings.Contains(header, ",")
+}
+
+// isByteRangeRequest reports whether the request asks for a byte range that
+// ServeContent would honor: an If-Range header can make the range conditional,
+// in which case ServeContent decides whether it applies and this shortcut must
+// stand aside.
+func isByteRangeRequest(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Range"), "bytes=") && r.Header.Get("If-Range") == ""
+}
+
+// s3ErrorInterceptor rewrites the plain-text error responses http.ServeContent
+// produces into the S3 XML <Error> document clients parse.
+//
+// ServeContent is used precisely because it implements Range and the
+// conditional headers correctly, but it signals failure with http.Error: a
+// text/plain body and no error code. An SDK reading that reports the bare
+// status ("416") as the error code instead of InvalidRange, so the status is
+// intercepted and the body replaced.
+type s3ErrorInterceptor struct {
+	http.ResponseWriter
+
+	req *http.Request
+	// replaced records that the S3 error document has been written, so
+	// ServeContent's own body is discarded rather than appended to it.
+	replaced bool
+}
+
+// serveContentAPIError maps the failure statuses ServeContent emits to their S3
+// errors. 304 is excluded: it is a valid, body-less response, not an error.
+func serveContentAPIError(code int) (s3err.APIError, bool) {
+	switch code {
+	case http.StatusRequestedRangeNotSatisfiable:
+		return s3err.InvalidRange, true
+	case http.StatusPreconditionFailed:
+		return s3err.PreconditionFailed, true
+	default:
+		return s3err.APIError{}, false
+	}
+}
+
+func (w *s3ErrorInterceptor) WriteHeader(code int) {
+	api, ok := serveContentAPIError(code)
+	if !ok {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
+
+	w.replaced = true
+
+	// ServeContent sized the response for its own body.
+	w.Header().Del("Content-Length")
+
+	s3err.WriteAPI(w.ResponseWriter, w.req, api)
+}
+
+func (w *s3ErrorInterceptor) Write(p []byte) (int, error) {
+	if w.replaced {
+		return len(p), nil
+	}
+
+	return w.ResponseWriter.Write(p) //nolint:wrapcheck // Pass the writer's error through unchanged.
 }
 
 // streamSeeker adapts a forward-only stream to the io.ReadSeeker http.ServeContent

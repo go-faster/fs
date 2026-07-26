@@ -46,6 +46,9 @@ type listQuery struct {
 	delimiter string
 	encodeURL bool
 	maxKeys   int
+	// fetchOwner asks for the <Owner> element on each entry. V1 always
+	// includes it; V2 omits it unless fetch-owner=true.
+	fetchOwner bool
 }
 
 // maybeEncode URL-encodes s when encoding-type=url was requested.
@@ -137,12 +140,18 @@ func (h *handler) walkList(ctx context.Context, p *listQuery, cursor string) (*l
 		if e.isPrefix {
 			page.commonPrefixes = append(page.commonPrefixes, CommonPrefix{Prefix: p.maybeEncode(e.key)})
 		} else {
-			page.contents = append(page.contents, ObjectInfo{
+			entry := ObjectInfo{
 				Key:          p.maybeEncode(e.obj.Key),
 				LastModified: e.obj.LastModified,
 				ETag:         quoteETag(e.obj.ETag),
 				Size:         e.obj.Size,
-			})
+			}
+
+			if p.fetchOwner && !e.obj.Owner.IsZero() {
+				entry.Owner = &OwnerXML{ID: e.obj.Owner.ID, DisplayName: e.obj.Owner.DisplayName}
+			}
+
+			page.contents = append(page.contents, entry)
 		}
 
 		page.nextCursor = e.key
@@ -152,11 +161,11 @@ func (h *handler) walkList(ctx context.Context, p *listQuery, cursor string) (*l
 	return page, nil
 }
 
-// baseListResult fills the response fields shared by V1 and V2.
+// baseListResult fills the response fields shared by V1 and V2. Prefix is left
+// to the caller: V2 encodes it, V1 does not (see ListObjectsV1).
 func baseListResult(p *listQuery, page *listPage) ListBucketResult {
 	resp := ListBucketResult{
 		Name:           p.bucket,
-		Prefix:         p.maybeEncode(p.prefix),
 		Delimiter:      p.maybeEncode(p.delimiter),
 		MaxKeys:        p.maxKeys,
 		IsTruncated:    page.truncated,
@@ -183,6 +192,9 @@ func (h *handler) ListObjectsV1(w http.ResponseWriter, r *http.Request) {
 
 	marker := r.URL.Query().Get("marker")
 
+	// V1 always reports the owner of each key.
+	p.fetchOwner = true
+
 	page, err := h.walkList(ctx, p, marker)
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -190,6 +202,13 @@ func (h *handler) ListObjectsV1(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := baseListResult(p, page)
+
+	// V1 echoes Prefix verbatim. The encoding-type contract names Delimiter,
+	// Marker, NextMarker, Prefix and Key, but the V1 element real clients
+	// decode is only the first three plus the nested keys — botocore's
+	// decode_list_object leaves the top-level Prefix alone, so encoding it here
+	// would hand the client a %-escaped prefix it never unescapes.
+	resp.Prefix = p.prefix
 	resp.Marker = p.maybeEncode(marker)
 
 	// V1 returns NextMarker only for delimiter listings; otherwise clients
@@ -213,6 +232,8 @@ func (h *handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 
+	p.fetchOwner = q.Get("fetch-owner") == "true"
+
 	// The continuation token wins over start-after; both are exclusive bounds.
 	cursor := q.Get("start-after")
 	if token := q.Get("continuation-token"); token != "" {
@@ -226,6 +247,8 @@ func (h *handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := baseListResult(p, page)
+	// V2 does encode Prefix, and clients decode it.
+	resp.Prefix = p.maybeEncode(p.prefix)
 	resp.KeyCount = &page.count
 	resp.ContinuationToken = q.Get("continuation-token")
 	resp.StartAfter = p.maybeEncode(q.Get("start-after"))

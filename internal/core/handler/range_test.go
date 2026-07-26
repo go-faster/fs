@@ -34,6 +34,10 @@ func TestGetObject_Range(t *testing.T) {
 	t.Run("Unsatisfiable", func(t *testing.T) {
 		rec := do(t, h, http.MethodGet, "/bucket-a/obj", "", map[string]string{"Range": "bytes=100-200"})
 		require.Equal(t, http.StatusRequestedRangeNotSatisfiable, rec.Code)
+		// An SDK reads the error code out of the XML body; ServeContent's own
+		// text/plain body would leave it with nothing to parse.
+		require.Contains(t, rec.Body.String(), "<Code>InvalidRange</Code>")
+		require.Equal(t, "application/xml", rec.Header().Get("Content-Type"))
 	})
 
 	t.Run("Full", func(t *testing.T) {
@@ -42,4 +46,40 @@ func TestGetObject_Range(t *testing.T) {
 		require.Equal(t, "0123456789", rec.Body.String())
 		require.NotEmpty(t, rec.Header().Get("ETag"))
 	})
+}
+
+// Any range against a zero-length object is unsatisfiable in S3. ServeContent
+// ignores the header instead and would answer 200.
+func TestGetObject_RangeOnEmptyObject(t *testing.T) {
+	h := newStorageHandler(t)
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/bucket-e", "", nil).Code)
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/bucket-e/empty", "", nil).Code)
+
+	for _, rng := range []string{"bytes=40-50", "bytes=0-0", "bytes=0-"} {
+		t.Run(rng, func(t *testing.T) {
+			rec := do(t, h, http.MethodGet, "/bucket-e/empty", "", map[string]string{"Range": rng})
+			require.Equal(t, http.StatusRequestedRangeNotSatisfiable, rec.Code)
+			require.Contains(t, rec.Body.String(), "<Code>InvalidRange</Code>")
+		})
+	}
+
+	t.Run("NoRangeServesEmptyBody", func(t *testing.T) {
+		rec := do(t, h, http.MethodGet, "/bucket-e/empty", "", nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Empty(t, rec.Body.String())
+	})
+}
+
+// A failed precondition must carry the PreconditionFailed code, not the bare
+// status ServeContent's text/plain body leaves an SDK to fall back on.
+func TestGetObject_PreconditionFailedCarriesS3Code(t *testing.T) {
+	h := newStorageHandler(t)
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/bucket-p", "", nil).Code)
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/bucket-p/obj", "body", nil).Code)
+
+	rec := do(t, h, http.MethodGet, "/bucket-p/obj", "", map[string]string{
+		"If-Unmodified-Since": "Sat, 29 Oct 1994 19:43:31 GMT",
+	})
+	require.Equal(t, http.StatusPreconditionFailed, rec.Code)
+	require.Contains(t, rec.Body.String(), "<Code>PreconditionFailed</Code>")
 }
