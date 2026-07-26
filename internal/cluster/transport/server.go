@@ -23,6 +23,9 @@ type Server struct {
 	now    func() time.Time
 	// nodeStatus reports this node's live state; nil serves 501.
 	nodeStatus StatusFunc
+	// index answers page queries against this node's object index; nil serves
+	// 501, which is how a caller learns to read the sidecars instead.
+	index IndexFunc
 }
 
 // ServerOption configures a Server.
@@ -32,6 +35,13 @@ type ServerOption func(*Server)
 // /v1/status), the source the cluster-wide admin view aggregates.
 func WithStatus(fn StatusFunc) ServerOption {
 	return func(s *Server) { s.nodeStatus = fn }
+}
+
+// WithIndex makes the node answer index page queries from peers (GET
+// /v1/index), which is what lets a listing cost the page rather than the
+// bucket.
+func WithIndex(fn IndexFunc) ServerOption {
+	return func(s *Server) { s.index = fn }
 }
 
 // NewServer builds the fragment server for a node-local store.
@@ -53,6 +63,7 @@ func NewServer(store Store, secret Secret, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("DELETE /v1/fragments/{disk}/{name...}", s.delete)
 	s.mux.HandleFunc("GET /v1/names/{disk}/{prefix...}", s.list)
 	s.mux.HandleFunc("GET /v1/status", s.serveStatus)
+	s.mux.HandleFunc("GET /v1/index", s.serveIndex)
 
 	return s
 }

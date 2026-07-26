@@ -278,7 +278,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	coord, err := clusterstore.New(clusterstore.Config{
 		Topology: source,
-		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, nil),
+		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, nil).WithLocalIndex(rt.indexPages),
 		Scheme:   func(string) scheme.Scheme { return defaultScheme },
 		OnAsyncError: func(bucket, key string, err error) {
 			lg.Warn("Async replication remainder failed (repair will complete it)",
@@ -330,7 +330,10 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// it is what an admin — on any node or headless — aggregates into the
 	// cluster-wide view.
 	rt.server = &http.Server{
-		Handler:           transport.NewServer(store, secret, transport.WithStatus(rt.nodeStatus)),
+		Handler: transport.NewServer(store, secret,
+			transport.WithStatus(rt.nodeStatus),
+			transport.WithIndex(rt.indexPages),
+		),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

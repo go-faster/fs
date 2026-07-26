@@ -257,3 +257,25 @@ removes the staleness window without moving the commit point.
 Nothing reads the index yet. Listings, usage and the scrub still take their own
 walks; they move onto it in later work, and will consult its state first, the
 way per-disk occupancy reports "not counted yet" rather than a confident zero.
+
+## Listing cost
+
+A listing is served from the nodes' object indexes: each node answers a page
+from its own index in key order, and the coordinator merges those pages. A page
+therefore costs what the page contains — a bounded number of entries from each
+node — rather than a scan of every disk and a read of every sidecar.
+
+Delimiters fold in the node, not above it, so a listing with `delimiter=/` over
+a prefix holding a million keys costs a seek past that prefix rather than a read
+of everything under it.
+
+The cluster falls back to reading the sidecars when the indexes cannot answer:
+a node still building one, or running a binary without one. That path is
+correct and unchanged — it is what every listing did before — and it costs the
+whole bucket per page, so a cluster that has fallen back will feel it on large
+buckets. A rolling upgrade passes through that state and leaves it once every
+node has indexed its disks.
+
+An unreachable node does **not** force the fallback. Every object is indexed by
+each node holding a copy of it, so a listing stays complete while every object
+has one reachable holder — the same availability bound reads already have.

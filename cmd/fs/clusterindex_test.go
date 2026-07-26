@@ -84,12 +84,12 @@ func indexCluster(t *testing.T, prefix string) []*clusterRuntime {
 }
 
 // putObjects writes size-byte objects through the first node.
-func putObjects(t *testing.T, rt *clusterRuntime, bucket string, size int, keys ...string) {
+func putObjects(t *testing.T, rt *clusterRuntime, size int, keys ...string) {
 	t.Helper()
 
 	for _, key := range keys {
 		_, err := rt.Storage.PutObject(t.Context(), &fs.PutObjectRequest{
-			Bucket: bucket, Key: key, Reader: bytes.NewReader(make([]byte, size)), Size: int64(size),
+			Bucket: indexBucket, Key: key, Reader: bytes.NewReader(make([]byte, size)), Size: int64(size),
 		})
 		require.NoError(t, err)
 	}
@@ -186,7 +186,7 @@ func TestObjectIndexRebuildsFromDisks(t *testing.T) {
 	rt := nodes[0]
 
 	require.NoError(t, rt.Storage.CreateBucket(t.Context(), "photos"))
-	putObjects(t, rt, "photos", 100, "a.jpg", "b.jpg", "c.jpg")
+	putObjects(t, rt, 100, "a.jpg", "b.jpg", "c.jpg")
 
 	held := indexedKeys(t, rt)
 	require.NotEmpty(t, held, "this node must hold something to rebuild")
@@ -224,7 +224,7 @@ func TestObjectIndexSkipsUnreadableRecords(t *testing.T) {
 	rt := nodes[0]
 
 	require.NoError(t, rt.Storage.CreateBucket(t.Context(), "photos"))
-	putObjects(t, rt, "photos", 10, "a.jpg", "b.jpg", "c.jpg", "d.jpg")
+	putObjects(t, rt, 10, "a.jpg", "b.jpg", "c.jpg", "d.jpg")
 
 	held := indexedKeys(t, rt)
 	require.NotEmpty(t, held)
@@ -266,9 +266,86 @@ func TestObjectIndexIgnoresBucketRecords(t *testing.T) {
 		require.NoError(t, rt.Storage.CreateBucket(t.Context(), bucket))
 	}
 
-	putObjects(t, rt, indexBucket, 10, "a.jpg")
+	putObjects(t, rt, 10, "a.jpg")
 
 	for _, node := range nodes {
 		assert.Zero(t, node.indexer.Dropped(), "node %s counted a record as missed", node.nodeID)
 	}
+}
+
+// TestListingServedFromTheIndex drives a real cluster — real pebble indexes,
+// real peer transport — and checks a listing comes back from them rather than
+// from the sidecar walk, with the same answer the walk gives.
+func TestListingServedFromTheIndex(t *testing.T) {
+	nodes := indexCluster(t, "/fs-index-listing")
+	rt := nodes[0]
+
+	require.NoError(t, rt.Storage.CreateBucket(t.Context(), indexBucket))
+	putObjects(t, rt, 32,
+		"a.txt", "docs/one.txt", "docs/two.txt", "docs/deep/three.txt", "images/x.png", "z.txt")
+
+	// Every node's index must be usable before a listing can be served from
+	// them; a node still building one makes the listing fall back.
+	for _, node := range nodes {
+		node.RunObjectIndex(t.Context())
+	}
+
+	require.Eventually(t, func() bool {
+		for _, node := range nodes {
+			state, err := node.index.State()
+			if err != nil || state != objindex.StateReady {
+				return false
+			}
+		}
+
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "indexes must become ready")
+
+	// Flat listing.
+	page, err := rt.Storage.ListObjects(t.Context(), &fs.ListObjectsRequest{Bucket: indexBucket})
+	require.NoError(t, err)
+
+	var keys []string
+	for _, o := range page.Objects {
+		keys = append(keys, o.Key)
+	}
+
+	assert.Equal(t, []string{
+		"a.txt", "docs/deep/three.txt", "docs/one.txt", "docs/two.txt", "images/x.png", "z.txt",
+	}, keys)
+
+	// Folded listing: the deep prefix collapses, and sizes survive the merge.
+	folded, err := rt.Storage.ListObjects(t.Context(), &fs.ListObjectsRequest{
+		Bucket: indexBucket, Delimiter: "/",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"docs/", "images/"}, folded.CommonPrefixes)
+	require.Len(t, folded.Objects, 2)
+	assert.Equal(t, int64(32), folded.Objects[0].Size)
+
+	// Paging through the bucket sees each key once, in order.
+	var (
+		paged []string
+		after string
+	)
+
+	for {
+		p, err := rt.Storage.ListObjects(t.Context(), &fs.ListObjectsRequest{
+			Bucket: indexBucket, StartAfter: after, Limit: 2,
+		})
+		require.NoError(t, err)
+
+		for _, o := range p.Objects {
+			paged = append(paged, o.Key)
+		}
+
+		if !p.IsTruncated {
+			break
+		}
+
+		after = p.NextStartAfter
+	}
+
+	assert.Equal(t, keys, paged)
 }

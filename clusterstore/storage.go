@@ -106,17 +106,77 @@ func (s *Storage) BucketExists(ctx context.Context, bucket string) (bool, error)
 }
 
 // ListObjects implements fs.Storage.
-// ListObjects implements fs.Storage.
 //
-// The gather is still cluster-wide — every disk scanned, every sidecar read —
-// so a page costs what the whole bucket costs. Paging bounds what crosses the
-// S3 layer and defines the seam a per-node index plugs into; serving a page
-// without the gather is that index's job, not this one's.
+// The page is served from the nodes' object indexes when they can serve it,
+// which costs what the page contains. When they cannot — a node still building
+// its index, or one running a binary without one — it falls back to gathering
+// every sidecar in the cluster and folding that, which is what this did before
+// the indexes existed. Both paths must return the same page; the difference is
+// only what it costs.
 func (s *Storage) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
 	if err := s.mustBucket(ctx, req.Bucket); err != nil {
 		return nil, err
 	}
 
+	res, err := s.listFromIndex(ctx, req)
+	if err == nil {
+		return res, nil
+	}
+
+	if !errors.Is(err, ErrIndexUnavailable) {
+		return nil, err
+	}
+
+	return s.listFromSidecars(ctx, req)
+}
+
+// listFromIndex serves a page from the merged per-node indexes.
+func (s *Storage) listFromIndex(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+	sidecars, prefixes, more, err := s.coord.ListPage(
+		ctx, req.Bucket, req.Prefix, req.Delimiter, req.StartAfter, req.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &fs.ListObjectsResponse{
+		Objects:        make([]fs.Object, 0, len(sidecars)),
+		CommonPrefixes: prefixes,
+		IsTruncated:    more,
+	}
+
+	for _, sc := range sidecars {
+		out.Objects = append(out.Objects, fs.Object{
+			Key:          sc.Key,
+			Size:         sc.Size,
+			LastModified: sc.Modified,
+			ETag:         sc.ETag,
+			Owner:        sc.Owner,
+		})
+	}
+
+	// The last entry of the page in folded order, which is where the next page
+	// resumes. Objects and prefixes are reported separately but interleave by
+	// key, so the later of the two tails is the boundary.
+	if n := len(out.Objects); n > 0 {
+		out.NextStartAfter = out.Objects[n-1].Key
+	}
+
+	if n := len(prefixes); n > 0 && prefixes[n-1] > out.NextStartAfter {
+		out.NextStartAfter = prefixes[n-1]
+	}
+
+	return out, nil
+}
+
+// listFromSidecars gathers the bucket and folds it, the original path.
+//
+// The gather is cluster-wide — every disk scanned, every sidecar read — so a
+// page costs what the whole bucket costs. It stays because it is the only
+// answer available while a node is still building its index, and because it
+// needs nothing of a peer beyond what the very first version of the cluster
+// could do.
+func (s *Storage) listFromSidecars(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
 	sidecars, err := s.coord.ListObjects(ctx, req.Bucket, req.Prefix)
 	if err != nil {
 		return nil, err
