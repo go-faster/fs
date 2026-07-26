@@ -1,0 +1,90 @@
+name: coverage
+
+# Measures test coverage and sends it to Codecov, which the README badge reads.
+#
+# Split into two jobs on purpose. Uploading uses OIDC, so that job holds a
+# token — and it checks out the repository fresh and runs nothing from it. The
+# job that compiles and runs this repository's tests, and everything they
+# depend on, never holds one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Get Go environment
+        id: go-env
+        shell: bash
+        run: |
+          echo "cache=$(go env GOCACHE)" >> $GITHUB_ENV
+          echo "modcache=$(go env GOMODCACHE)" >> $GITHUB_ENV
+
+      - name: Set up cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.cache }}
+            ${{ env.modcache }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-
+
+      # -coverpkg=./... so a package's coverage counts what other packages'
+      # tests reach in it: much of this repository is exercised through the
+      # conformance suite and the cluster tests rather than by its own package's
+      # tests. The timeout is generous because those bring up embedded etcd.
+      - name: Run test
+        run: go test -timeout 15m -race -coverpkg=./... -coverprofile=profile.out ./...
+
+      - name: Emit coverage
+        run: go tool cover -func profile.out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: profile.out
+          if-no-files-found: error
+          retention-days: 1
+
+  send:
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    permissions:
+      contents: read
+      # For the OIDC token Codecov authenticates with, so no upload secret has
+      # to exist in this repository.
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage
+
+      - name: Send coverage
+        uses: codecov/codecov-action@v7
+        with:
+          files: profile.out
+          fail_ci_if_error: true
+          use_oidc: true

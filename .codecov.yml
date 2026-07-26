@@ -1,8 +1,26 @@
+# What the coverage badge counts.
+#
+# The point of the number is to say something about the code someone wrote and
+# has to maintain. Generated code and local tooling are neither: including them
+# moves the figure without anyone's work changing, and this repository generates
+# a lot — the admin API client alone is larger than any hand-written package.
+
 ignore:
+  # Generated: the ogen admin API client (adminapi/oas_*_gen.go) and the moq
+  # storage mock. Regenerating them must not move the number.
+  - "**/*_gen.go"
+  - "internal/mock/"
+  # Entry points, which are wiring and are covered by running the binary rather
+  # than by unit tests.
   - "**/main.go"
-  - "**/*_enum.go"
-  - "*_enum.go"
+  # Local development stacks, not shipped: the demo's load generator.
+  - "dev/"
+
 coverage:
   status:
+    # Informational. A coverage delta is worth seeing on a pull request and is
+    # not worth failing one over — this repository gates on tests, lint,
+    # conformance and the s3-tests allow-list, all of which say something
+    # sharper about a change than a percentage does.
     project: false
     patch: false
