@@ -36,6 +36,12 @@ export interface ClusterNodeLive {
   corrupt_replicas: number;
   /** Objects rewritten to their bucket's current scheme. */
   converted_objects: number;
+  /** How many objects this node holds, as its own index counts them. Absent when the node could not derive it — a missing or still building index — which is not the same as holding none. */
+  objects_held?: number;
+  /** How many of them the scrub has never checked. Present alongside objects_held. */
+  never_verified?: number;
+  /** When the least recently checked object was checked. With never_verified at zero this is the age of the node's scrub coverage: every object it holds has been verified at least since then. Counts of scrub work say how busy the scrubber was; this says whether it is keeping up, and a cycle falling behind shows as this receding. */
+  oldest_verified?: string;
   /** The node's last scrub pass saw an EC set failing parity verification. */
   ec_unverified: boolean;
 }
