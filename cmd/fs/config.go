@@ -284,13 +284,79 @@ type ClusterDiskConfig struct {
 
 // EtcdConfig configures the etcd control-plane connection.
 type EtcdConfig struct {
-	// Endpoints are the etcd client URLs. Required in cluster mode.
+	// Endpoints are the etcd client URLs. Required in cluster mode. An
+	// "https://" endpoint is served over TLS; see TLS below.
 	Endpoints []string `yaml:"endpoints"`
 	// Prefix namespaces this cluster's keys (default "/fs").
 	Prefix string `yaml:"prefix,omitempty"`
 	// TTL is the node registration lease: how long a dead node lingers in the
 	// topology (default 10s, minimum 1s).
 	TTL time.Duration `yaml:"ttl,omitempty"`
+	// TLS configures the transport to etcd.
+	TLS EtcdTLSConfig `yaml:"tls,omitempty"`
+	// Auth configures etcd role-based authentication.
+	Auth EtcdAuthConfig `yaml:"auth,omitempty"`
+}
+
+// EtcdTLSConfig is the TLS material for the etcd connection.
+//
+// Any of these fields turns TLS on. So does an "https://" endpoint with none
+// of them set, which then verifies against the system roots — the etcd client
+// decides on the transport from this config alone and ignores the URL scheme,
+// so an https endpoint without it would quietly speak cleartext to a port that
+// expects TLS.
+type EtcdTLSConfig struct {
+	// CAFile is the PEM bundle etcd's server certificate is verified against.
+	// Empty uses the system roots.
+	CAFile string `yaml:"ca_file,omitempty"`
+	// CertFile and KeyFile are this client's certificate for mutual TLS. Both
+	// or neither.
+	CertFile string `yaml:"cert_file,omitempty"`
+	KeyFile  string `yaml:"key_file,omitempty"`
+	// ServerName overrides the name verified against the server certificate,
+	// for reaching etcd through an address its certificate does not name.
+	ServerName string `yaml:"server_name,omitempty"`
+	// InsecureSkipVerify disables server certificate verification. It makes
+	// TLS decorative — anything on the path can impersonate etcd, which holds
+	// the cluster's sealed credentials — and exists for development against
+	// self-signed certificates only.
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify,omitempty"`
+}
+
+// enabled reports whether any TLS material was configured.
+func (t EtcdTLSConfig) enabled() bool {
+	return t.CAFile != "" || t.CertFile != "" || t.KeyFile != "" ||
+		t.ServerName != "" || t.InsecureSkipVerify
+}
+
+// EtcdAuthConfig is an etcd username and password.
+type EtcdAuthConfig struct {
+	// Username is the etcd user. The FS_ETCD_USERNAME environment variable
+	// takes precedence.
+	Username string `yaml:"username,omitempty"`
+	// Password authenticates Username. The FS_ETCD_PASSWORD environment
+	// variable takes precedence, and is the way to supply it without writing
+	// a password into a config file.
+	Password string `yaml:"password,omitempty"`
+}
+
+// EtcdUsername and EtcdPassword resolve the effective etcd credentials
+// (FS_ETCD_USERNAME / FS_ETCD_PASSWORD override the config values), so a
+// deployment can keep the password out of the config file entirely.
+func (c *Config) EtcdUsername() string {
+	if env := os.Getenv("FS_ETCD_USERNAME"); env != "" {
+		return env
+	}
+
+	return c.Cluster.Etcd.Auth.Username
+}
+
+func (c *Config) EtcdPassword() string {
+	if env := os.Getenv("FS_ETCD_PASSWORD"); env != "" {
+		return env
+	}
+
+	return c.Cluster.Etcd.Auth.Password
 }
 
 // ClusterSecret resolves the effective cluster secret (FS_CLUSTER_SECRET
@@ -355,6 +421,10 @@ func (c *Config) validateCluster() error {
 
 	if cc.Etcd.TTL != 0 && cc.Etcd.TTL < time.Second {
 		return errors.New("cluster.etcd.ttl must be at least 1s")
+	}
+
+	if err := c.validateEtcdSecurity(); err != nil {
+		return err
 	}
 
 	if cc.Rebalance.Settle < 0 || cc.Rebalance.Cooldown < 0 {

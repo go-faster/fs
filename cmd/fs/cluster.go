@@ -166,10 +166,13 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	// Control plane: etcd client, this node's leased registration, and the
 	// watched topology.
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   cc.Etcd.Endpoints,
-		DialTimeout: 5 * time.Second,
-	})
+	etcdClientCfg, err := cfg.etcdClientConfig()
+	if err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+
+	client, err := clientv3.New(etcdClientCfg)
 	if err != nil {
 		_ = listener.Close()
 		return nil, errors.Wrap(err, "etcd client")
