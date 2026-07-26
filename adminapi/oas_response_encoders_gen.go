@@ -25,6 +25,12 @@ func encodeApplyMigrationsResponse(response *MigrationStatus, w http.ResponseWri
 	return nil
 }
 
+func encodeClearDiskWeightResponse(response *ClearDiskWeightNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
+
+	return nil
+}
+
 func encodeControlRebalanceResponse(response *RebalanceStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -161,6 +167,19 @@ func encodeListAccessKeysResponse(response *AccessKeyList, w http.ResponseWriter
 	return nil
 }
 
+func encodeListDiskWeightsResponse(response *DiskWeightList, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeReloadConfigResponse(response *ReloadResult, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -175,6 +194,19 @@ func encodeReloadConfigResponse(response *ReloadResult, w http.ResponseWriter, s
 }
 
 func encodeSetBucketSchemeResponse(response *BucketScheme, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeSetDiskWeightResponse(response *DiskWeight, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

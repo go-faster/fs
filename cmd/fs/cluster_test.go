@@ -132,7 +132,7 @@ func TestClusterWiring(t *testing.T) {
 		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-wiring", TTL: 2 * time.Second}
 		cfg.Cluster.Disks = []ClusterDiskConfig{
 			{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")},
-			{ID: "d1", Path: filepath.Join(t.TempDir(), "d1"), Weight: 2},
+			{ID: "d1", Path: filepath.Join(t.TempDir(), "d1"), Weight: diskWeight(2)},
 		}
 		cfg.Storage.Fsync = "none"
 		require.NoError(t, cfg.Validate())
@@ -179,3 +179,7 @@ func TestClusterWiring(t *testing.T) {
 	require.NoError(t, reader.DeleteObject(t.Context(), "b", "dir/obj.bin"))
 	require.NoError(t, reader.DeleteBucket(t.Context(), "b"))
 }
+
+// diskWeight is a config weight as a pointer, which is how an explicit zero
+// stays distinguishable from an omitted key.
+func diskWeight(w float64) *float64 { return &w }

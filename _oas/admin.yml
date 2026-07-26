@@ -222,6 +222,94 @@ paths:
                 $ref: "#/components/schemas/BucketUsageList"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/disk-weights:
+    get:
+      operationId: "listDiskWeights"
+      summary: "List disk weight overrides"
+      description: >
+        Every per-disk placement weight override currently set. An override
+        replaces the weight the node registers from its config, and survives
+        the node restarting — it is how a disk is drained without editing a
+        config file. Returns 501 when the server is not in cluster mode.
+      responses:
+        200:
+          description: Overrides.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/DiskWeightList"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/cluster/disk-weights/{node}/{disk}:
+    put:
+      operationId: "setDiskWeight"
+      summary: "Override a disk's placement weight"
+      description: >
+        Set the weight placement uses for one disk, until it is cleared. A
+        weight that is not positive drains the disk: no new data is placed on
+        it and the auto-rebalancer moves what it holds elsewhere.
+
+        The override lives outside the node's registration, so a node
+        republishing its record — which it does on every capacity refresh and
+        every restart — does not undo it.
+
+        Accepted while the node is down: the moment an operator most wants to
+        drain a disk is often the moment it is unreachable. An override for a
+        disk that never appears is inert. Returns 501 when the server is not
+        in cluster mode.
+      parameters:
+        - name: node
+          in: path
+          required: true
+          description: "The node ID."
+          schema:
+            type: string
+        - name: disk
+          in: path
+          required: true
+          description: "The disk ID within that node."
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/SetDiskWeightRequest"
+      responses:
+        200:
+          description: The override as stored.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/DiskWeight"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: "clearDiskWeight"
+      summary: "Clear a disk's weight override"
+      description: >
+        Restore the weight the node registers from its config. Clearing an
+        override that is not set is not an error. Returns 501 when the server
+        is not in cluster mode.
+      parameters:
+        - name: node
+          in: path
+          required: true
+          description: "The node ID."
+          schema:
+            type: string
+        - name: disk
+          in: path
+          required: true
+          description: "The disk ID within that node."
+          schema:
+            type: string
+      responses:
+        204:
+          description: Cleared.
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/buckets/{bucket}/scheme:
     get:
       operationId: "getBucketScheme"
@@ -548,7 +636,7 @@ components:
         weight:
           type: number
           format: double
-          description: "Relative placement weight; not positive means drained (out of placement)."
+          description: "Effective placement weight; not positive means drained (out of placement)."
         total_bytes:
           type: integer
           format: int64
@@ -588,6 +676,51 @@ components:
             space implied by total_bytes/free_bytes, which come from statfs and
             include filesystem overhead. Absent under the same conditions as
             fragments.
+    DiskWeight:
+      type: object
+      required:
+        - node
+        - disk
+        - weight
+      properties:
+        node:
+          type: string
+        disk:
+          type: string
+        weight:
+          type: number
+          format: double
+          description: "The overriding placement weight; not positive means drained."
+        drained:
+          type: boolean
+          description: "Whether this override takes the disk out of placement."
+        reason:
+          type: string
+          description: "Free text recorded when the override was set."
+    DiskWeightList:
+      type: object
+      required:
+        - overrides
+      properties:
+        overrides:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiskWeight"
+    SetDiskWeightRequest:
+      type: object
+      required:
+        - weight
+      properties:
+        weight:
+          type: number
+          format: double
+          description: >
+            The placement weight to use. Not positive drains the disk. Zero
+            means zero here — unlike the config file, where an omitted weight
+            and an explicit 0 are indistinguishable and 0 is read as "unset".
+        reason:
+          type: string
+          description: "Free text, carried back on reads."
     ClusterNode:
       type: object
       required:

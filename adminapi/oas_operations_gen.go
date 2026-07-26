@@ -7,6 +7,7 @@ type OperationName = string
 
 const (
 	ApplyMigrationsOperation      OperationName = "ApplyMigrations"
+	ClearDiskWeightOperation      OperationName = "ClearDiskWeight"
 	ControlRebalanceOperation     OperationName = "ControlRebalance"
 	CreateAccessKeyOperation      OperationName = "CreateAccessKey"
 	DeleteAccessKeyOperation      OperationName = "DeleteAccessKey"
@@ -18,7 +19,9 @@ const (
 	GetPublicReadBucketsOperation OperationName = "GetPublicReadBuckets"
 	GetRebalanceStatusOperation   OperationName = "GetRebalanceStatus"
 	ListAccessKeysOperation       OperationName = "ListAccessKeys"
+	ListDiskWeightsOperation      OperationName = "ListDiskWeights"
 	ReloadConfigOperation         OperationName = "ReloadConfig"
 	SetBucketSchemeOperation      OperationName = "SetBucketScheme"
+	SetDiskWeightOperation        OperationName = "SetDiskWeight"
 	SetPublicReadBucketsOperation OperationName = "SetPublicReadBuckets"
 )

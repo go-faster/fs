@@ -58,12 +58,46 @@ Placement is weighted-HRW: a disk receives data in proportion to its `weight`
 lower a disk's weight to migrate data off it. Weight changes are a membership
 change the auto-rebalancer converges automatically.
 
-**To drain a disk, give it a negative weight** (`weight: -1`), not `0`. In the
-config file an omitted `weight` and an explicit `weight: 0` are indistinguishable,
-so `0` is read as "unset" and becomes the default 1 — a disk written as
-`weight: 0` is placed at *full* weight, the opposite of what is intended.
-Placement skips any disk whose weight is not positive, so a negative weight is
-what actually takes one out of rotation.
+**A weight that is not positive drains the disk**: `weight: 0` works, and so
+does a negative one. Placement skips any disk whose weight is not positive.
+
+(Before v0.12.0 `weight: 0` did the opposite of what it says. An omitted key
+and an explicit `0` were the same value in the config, so `0` was read as
+"unset" and became the default 1 — full weight, on a disk the operator had
+asked to empty. Only a negative weight drained. If you worked around it with
+`-1`, that still works.)
+
+### Draining without a restart
+
+Editing a config file drains a disk only after the node restarts to read it.
+`fs cluster drain` does it through the control plane instead, taking effect
+across the cluster within seconds:
+
+```sh
+# What is currently overridden
+fs cluster drain --config config.yaml
+
+# Take a disk out of placement before pulling it
+fs cluster drain node-a d1 --reason "failing SMART" --config config.yaml
+
+# Shift half its load elsewhere without emptying it
+fs cluster drain node-a d1 --weight 0.5 --config config.yaml
+
+# Put it back at its configured weight
+fs cluster drain node-a d1 --undrain --config config.yaml
+```
+
+The override is control-plane state, not the node's, and that is what makes it
+survive a restart: a node republishes its own registration on every capacity
+refresh, so a weight written there by anyone else would be undone within the
+refresh interval — and a drained disk would silently return to placement.
+
+A disk can be drained while its node is down, which is often exactly when an
+operator wants to. An override for a disk that never appears does nothing.
+
+The same thing is available over the admin API as
+`PUT /api/v1/cluster/disk-weights/{node}/{disk}`, which is what an orchestrator
+uses.
 
 ### Knowing when a drain has finished
 

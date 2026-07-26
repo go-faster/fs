@@ -38,6 +38,13 @@ type Invoker interface {
 	//
 	// POST /api/v1/cluster/migrate
 	ApplyMigrations(ctx context.Context) (*MigrationStatus, error)
+	// ClearDiskWeight invokes clearDiskWeight operation.
+	//
+	// Restore the weight the node registers from its config. Clearing an override that is not set is not
+	// an error. Returns 501 when the server is not in cluster mode.
+	//
+	// DELETE /api/v1/cluster/disk-weights/{node}/{disk}
+	ClearDiskWeight(ctx context.Context, params ClearDiskWeightParams) error
 	// ControlRebalance invokes controlRebalance operation.
 	//
 	// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
@@ -124,6 +131,14 @@ type Invoker interface {
 	//
 	// GET /api/v1/access-keys
 	ListAccessKeys(ctx context.Context) (*AccessKeyList, error)
+	// ListDiskWeights invokes listDiskWeights operation.
+	//
+	// Every per-disk placement weight override currently set. An override replaces the weight the node
+	// registers from its config, and survives the node restarting — it is how a disk is drained without
+	// editing a config file. Returns 501 when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/disk-weights
+	ListDiskWeights(ctx context.Context) (*DiskWeightList, error)
 	// ReloadConfig invokes reloadConfig operation.
 	//
 	// Re-read the configuration file and apply the parts that change without a restart — the
@@ -146,6 +161,17 @@ type Invoker interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/scheme
 	SetBucketScheme(ctx context.Context, request *SetBucketSchemeRequest, params SetBucketSchemeParams) (*BucketScheme, error)
+	// SetDiskWeight invokes setDiskWeight operation.
+	//
+	// Set the weight placement uses for one disk, until it is cleared. A weight that is not positive
+	// drains the disk: no new data is placed on it and the auto-rebalancer moves what it holds elsewhere.
+	// The override lives outside the node's registration, so a node republishing its record — which it
+	// does on every capacity refresh and every restart — does not undo it. Accepted while the node is
+	// down: the moment an operator most wants to drain a disk is often the moment it is unreachable. An
+	// override for a disk that never appears is inert. Returns 501 when the server is not in cluster mode.
+	//
+	// PUT /api/v1/cluster/disk-weights/{node}/{disk}
+	SetDiskWeight(ctx context.Context, request *SetDiskWeightRequest, params SetDiskWeightParams) (*DiskWeight, error)
 	// SetPublicReadBuckets invokes setPublicReadBuckets operation.
 	//
 	// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds
@@ -272,6 +298,124 @@ func (c *Client) sendApplyMigrations(ctx context.Context) (res *MigrationStatus,
 
 	stage = "DecodeResponse"
 	result, err := decodeApplyMigrationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ClearDiskWeight invokes clearDiskWeight operation.
+//
+// Restore the weight the node registers from its config. Clearing an override that is not set is not
+// an error. Returns 501 when the server is not in cluster mode.
+//
+// DELETE /api/v1/cluster/disk-weights/{node}/{disk}
+func (c *Client) ClearDiskWeight(ctx context.Context, params ClearDiskWeightParams) error {
+	_, err := c.sendClearDiskWeight(ctx, params)
+	return err
+}
+
+func (c *Client) sendClearDiskWeight(ctx context.Context, params ClearDiskWeightParams) (res *ClearDiskWeightNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("clearDiskWeight"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/disk-weights/{node}/{disk}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ClearDiskWeightOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [4]string
+	pathParts[0] = "/api/v1/cluster/disk-weights/"
+	{
+		// Encode "node" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "node",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Node))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/"
+	{
+		// Encode "disk" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "disk",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Disk))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[3] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeClearDiskWeightResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1222,6 +1366,88 @@ func (c *Client) sendListAccessKeys(ctx context.Context) (res *AccessKeyList, er
 	return result, nil
 }
 
+// ListDiskWeights invokes listDiskWeights operation.
+//
+// Every per-disk placement weight override currently set. An override replaces the weight the node
+// registers from its config, and survives the node restarting — it is how a disk is drained without
+// editing a config file. Returns 501 when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/disk-weights
+func (c *Client) ListDiskWeights(ctx context.Context) (*DiskWeightList, error) {
+	res, err := c.sendListDiskWeights(ctx)
+	return res, err
+}
+
+func (c *Client) sendListDiskWeights(ctx context.Context) (res *DiskWeightList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listDiskWeights"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/disk-weights"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListDiskWeightsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/disk-weights"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListDiskWeightsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ReloadConfig invokes reloadConfig operation.
 //
 // Re-read the configuration file and apply the parts that change without a restart — the
@@ -1407,6 +1633,131 @@ func (c *Client) sendSetBucketScheme(ctx context.Context, request *SetBucketSche
 
 	stage = "DecodeResponse"
 	result, err := decodeSetBucketSchemeResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetDiskWeight invokes setDiskWeight operation.
+//
+// Set the weight placement uses for one disk, until it is cleared. A weight that is not positive
+// drains the disk: no new data is placed on it and the auto-rebalancer moves what it holds elsewhere.
+// The override lives outside the node's registration, so a node republishing its record — which it
+// does on every capacity refresh and every restart — does not undo it. Accepted while the node is
+// down: the moment an operator most wants to drain a disk is often the moment it is unreachable. An
+// override for a disk that never appears is inert. Returns 501 when the server is not in cluster mode.
+//
+// PUT /api/v1/cluster/disk-weights/{node}/{disk}
+func (c *Client) SetDiskWeight(ctx context.Context, request *SetDiskWeightRequest, params SetDiskWeightParams) (*DiskWeight, error) {
+	res, err := c.sendSetDiskWeight(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetDiskWeight(ctx context.Context, request *SetDiskWeightRequest, params SetDiskWeightParams) (res *DiskWeight, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setDiskWeight"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/disk-weights/{node}/{disk}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetDiskWeightOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [4]string
+	pathParts[0] = "/api/v1/cluster/disk-weights/"
+	{
+		// Encode "node" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "node",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Node))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/"
+	{
+		// Encode "disk" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "disk",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Disk))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[3] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetDiskWeightRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetDiskWeightResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

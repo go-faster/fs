@@ -32,6 +32,8 @@ import type {
   ClusterStatus,
   CreateAccessKeyRequest,
   CreatedAccessKey,
+  DiskWeight,
+  DiskWeightList,
   ErrorResponse,
   InstanceInfo,
   MigrationStatus,
@@ -40,6 +42,7 @@ import type {
   RebalanceStatus,
   ReloadResult,
   SetBucketSchemeRequest,
+  SetDiskWeightRequest,
   SetPublicReadBucketsRequest
 } from './model';
 
@@ -945,6 +948,236 @@ export function useGetBucketUsage<TData = Awaited<ReturnType<typeof getBucketUsa
 
 
 
+/**
+ * Every per-disk placement weight override currently set. An override replaces the weight the node registers from its config, and survives the node restarting — it is how a disk is drained without editing a config file. Returns 501 when the server is not in cluster mode.
+
+ * @summary List disk weight overrides
+ */
+export const listDiskWeights = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<DiskWeightList>(
+      {url: `/api/v1/cluster/disk-weights`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getListDiskWeightsQueryKey = () => {
+    return [
+    `/api/v1/cluster/disk-weights`
+    ] as const;
+    }
+
+    
+export const getListDiskWeightsQueryOptions = <TData = Awaited<ReturnType<typeof listDiskWeights>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDiskWeights>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDiskWeightsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDiskWeights>>> = ({ signal }) => listDiskWeights(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDiskWeights>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListDiskWeightsQueryResult = NonNullable<Awaited<ReturnType<typeof listDiskWeights>>>
+export type ListDiskWeightsQueryError = ErrorResponse
+
+
+export function useListDiskWeights<TData = Awaited<ReturnType<typeof listDiskWeights>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDiskWeights>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDiskWeights>>,
+          TError,
+          Awaited<ReturnType<typeof listDiskWeights>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDiskWeights<TData = Awaited<ReturnType<typeof listDiskWeights>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDiskWeights>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDiskWeights>>,
+          TError,
+          Awaited<ReturnType<typeof listDiskWeights>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDiskWeights<TData = Awaited<ReturnType<typeof listDiskWeights>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDiskWeights>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List disk weight overrides
+ */
+
+export function useListDiskWeights<TData = Awaited<ReturnType<typeof listDiskWeights>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDiskWeights>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListDiskWeightsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Set the weight placement uses for one disk, until it is cleared. A weight that is not positive drains the disk: no new data is placed on it and the auto-rebalancer moves what it holds elsewhere.
+The override lives outside the node's registration, so a node republishing its record — which it does on every capacity refresh and every restart — does not undo it.
+Accepted while the node is down: the moment an operator most wants to drain a disk is often the moment it is unreachable. An override for a disk that never appears is inert. Returns 501 when the server is not in cluster mode.
+
+ * @summary Override a disk's placement weight
+ */
+export const setDiskWeight = (
+    node: string,
+    disk: string,
+    setDiskWeightRequest: SetDiskWeightRequest,
+ ) => {
+      
+      
+      return customFetch<DiskWeight>(
+      {url: `/api/v1/cluster/disk-weights/${node}/${disk}`, method: 'PUT',
+      headers: {'Content-Type': 'application/json', },
+      data: setDiskWeightRequest
+    },
+      );
+    }
+  
+
+
+export const getSetDiskWeightMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setDiskWeight>>, TError,{node: string;disk: string;data: SetDiskWeightRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof setDiskWeight>>, TError,{node: string;disk: string;data: SetDiskWeightRequest}, TContext> => {
+
+const mutationKey = ['setDiskWeight'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setDiskWeight>>, {node: string;disk: string;data: SetDiskWeightRequest}> = (props) => {
+          const {node,disk,data} = props ?? {};
+
+          return  setDiskWeight(node,disk,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetDiskWeightMutationResult = NonNullable<Awaited<ReturnType<typeof setDiskWeight>>>
+    export type SetDiskWeightMutationBody = SetDiskWeightRequest
+    export type SetDiskWeightMutationError = ErrorResponse
+
+    /**
+ * @summary Override a disk's placement weight
+ */
+export const useSetDiskWeight = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setDiskWeight>>, TError,{node: string;disk: string;data: SetDiskWeightRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setDiskWeight>>,
+        TError,
+        {node: string;disk: string;data: SetDiskWeightRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getSetDiskWeightMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Restore the weight the node registers from its config. Clearing an override that is not set is not an error. Returns 501 when the server is not in cluster mode.
+
+ * @summary Clear a disk's weight override
+ */
+export const clearDiskWeight = (
+    node: string,
+    disk: string,
+ ) => {
+      
+      
+      return customFetch<void>(
+      {url: `/api/v1/cluster/disk-weights/${node}/${disk}`, method: 'DELETE'
+    },
+      );
+    }
+  
+
+
+export const getClearDiskWeightMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof clearDiskWeight>>, TError,{node: string;disk: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof clearDiskWeight>>, TError,{node: string;disk: string}, TContext> => {
+
+const mutationKey = ['clearDiskWeight'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof clearDiskWeight>>, {node: string;disk: string}> = (props) => {
+          const {node,disk} = props ?? {};
+
+          return  clearDiskWeight(node,disk,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClearDiskWeightMutationResult = NonNullable<Awaited<ReturnType<typeof clearDiskWeight>>>
+    
+    export type ClearDiskWeightMutationError = ErrorResponse
+
+    /**
+ * @summary Clear a disk's weight override
+ */
+export const useClearDiskWeight = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof clearDiskWeight>>, TError,{node: string;disk: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof clearDiskWeight>>,
+        TError,
+        {node: string;disk: string},
+        TContext
+      > => {
+
+      const mutationOptions = getClearDiskWeightMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * The bucket's effective replication scheme, its explicit override (empty when the bucket follows the cluster default) and the cluster default. Returns 404 when the bucket does not exist and 501 when the server is not in cluster mode (a single-node server has no per-bucket schemes).
 

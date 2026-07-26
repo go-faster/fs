@@ -26,6 +26,16 @@ func (UnimplementedHandler) ApplyMigrations(ctx context.Context) (r *MigrationSt
 	return r, ht.ErrNotImplemented
 }
 
+// ClearDiskWeight implements clearDiskWeight operation.
+//
+// Restore the weight the node registers from its config. Clearing an override that is not set is not
+// an error. Returns 501 when the server is not in cluster mode.
+//
+// DELETE /api/v1/cluster/disk-weights/{node}/{disk}
+func (UnimplementedHandler) ClearDiskWeight(ctx context.Context, params ClearDiskWeightParams) error {
+	return ht.ErrNotImplemented
+}
+
 // ControlRebalance implements controlRebalance operation.
 //
 // Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
@@ -145,6 +155,17 @@ func (UnimplementedHandler) ListAccessKeys(ctx context.Context) (r *AccessKeyLis
 	return r, ht.ErrNotImplemented
 }
 
+// ListDiskWeights implements listDiskWeights operation.
+//
+// Every per-disk placement weight override currently set. An override replaces the weight the node
+// registers from its config, and survives the node restarting — it is how a disk is drained without
+// editing a config file. Returns 501 when the server is not in cluster mode.
+//
+// GET /api/v1/cluster/disk-weights
+func (UnimplementedHandler) ListDiskWeights(ctx context.Context) (r *DiskWeightList, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ReloadConfig implements reloadConfig operation.
 //
 // Re-read the configuration file and apply the parts that change without a restart — the
@@ -170,6 +191,20 @@ func (UnimplementedHandler) ReloadConfig(ctx context.Context) (r *ReloadResult, 
 //
 // PUT /api/v1/buckets/{bucket}/scheme
 func (UnimplementedHandler) SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (r *BucketScheme, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetDiskWeight implements setDiskWeight operation.
+//
+// Set the weight placement uses for one disk, until it is cleared. A weight that is not positive
+// drains the disk: no new data is placed on it and the auto-rebalancer moves what it holds elsewhere.
+// The override lives outside the node's registration, so a node republishing its record — which it
+// does on every capacity refresh and every restart — does not undo it. Accepted while the node is
+// down: the moment an operator most wants to drain a disk is often the moment it is unreachable. An
+// override for a disk that never appears is inert. Returns 501 when the server is not in cluster mode.
+//
+// PUT /api/v1/cluster/disk-weights/{node}/{disk}
+func (UnimplementedHandler) SetDiskWeight(ctx context.Context, req *SetDiskWeightRequest, params SetDiskWeightParams) (r *DiskWeight, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

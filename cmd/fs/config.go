@@ -267,6 +267,10 @@ type RebalanceConfig struct {
 	FullWatermark float64 `yaml:"full_watermark,omitempty"`
 }
 
+// DefaultDiskWeight is the placement weight of a disk whose config does not
+// give one.
+const DefaultDiskWeight = 1.0
+
 // ClusterDiskConfig is one local disk exposed to the cluster.
 type ClusterDiskConfig struct {
 	// ID identifies the disk within this node. Required.
@@ -274,12 +278,24 @@ type ClusterDiskConfig struct {
 	// Path is the disk's root directory. Required.
 	Path string `yaml:"path"`
 	// Weight is the relative capacity weight for placement (default 1). A
-	// negative weight drains the disk — no new data is placed on it.
+	// weight that is not positive drains the disk: no new data is placed on
+	// it, and the auto-rebalancer moves what it holds elsewhere.
 	//
-	// Not zero: omitempty makes an absent key and an explicit `weight: 0`
-	// indistinguishable here, so 0 is read as "unset" and becomes the default
-	// 1. A disk written as `weight: 0` is placed at full weight.
-	Weight float64 `yaml:"weight,omitempty"`
+	// A pointer so that zero is a value and not an absence. It used to be a
+	// plain float64 with omitempty, which made an omitted key and an explicit
+	// `weight: 0` the same — so 0 was read as "unset" and became 1, and the
+	// documented way to drain a disk placed it at full weight instead.
+	Weight *float64 `yaml:"weight,omitempty"`
+}
+
+// PlacementWeight is the weight this disk is placed at: what the config says,
+// or the default when it says nothing.
+func (d ClusterDiskConfig) PlacementWeight() float64 {
+	if d.Weight == nil {
+		return DefaultDiskWeight
+	}
+
+	return *d.Weight
 }
 
 // EtcdConfig configures the etcd control-plane connection.

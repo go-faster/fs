@@ -248,10 +248,13 @@ func (s *BucketUsageList) SetBytes(val OptInt64) {
 	s.Bytes = val
 }
 
+// ClearDiskWeightNoContent is response for ClearDiskWeight operation.
+type ClearDiskWeightNoContent struct{}
+
 // Ref: #/components/schemas/ClusterDisk
 type ClusterDisk struct {
 	ID string `json:"id"`
-	// Relative placement weight; not positive means drained (out of placement).
+	// Effective placement weight; not positive means drained (out of placement).
 	Weight float64 `json:"weight"`
 	// Reported filesystem size; 0 when the node has not reported capacity.
 	TotalBytes OptInt64 `json:"total_bytes"`
@@ -961,6 +964,83 @@ func (s *CreatedAccessKey) SetCreatedAt(val time.Time) {
 
 // DeleteAccessKeyNoContent is response for DeleteAccessKey operation.
 type DeleteAccessKeyNoContent struct{}
+
+// Ref: #/components/schemas/DiskWeight
+type DiskWeight struct {
+	Node string `json:"node"`
+	Disk string `json:"disk"`
+	// The overriding placement weight; not positive means drained.
+	Weight float64 `json:"weight"`
+	// Whether this override takes the disk out of placement.
+	Drained OptBool `json:"drained"`
+	// Free text recorded when the override was set.
+	Reason OptString `json:"reason"`
+}
+
+// GetNode returns the value of Node.
+func (s *DiskWeight) GetNode() string {
+	return s.Node
+}
+
+// GetDisk returns the value of Disk.
+func (s *DiskWeight) GetDisk() string {
+	return s.Disk
+}
+
+// GetWeight returns the value of Weight.
+func (s *DiskWeight) GetWeight() float64 {
+	return s.Weight
+}
+
+// GetDrained returns the value of Drained.
+func (s *DiskWeight) GetDrained() OptBool {
+	return s.Drained
+}
+
+// GetReason returns the value of Reason.
+func (s *DiskWeight) GetReason() OptString {
+	return s.Reason
+}
+
+// SetNode sets the value of Node.
+func (s *DiskWeight) SetNode(val string) {
+	s.Node = val
+}
+
+// SetDisk sets the value of Disk.
+func (s *DiskWeight) SetDisk(val string) {
+	s.Disk = val
+}
+
+// SetWeight sets the value of Weight.
+func (s *DiskWeight) SetWeight(val float64) {
+	s.Weight = val
+}
+
+// SetDrained sets the value of Drained.
+func (s *DiskWeight) SetDrained(val OptBool) {
+	s.Drained = val
+}
+
+// SetReason sets the value of Reason.
+func (s *DiskWeight) SetReason(val OptString) {
+	s.Reason = val
+}
+
+// Ref: #/components/schemas/DiskWeightList
+type DiskWeightList struct {
+	Overrides []DiskWeight `json:"overrides"`
+}
+
+// GetOverrides returns the value of Overrides.
+func (s *DiskWeightList) GetOverrides() []DiskWeight {
+	return s.Overrides
+}
+
+// SetOverrides sets the value of Overrides.
+func (s *DiskWeightList) SetOverrides(val []DiskWeight) {
+	s.Overrides = val
+}
 
 // Error occurred while processing request.
 // Ref: #/components/schemas/Error
@@ -1965,6 +2045,36 @@ func (s *SetBucketSchemeRequest) GetScheme() OptString {
 // SetScheme sets the value of Scheme.
 func (s *SetBucketSchemeRequest) SetScheme(val OptString) {
 	s.Scheme = val
+}
+
+// Ref: #/components/schemas/SetDiskWeightRequest
+type SetDiskWeightRequest struct {
+	// The placement weight to use. Not positive drains the disk. Zero means zero here — unlike the
+	// config file, where an omitted weight and an explicit 0 are indistinguishable and 0 is read as
+	// "unset".
+	Weight float64 `json:"weight"`
+	// Free text, carried back on reads.
+	Reason OptString `json:"reason"`
+}
+
+// GetWeight returns the value of Weight.
+func (s *SetDiskWeightRequest) GetWeight() float64 {
+	return s.Weight
+}
+
+// GetReason returns the value of Reason.
+func (s *SetDiskWeightRequest) GetReason() OptString {
+	return s.Reason
+}
+
+// SetWeight sets the value of Weight.
+func (s *SetDiskWeightRequest) SetWeight(val float64) {
+	s.Weight = val
+}
+
+// SetReason sets the value of Reason.
+func (s *SetDiskWeightRequest) SetReason(val OptString) {
+	s.Reason = val
 }
 
 // Replace the cluster-wide public-read bucket list.

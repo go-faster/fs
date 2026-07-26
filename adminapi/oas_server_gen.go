@@ -18,6 +18,13 @@ type Handler interface {
 	//
 	// POST /api/v1/cluster/migrate
 	ApplyMigrations(ctx context.Context) (*MigrationStatus, error)
+	// ClearDiskWeight implements clearDiskWeight operation.
+	//
+	// Restore the weight the node registers from its config. Clearing an override that is not set is not
+	// an error. Returns 501 when the server is not in cluster mode.
+	//
+	// DELETE /api/v1/cluster/disk-weights/{node}/{disk}
+	ClearDiskWeight(ctx context.Context, params ClearDiskWeightParams) error
 	// ControlRebalance implements controlRebalance operation.
 	//
 	// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
@@ -104,6 +111,14 @@ type Handler interface {
 	//
 	// GET /api/v1/access-keys
 	ListAccessKeys(ctx context.Context) (*AccessKeyList, error)
+	// ListDiskWeights implements listDiskWeights operation.
+	//
+	// Every per-disk placement weight override currently set. An override replaces the weight the node
+	// registers from its config, and survives the node restarting — it is how a disk is drained without
+	// editing a config file. Returns 501 when the server is not in cluster mode.
+	//
+	// GET /api/v1/cluster/disk-weights
+	ListDiskWeights(ctx context.Context) (*DiskWeightList, error)
 	// ReloadConfig implements reloadConfig operation.
 	//
 	// Re-read the configuration file and apply the parts that change without a restart — the
@@ -126,6 +141,17 @@ type Handler interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/scheme
 	SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (*BucketScheme, error)
+	// SetDiskWeight implements setDiskWeight operation.
+	//
+	// Set the weight placement uses for one disk, until it is cleared. A weight that is not positive
+	// drains the disk: no new data is placed on it and the auto-rebalancer moves what it holds elsewhere.
+	// The override lives outside the node's registration, so a node republishing its record — which it
+	// does on every capacity refresh and every restart — does not undo it. Accepted while the node is
+	// down: the moment an operator most wants to drain a disk is often the moment it is unreachable. An
+	// override for a disk that never appears is inert. Returns 501 when the server is not in cluster mode.
+	//
+	// PUT /api/v1/cluster/disk-weights/{node}/{disk}
+	SetDiskWeight(ctx context.Context, req *SetDiskWeightRequest, params SetDiskWeightParams) (*DiskWeight, error)
 	// SetPublicReadBuckets implements setPublicReadBuckets operation.
 	//
 	// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds

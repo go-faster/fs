@@ -125,12 +125,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	for _, d := range cc.Disks {
 		roots[cluster.DiskID(d.ID)] = d.Path
 
-		weight := d.Weight
-		if weight == 0 {
-			weight = 1
-		}
-
-		disks = append(disks, cluster.Disk{ID: cluster.DiskID(d.ID), Weight: weight})
+		disks = append(disks, cluster.Disk{ID: cluster.DiskID(d.ID), Weight: d.PlacementWeight()})
 	}
 
 	store, err := diskstore.New(roots, diskstore.WithSyncPolicy(syncPolicy))

@@ -28,6 +28,7 @@ func Cluster() *cobra.Command {
 	cmd.AddCommand(ClusterRebalance())
 	cmd.AddCommand(ClusterScheme())
 	cmd.AddCommand(ClusterMigrate())
+	cmd.AddCommand(ClusterDrain())
 
 	return cmd
 }

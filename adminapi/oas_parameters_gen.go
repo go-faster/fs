@@ -14,6 +14,126 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
+// ClearDiskWeightParams is parameters of clearDiskWeight operation.
+type ClearDiskWeightParams struct {
+	// The node ID.
+	Node string
+	// The disk ID within that node.
+	Disk string
+}
+
+func unpackClearDiskWeightParams(packed middleware.Parameters) (params ClearDiskWeightParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "node",
+			In:   "path",
+		}
+		params.Node = packed[key].(string)
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "disk",
+			In:   "path",
+		}
+		params.Disk = packed[key].(string)
+	}
+	return params
+}
+
+func decodeClearDiskWeightParams(args [2]string, argsEscaped bool, r *http.Request) (params ClearDiskWeightParams, _ error) {
+	// Decode path: node.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "node",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Node = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "node",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	// Decode path: disk.
+	if err := func() error {
+		param := args[1]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[1])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "disk",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Disk = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "disk",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // DeleteAccessKeyParams is parameters of deleteAccessKey operation.
 type DeleteAccessKeyParams struct {
 	// The access key ID to delete.
@@ -205,6 +325,126 @@ func decodeSetBucketSchemeParams(args [1]string, argsEscaped bool, r *http.Reque
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// SetDiskWeightParams is parameters of setDiskWeight operation.
+type SetDiskWeightParams struct {
+	// The node ID.
+	Node string
+	// The disk ID within that node.
+	Disk string
+}
+
+func unpackSetDiskWeightParams(packed middleware.Parameters) (params SetDiskWeightParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "node",
+			In:   "path",
+		}
+		params.Node = packed[key].(string)
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "disk",
+			In:   "path",
+		}
+		params.Disk = packed[key].(string)
+	}
+	return params
+}
+
+func decodeSetDiskWeightParams(args [2]string, argsEscaped bool, r *http.Request) (params SetDiskWeightParams, _ error) {
+	// Decode path: node.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "node",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Node = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "node",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	// Decode path: disk.
+	if err := func() error {
+		param := args[1]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[1])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "disk",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Disk = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "disk",
 			In:   "path",
 			Err:  err,
 		}

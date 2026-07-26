@@ -52,6 +52,20 @@ func encodeSetBucketSchemeRequest(
 	return nil
 }
 
+func encodeSetDiskWeightRequest(
+	req *SetDiskWeightRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeSetPublicReadBucketsRequest(
 	req *SetPublicReadBucketsRequest,
 	r *http.Request,

@@ -58,8 +58,9 @@ storage:
 #   scheme: "rf2.5"
 #
 #   # This node's disks (default: one disk under <storage.root>/cluster/d0).
-#   # Weight is the relative capacity for placement; a NEGATIVE weight
-#   # drains a disk (0 means "unset" and is read as the default 1).
+#   # Weight is the relative capacity for placement; a weight that is not
+#   # positive (0 or negative) drains the disk. Omit it for the default of 1.
+#   # 'fs cluster drain' does the same thing without a restart.
 #   disks:
 #     - id: "d0"
 #       path: "/data/d0"

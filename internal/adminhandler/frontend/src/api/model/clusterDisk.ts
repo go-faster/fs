@@ -9,7 +9,7 @@
 
 export interface ClusterDisk {
   id: string;
-  /** Relative placement weight; not positive means drained (out of placement). */
+  /** Effective placement weight; not positive means drained (out of placement). */
   weight: number;
   /** Reported filesystem size; 0 when the node has not reported capacity. */
   total_bytes?: number;

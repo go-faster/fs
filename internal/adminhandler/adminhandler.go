@@ -68,6 +68,10 @@ type Options struct {
 	// via the control plane; nil outside cluster mode (the scheme endpoints
 	// then return 501).
 	BucketSchemes BucketSchemeStore
+	// DiskWeights reads and writes per-disk placement weight overrides — how a
+	// disk is drained without editing a config file and restarting its node
+	// (fs SPEC §11.6). nil outside cluster mode (the endpoints return 501).
+	DiskWeights DiskWeightStore
 	// BucketUsage reads the durable per-bucket object accounting; nil outside
 	// cluster mode (the endpoint then returns 501), where the index lives in
 	// the control plane.
