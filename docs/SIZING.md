@@ -186,8 +186,15 @@ control plane, and the totals are read straight back out.
 Between recounts a total can drift. A node that dies after committing a write
 but before reporting it leaves its bucket short; a delete that half-failed
 leaves it long. A cluster-wide recount re-derives every bucket's totals from the
-objects themselves every 6 hours, on one elected node, and replaces the drifted
-figures — carrying forward whatever was accounted while it ran.
+objects themselves, on one elected node, and replaces the drifted figures —
+carrying forward whatever was accounted while it ran.
+
+The recount reads the nodes' object indexes, which costs index pages rather than
+a scan of every disk and a read of every sidecar, so it runs **hourly**. A
+cluster whose indexes cannot answer — one node still building its own, or
+running a binary without one — falls back to the walk and to **every 6 hours**,
+because that pass is expensive enough that doing it four times as often would
+cost more than the drift it removes.
 
 Read `counted` to know how much to trust a number: it is when a recount last
 verified that bucket, and it is **absent** for a bucket whose totals have only

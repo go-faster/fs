@@ -94,3 +94,77 @@ func (c *Coordinator) CountObjects(ctx context.Context) (map[string]BucketTotals
 
 	return totals, nil
 }
+
+// CountObjectsIndexed totals every committed object per bucket, from the nodes'
+// object indexes rather than from their sidecars.
+//
+// This is the same count CountObjects produces and the same merge a listing
+// uses — replicas of an object collapse to one entry, newest wins — but it
+// reads index pages instead of scanning every disk and opening every sidecar.
+// That is what makes re-deriving a bucket's totals cheap enough to do often,
+// which matters more than the constant: counters corrected every hour drift
+// less than counters corrected twice a day.
+//
+// It returns ErrIndexUnavailable when the indexes cannot answer — a node still
+// building one, or running a binary without one — and the caller falls back to
+// the walk.
+func (c *Coordinator) CountObjectsIndexed(ctx context.Context) (map[string]BucketTotals, error) {
+	buckets, err := c.ListBuckets(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	totals := make(map[string]BucketTotals, len(buckets))
+
+	for _, b := range buckets {
+		if internalBucket(b.Name) {
+			continue
+		}
+
+		total, err := c.countBucketIndexed(ctx, b.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		totals[b.Name] = total
+	}
+
+	return totals, nil
+}
+
+// countBucketIndexed pages one bucket through the merged indexes.
+func (c *Coordinator) countBucketIndexed(ctx context.Context, bucket string) (BucketTotals, error) {
+	var (
+		total BucketTotals
+		after string
+	)
+
+	for {
+		objects, _, more, err := c.ListPage(ctx, bucket, "", "", after, countPage)
+		if err != nil {
+			return BucketTotals{}, err
+		}
+
+		for _, sc := range objects {
+			total.Objects++
+			total.Bytes += sc.Size
+		}
+
+		if !more {
+			return total, nil
+		}
+
+		if len(objects) == 0 {
+			// Truncated with nothing to resume from would loop forever; treat
+			// it as the end rather than spin.
+			return total, nil
+		}
+
+		after = objects[len(objects)-1].Key
+	}
+}
+
+// countPage is how many objects one page of a count carries. Larger than a
+// listing page because nothing renders it: the only cost of a big page is the
+// memory it occupies while being summed.
+const countPage = 1000

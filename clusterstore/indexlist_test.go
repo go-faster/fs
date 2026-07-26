@@ -1,6 +1,7 @@
 package clusterstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sort"
@@ -422,4 +423,122 @@ func TestListObjectsPrefersTheIndex(t *testing.T) {
 	require.Len(t, page.Objects, 1)
 
 	assert.Greater(t, state.calls.Load(), before, "the listing was served from the index")
+}
+
+// TestCountObjectsIndexedMatchesTheWalk pins the claim phase 4 rests on: the
+// totals derived from the indexes are the totals the sidecar walk derives. If
+// they could differ, the cheap path would be quietly rewriting the counters
+// with a wrong answer every hour.
+func TestCountObjectsIndexedMatchesTheWalk(t *testing.T) {
+	fc := newFakeCluster(3, 2)
+	c, state := indexedCoordinator(t, fc)
+
+	require.NoError(t, c.CreateBucket(t.Context(), "b", fs.ACLPrivate))
+
+	sizes := map[string]int{"a.txt": 100, "docs/one.txt": 250, "docs/two.txt": 30, "z.txt": 7}
+	for key, size := range sizes {
+		mustPut(t, c, key, randBytes(size))
+	}
+
+	c.Flush()
+
+	indexed, err := c.CountObjectsIndexed(t.Context())
+	require.NoError(t, err)
+
+	walked, err := c.CountObjects(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, walked, indexed)
+	assert.Equal(t, BucketTotals{Objects: 4, Bytes: 387}, indexed["b"])
+
+	// An overwrite replaces rather than adds, on both paths.
+	mustPut(t, c, "a.txt", randBytes(10))
+	c.Flush()
+
+	indexed, err = c.CountObjectsIndexed(t.Context())
+	require.NoError(t, err)
+
+	walked, err = c.CountObjects(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, walked, indexed)
+	assert.Equal(t, BucketTotals{Objects: 4, Bytes: 297}, indexed["b"])
+
+	// A delete, likewise.
+	require.NoError(t, c.Delete(t.Context(), "b", "docs/one.txt"))
+
+	indexed, err = c.CountObjectsIndexed(t.Context())
+	require.NoError(t, err)
+
+	walked, err = c.CountObjects(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, walked, indexed)
+
+	// And it was actually served from the indexes, not silently walked.
+	assert.Positive(t, state.calls.Load())
+}
+
+// TestCountObjectsIndexedPagesLargeBuckets checks the count does not depend on
+// a bucket fitting in one page, which is the whole reason it pages.
+func TestCountObjectsIndexedPagesLargeBuckets(t *testing.T) {
+	fc := newFakeCluster(3, 1)
+	c, _ := indexedCoordinator(t, fc)
+
+	require.NoError(t, c.CreateBucket(t.Context(), "b", fs.ACLPrivate))
+
+	const objects = 40
+
+	for i := range objects {
+		mustPut(t, c, "key-"+string(rune('a'+i/26))+string(rune('a'+i%26)), randBytes(3))
+	}
+
+	c.Flush()
+
+	totals, err := c.CountObjectsIndexed(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, BucketTotals{Objects: objects, Bytes: objects * 3}, totals["b"])
+}
+
+// TestCountObjectsIndexedRefusesWhenAnIndexIsNotReady: a node still building
+// one would leave its objects out of the count, and a total short of objects
+// would be written over a correct one.
+func TestCountObjectsIndexedRefusesWhenAnIndexIsNotReady(t *testing.T) {
+	fc := newFakeCluster(3, 1)
+	c, state := indexedCoordinator(t, fc)
+
+	require.NoError(t, c.CreateBucket(t.Context(), "b", fs.ACLPrivate))
+	mustPut(t, c, "a.txt", randBytes(10))
+	c.Flush()
+
+	state.set(fc.topo.Nodes[1].ID, false)
+
+	_, err := c.CountObjectsIndexed(t.Context())
+	require.ErrorIs(t, err, ErrIndexUnavailable)
+}
+
+// TestCountObjectsIndexedSkipsInternalBuckets keeps multipart bookkeeping out
+// of the totals, the same rule the walk applies — otherwise the cheap path
+// would disagree with the one it replaces on every bucket with an upload in
+// flight.
+func TestCountObjectsIndexedSkipsInternalBuckets(t *testing.T) {
+	fc := newFakeCluster(3, 1)
+	c, _ := indexedCoordinator(t, fc)
+
+	require.NoError(t, c.CreateBucket(t.Context(), "b", fs.ACLPrivate))
+	mustPut(t, c, "a.txt", randBytes(10))
+
+	_, err := c.Put(t.Context(), &PutRequest{
+		Bucket: partsBucket("b"), Key: "upload-1/00001", Size: 4, Body: bytes.NewReader([]byte("part")),
+	})
+	require.NoError(t, err)
+
+	c.Flush()
+
+	totals, err := c.CountObjectsIndexed(t.Context())
+	require.NoError(t, err)
+
+	assert.Len(t, totals, 1)
+	assert.Equal(t, BucketTotals{Objects: 1, Bytes: 10}, totals["b"])
 }

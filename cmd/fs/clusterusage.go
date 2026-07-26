@@ -20,6 +20,12 @@ import (
 // control plane to acknowledge an object it has already made durable.
 const usageFlushInterval = time.Second
 
+// usageIndexedRecountInterval is how often the totals are re-derived when the
+// object indexes can answer. Reading them costs index pages rather than a scan
+// of every disk, so the correction runs often enough that a delta lost to a
+// crash is a short-lived error rather than half a day of one.
+const usageIndexedRecountInterval = time.Hour
+
 // usageRecountInterval is how often the cluster re-derives every bucket's
 // totals from the objects themselves. Deltas keep the record close between
 // recounts; the recount is what makes it true again after the ways a delta can
@@ -196,34 +202,76 @@ func (rt *clusterRuntime) RunUsageRecount(ctx context.Context) {
 	}
 }
 
+// countObjects derives every bucket's totals, preferring the object indexes.
+//
+// The indexes answer the same count as the walk — the merge collapses replicas
+// the same way a listing does — for a fraction of the work: index pages instead
+// of a scan of every disk and a read of every sidecar. When they cannot answer,
+// because a node is still building one, the walk still can.
+func (rt *clusterRuntime) countObjects(ctx context.Context) (totals map[string]clusterstore.BucketTotals, fromIndex bool, err error) {
+	totals, err = rt.coord.CountObjectsIndexed(ctx)
+	if err == nil {
+		return totals, true, nil
+	}
+
+	if !errors.Is(err, clusterstore.ErrIndexUnavailable) {
+		return nil, false, err
+	}
+
+	totals, err = rt.coord.CountObjects(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return totals, false, nil
+}
+
 // recountLoop recounts on an interval for as long as leadership is held.
+//
+// The interval follows the cost of a pass. Reading the indexes is cheap enough
+// to correct the counters hourly; walking the sidecars is not, and a cluster
+// that has fallen back to it should not be made to do it four times as often.
 func (rt *clusterRuntime) recountLoop(ctx context.Context, lead *etcd.UsageLeadership) {
-	ticker := time.NewTicker(usageRecountInterval)
-	defer ticker.Stop()
+	interval := usageRecountInterval
 
 	for {
-		if err := rt.recountUsage(ctx); err != nil {
+		indexed, err := rt.recountUsage(ctx)
+
+		switch {
+		case err != nil:
 			if ctx.Err() != nil {
 				return
 			}
 
 			rt.lg.Warn("Bucket usage recount failed; counters stay on their deltas", zap.Error(err))
+		case indexed:
+			interval = usageIndexedRecountInterval
+		default:
+			interval = usageRecountInterval
 		}
+
+		timer := time.NewTimer(interval)
 
 		select {
 		case <-ctx.Done():
+			timer.Stop()
+
 			return
 		case <-lead.Done():
 			// Lost the lease: another node is recounting now.
+			timer.Stop()
+
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 
 // recountUsage re-derives every bucket's totals and stores them, then removes
 // records for buckets that no longer exist.
-func (rt *clusterRuntime) recountUsage(ctx context.Context) error {
+// It reports whether the object indexes answered, which is what paces the loop
+// above: a pass that read indexes is cheap enough to repeat sooner.
+func (rt *clusterRuntime) recountUsage(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, usageRecountTimeout)
 	defer cancel()
 
@@ -234,7 +282,7 @@ func (rt *clusterRuntime) recountUsage(ctx context.Context) error {
 	// them.
 	before, err := etcd.ListBucketUsage(ctx, rt.client, rt.etcdCfg)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	base := make(map[string]etcd.BucketUsage, len(before))
@@ -242,14 +290,14 @@ func (rt *clusterRuntime) recountUsage(ctx context.Context) error {
 		base[rec.Bucket] = rec
 	}
 
-	totals, err := rt.coord.CountObjects(ctx)
+	totals, indexed, err := rt.countObjects(ctx)
 	if err != nil {
-		return errors.Wrap(err, "count objects")
+		return false, errors.Wrap(err, "count objects")
 	}
 
 	buckets, err := rt.coord.ListBuckets(ctx)
 	if err != nil {
-		return errors.Wrap(err, "list buckets")
+		return indexed, errors.Wrap(err, "list buckets")
 	}
 
 	// An existing bucket with no objects is a real answer — zero — so it gets a
@@ -262,7 +310,7 @@ func (rt *clusterRuntime) recountUsage(ctx context.Context) error {
 
 	for bucket, t := range totals {
 		if err := etcd.SetBucketUsage(ctx, rt.client, rt.etcdCfg, bucket, t.Objects, t.Bytes, base[bucket]); err != nil {
-			return err
+			return indexed, err
 		}
 	}
 
@@ -275,16 +323,17 @@ func (rt *clusterRuntime) recountUsage(ctx context.Context) error {
 		}
 
 		if err := etcd.DeleteBucketUsage(ctx, rt.client, rt.etcdCfg, rec.Bucket); err != nil {
-			return err
+			return indexed, err
 		}
 	}
 
 	rt.lg.Info("Bucket usage recount complete",
 		zap.Int("buckets", len(totals)),
+		zap.Bool("from_index", indexed),
 		zap.Duration("took", time.Since(started)),
 	)
 
-	return nil
+	return indexed, nil
 }
 
 // sleepCtx waits for d, reporting false if ctx ended first.
