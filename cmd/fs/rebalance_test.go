@@ -90,6 +90,7 @@ func TestClusterRebalanceEndToEnd(t *testing.T) {
 	for i := range nodes {
 		rt, err := buildCluster(t.Context(), lg, nodeConfig(i), t.TempDir())
 		require.NoError(t, err)
+		t.Cleanup(func() { _ = rt.close() })
 
 		nodes[i] = rt
 
@@ -117,6 +118,7 @@ func TestClusterRebalanceEndToEnd(t *testing.T) {
 	// Grow the cluster: some placements move to the new node.
 	rt, err := buildCluster(t.Context(), lg, nodeConfig(3), t.TempDir())
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.close() })
 
 	grp.Go(func() error { return rt.Serve(grpCtx) })
 

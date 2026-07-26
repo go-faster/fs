@@ -37,6 +37,7 @@ func usageNode(t *testing.T, endpoint, prefix string, index int) *clusterRuntime
 
 	rt, err := buildCluster(t.Context(), zaptest.NewLogger(t), cfg, t.TempDir())
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.close() })
 
 	return rt
 }
@@ -146,7 +147,6 @@ func TestUsageReporterKeepsUnflushedDeltas(t *testing.T) {
 	cfg := etcd.Config{Prefix: "/fs-usage-retry", TTL: 2}
 
 	rt := usageNode(t, endpoint, "/fs-usage-retry", 0)
-	t.Cleanup(func() { _ = rt.close() })
 
 	rt.usage.Observe("photos", 3, 300)
 
@@ -174,7 +174,6 @@ func TestUsageObserverIgnoresCancellingDeltas(t *testing.T) {
 	endpoint := startTestEtcd(t)
 
 	rt := usageNode(t, endpoint, "/fs-usage-net", 0)
-	t.Cleanup(func() { _ = rt.close() })
 
 	rt.usage.Observe("photos", 1, 500)
 	rt.usage.Observe("photos", -1, -500)
