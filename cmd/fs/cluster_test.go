@@ -171,10 +171,10 @@ func TestClusterWiring(t *testing.T) {
 	require.NoError(t, got.Reader.Close())
 	assert.True(t, bytes.Equal(data, body), "cross-node read through full wiring")
 
-	listed, err := reader.ListObjects(t.Context(), "b", "dir/")
+	listed, err := reader.ListObjects(t.Context(), &fs.ListObjectsRequest{Bucket: "b", Prefix: "dir/"})
 	require.NoError(t, err)
-	require.Len(t, listed, 1)
-	assert.Equal(t, "dir/obj.bin", listed[0].Key)
+	require.Len(t, listed.Objects, 1)
+	assert.Equal(t, "dir/obj.bin", listed.Objects[0].Key)
 
 	require.NoError(t, reader.DeleteObject(t.Context(), "b", "dir/obj.bin"))
 	require.NoError(t, reader.DeleteBucket(t.Context(), "b"))

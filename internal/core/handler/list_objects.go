@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -21,14 +20,6 @@ const defaultMaxKeys = 1000
 // encodingTypeURL is the only supported value of the encoding-type parameter;
 // when requested, echoed key fields are URL-encoded.
 const encodingTypeURL = "url"
-
-// listEntry is a single item in the ordered listing keyspace: either an object or
-// a delimiter-derived common prefix.
-type listEntry struct {
-	key      string
-	obj      fs.Object
-	isPrefix bool
-}
 
 // listPage is the delimiter-and-pagination walk shared by ListObjects V1/V2.
 type listPage struct {
@@ -110,53 +101,56 @@ func parseEncodingType(q map[string][]string) (bool, error) {
 	return true, nil
 }
 
-// walkList pages through the delimiter-folded keyspace after the exclusive
-// cursor, encoding output fields as requested. Common prefixes count toward
-// maxKeys, exactly like on S3.
+// walkList fetches one page of the delimiter-folded keyspace after the
+// exclusive cursor, encoding output fields as requested.
+//
+// Folding and paging happen in the backend, in one request: it counts common
+// prefixes toward max-keys the way S3 does, so the handler cannot know how many
+// keys a page needs before asking. Doing it here would mean requesting keys
+// until enough of them collapsed — several round trips per page, over backends
+// that walk the bucket for each one.
 func (h *handler) walkList(ctx context.Context, p *listQuery, cursor string) (*listPage, error) {
-	objects, err := h.service.ListObjects(ctx, p.bucket, p.prefix)
-	if err != nil {
-		return nil, err
-	}
-
-	entries := buildListEntries(objects, p.prefix, p.delimiter)
 	page := &listPage{}
 
-	// S3 answers max-keys=0 with an empty, non-truncated result.
+	// S3 answers max-keys=0 with an empty, non-truncated result — and Limit is
+	// "no limit" at zero, so this must not reach the backend.
 	if p.maxKeys == 0 {
 		return page, nil
 	}
 
-	for _, e := range entries {
-		if cursor != "" && e.key <= cursor {
-			continue
-		}
-
-		if page.count >= p.maxKeys {
-			page.truncated = true
-			break
-		}
-
-		if e.isPrefix {
-			page.commonPrefixes = append(page.commonPrefixes, CommonPrefix{Prefix: p.maybeEncode(e.key)})
-		} else {
-			entry := ObjectInfo{
-				Key:          p.maybeEncode(e.obj.Key),
-				LastModified: e.obj.LastModified,
-				ETag:         quoteETag(e.obj.ETag),
-				Size:         e.obj.Size,
-			}
-
-			if p.fetchOwner && !e.obj.Owner.IsZero() {
-				entry.Owner = &OwnerXML{ID: e.obj.Owner.ID, DisplayName: e.obj.Owner.DisplayName}
-			}
-
-			page.contents = append(page.contents, entry)
-		}
-
-		page.nextCursor = e.key
-		page.count++
+	res, err := h.service.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket:     p.bucket,
+		Prefix:     p.prefix,
+		Delimiter:  p.delimiter,
+		StartAfter: cursor,
+		Limit:      p.maxKeys,
+	})
+	if err != nil {
+		return nil, err
 	}
+
+	for _, cp := range res.CommonPrefixes {
+		page.commonPrefixes = append(page.commonPrefixes, CommonPrefix{Prefix: p.maybeEncode(cp)})
+	}
+
+	for _, o := range res.Objects {
+		entry := ObjectInfo{
+			Key:          p.maybeEncode(o.Key),
+			LastModified: o.LastModified,
+			ETag:         quoteETag(o.ETag),
+			Size:         o.Size,
+		}
+
+		if p.fetchOwner && !o.Owner.IsZero() {
+			entry.Owner = &OwnerXML{ID: o.Owner.ID, DisplayName: o.Owner.DisplayName}
+		}
+
+		page.contents = append(page.contents, entry)
+	}
+
+	page.count = len(res.Objects) + len(res.CommonPrefixes)
+	page.truncated = res.IsTruncated
+	page.nextCursor = res.NextStartAfter
 
 	return page, nil
 }
@@ -262,34 +256,6 @@ func (h *handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 
 // buildListEntries folds objects into the ordered listing keyspace, rolling keys
 // that contain the delimiter beyond the prefix into deduplicated common prefixes.
-func buildListEntries(objects []fs.Object, prefix, delimiter string) []listEntry {
-	entries := make([]listEntry, 0, len(objects))
-	seenPrefix := make(map[string]struct{})
-
-	for _, o := range objects {
-		if delimiter != "" {
-			rest := strings.TrimPrefix(o.Key, prefix)
-			if idx := strings.Index(rest, delimiter); idx >= 0 {
-				cp := prefix + rest[:idx+len(delimiter)]
-				if _, ok := seenPrefix[cp]; !ok {
-					seenPrefix[cp] = struct{}{}
-					entries = append(entries, listEntry{key: cp, isPrefix: true})
-				}
-
-				continue
-			}
-		}
-
-		entries = append(entries, listEntry{key: o.Key, obj: o})
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].key < entries[j].key
-	})
-
-	return entries
-}
-
 // s3EncodeKey URL-encodes an object key the way S3 does for encoding-type=url:
 // RFC 3986 percent-encoding of every byte outside the unreserved set, with "/"
 // left intact.

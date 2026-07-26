@@ -54,10 +54,10 @@ func TestStorage_ETag(t *testing.T) {
 	require.Equal(t, e1, etag(), "ETag is stable across reads (cache hit)")
 
 	// Listing reports the same ETag.
-	objs, err := s.ListObjects(ctx, "bucket-a", "")
+	objs, err := s.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "bucket-a", Prefix: ""})
 	require.NoError(t, err)
-	require.Len(t, objs, 1)
-	require.Equal(t, e1, objs[0].ETag)
+	require.Len(t, objs.Objects, 1)
+	require.Equal(t, e1, objs.Objects[0].ETag)
 
 	// Overwriting changes the ETag (cache invalidated by size/modtime).
 	put("hello world")

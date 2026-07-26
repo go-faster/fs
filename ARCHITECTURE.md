@@ -59,11 +59,16 @@ The shared vocabulary every layer speaks:
 
 - Domain types: `Bucket`, `Object`, `PutObjectRequest`/`PutObjectResponse`
   (the response carries the stored ETag), `GetObjectResponse`,
+  `ListObjectsRequest`/`ListObjectsResponse` (one page of a listing: prefix,
+  delimiter, start-after and limit in, folded entries and truncation out),
   `ObjectMetadata` (representation headers + `x-amz-meta-*` pairs), `Tag`,
   `MultipartUpload`, `Part`, and the multipart request/response structs
   (`CreateMultipartUploadRequest` carries metadata/tags/ACL/owner applied at
   completion), `Owner` (the principal recorded on an object), `ACL`.
-- The `fs.Storage` interface: bucket CRUD, object put/get/delete/list,
+- The `fs.Storage` interface: bucket CRUD, object put/get/delete and paged
+  listing (`ListObjectsRequest.FoldPage` is the shared folding and paging
+  rule every backend applies, so common prefixes count toward the limit the
+  same way everywhere),
   object tagging (get/put/delete), canned ACLs (`SetBucketACL`/`BucketACL`,
   `SetObjectACL`/`ObjectACL`), object ownership (`ObjectOwner`), and the
   multipart operations (including `ListParts`/`ListMultipartUploads`).

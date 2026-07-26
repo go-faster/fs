@@ -136,14 +136,14 @@ func verifyNoTornObjects(t *testing.T, dir string) {
 	s, err := New(dir)
 	require.NoError(t, err)
 
-	objects, err := s.ListObjects(ctx, crashBucket, "")
+	res, err := s.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: crashBucket})
 	require.NoError(t, err)
-	require.NotEmpty(t, objects, "writer should have committed at least one object before the kill")
+	require.NotEmpty(t, res.Objects, "writer should have committed at least one object before the kill")
 
 	// Every object visible in the listing must read back exactly — never torn.
-	seen := make(map[string]struct{}, len(objects))
+	seen := make(map[string]struct{}, len(res.Objects))
 
-	for _, o := range objects {
+	for _, o := range res.Objects {
 		n, ok := parseObjIndex(o.Key)
 		require.True(t, ok, "unexpected key %q (a staging temp file must never appear as an object)", o.Key)
 

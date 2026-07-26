@@ -20,8 +20,8 @@ func TestHandler_HeadBucket(t *testing.T) {
 			require.Equal(t, bucketName, bucket)
 			return true, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -45,8 +45,8 @@ func TestHandler_HeadBucket_NotFound(t *testing.T) {
 		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 			return false, nil
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil
@@ -68,8 +68,8 @@ func TestHandler_HeadBucket_InvalidBucketName(t *testing.T) {
 		BucketExistsFunc: func(ctx context.Context, bucket string) (bool, error) {
 			return false, fs.ErrInvalidBucketName
 		},
-		ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-			return []fs.Object{}, nil
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
 		},
 		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
 			return []fs.Bucket{}, nil

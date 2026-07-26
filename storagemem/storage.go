@@ -131,29 +131,34 @@ func (s *Storage) DeleteBucket(ctx context.Context, bucketName string) error {
 	return nil
 }
 
-func (s *Storage) ListObjects(ctx context.Context, bucketName, prefix string) ([]fs.Object, error) {
+func (s *Storage) ListObjects(_ context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	b, exists := s.buckets[bucketName]
+	b, exists := s.buckets[req.Bucket]
 	if !exists {
 		return nil, fs.ErrBucketNotFound
 	}
 
 	objects := make([]fs.Object, 0)
+
 	for key, obj := range b.objects {
-		if prefix == "" || strings.HasPrefix(key, prefix) {
-			objects = append(objects, fs.Object{
-				Key:          key,
-				Size:         int64(len(obj.data)),
-				LastModified: obj.lastModified,
-				ETag:         obj.etag,
-				Owner:        obj.owner,
-			})
+		if req.Prefix != "" && !strings.HasPrefix(key, req.Prefix) {
+			continue
 		}
+
+		objects = append(objects, fs.Object{
+			Key:          key,
+			Size:         int64(len(obj.data)),
+			LastModified: obj.lastModified,
+			ETag:         obj.etag,
+			Owner:        obj.owner,
+		})
 	}
 
-	return objects, nil
+	// FoldPage sorts: the map yields keys in a deliberately random order, and
+	// StartAfter is a position in that order.
+	return req.FoldPage(objects), nil
 }
 
 func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {

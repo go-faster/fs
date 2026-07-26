@@ -59,7 +59,7 @@ var _ fs.Storage = &StorageMock{}
 //			ListMultipartUploadsFunc: func(ctx context.Context, bucket string) ([]fs.MultipartUpload, error) {
 //				panic("mock out the ListMultipartUploads method")
 //			},
-//			ListObjectsFunc: func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
+//			ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
 //				panic("mock out the ListObjects method")
 //			},
 //			ListPartsFunc: func(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error) {
@@ -133,7 +133,7 @@ type StorageMock struct {
 	ListMultipartUploadsFunc func(ctx context.Context, bucket string) ([]fs.MultipartUpload, error)
 
 	// ListObjectsFunc mocks the ListObjects method.
-	ListObjectsFunc func(ctx context.Context, bucket string, prefix string) ([]fs.Object, error)
+	ListObjectsFunc func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error)
 
 	// ListPartsFunc mocks the ListParts method.
 	ListPartsFunc func(ctx context.Context, bucket string, key string, uploadID string) ([]fs.Part, error)
@@ -266,10 +266,8 @@ type StorageMock struct {
 		ListObjects []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
-			// Bucket is the bucket argument value.
-			Bucket string
-			// Prefix is the prefix argument value.
-			Prefix string
+			// Req is the req argument value.
+			Req *fs.ListObjectsRequest
 		}
 		// ListParts holds details about calls to the ListParts method.
 		ListParts []struct {
@@ -859,23 +857,21 @@ func (mock *StorageMock) ListMultipartUploadsCalls() []struct {
 }
 
 // ListObjects calls ListObjectsFunc.
-func (mock *StorageMock) ListObjects(ctx context.Context, bucket string, prefix string) ([]fs.Object, error) {
+func (mock *StorageMock) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
 	if mock.ListObjectsFunc == nil {
 		panic("StorageMock.ListObjectsFunc: method is nil but Storage.ListObjects was just called")
 	}
 	callInfo := struct {
-		Ctx    context.Context
-		Bucket string
-		Prefix string
+		Ctx context.Context
+		Req *fs.ListObjectsRequest
 	}{
-		Ctx:    ctx,
-		Bucket: bucket,
-		Prefix: prefix,
+		Ctx: ctx,
+		Req: req,
 	}
 	mock.lockListObjects.Lock()
 	mock.calls.ListObjects = append(mock.calls.ListObjects, callInfo)
 	mock.lockListObjects.Unlock()
-	return mock.ListObjectsFunc(ctx, bucket, prefix)
+	return mock.ListObjectsFunc(ctx, req)
 }
 
 // ListObjectsCalls gets all the calls that were made to ListObjects.
@@ -883,14 +879,12 @@ func (mock *StorageMock) ListObjects(ctx context.Context, bucket string, prefix 
 //
 //	len(mockedStorage.ListObjectsCalls())
 func (mock *StorageMock) ListObjectsCalls() []struct {
-	Ctx    context.Context
-	Bucket string
-	Prefix string
+	Ctx context.Context
+	Req *fs.ListObjectsRequest
 } {
 	var calls []struct {
-		Ctx    context.Context
-		Bucket string
-		Prefix string
+		Ctx context.Context
+		Req *fs.ListObjectsRequest
 	}
 	mock.lockListObjects.RLock()
 	calls = mock.calls.ListObjects

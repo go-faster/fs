@@ -95,20 +95,20 @@ func TestService_ListObjects(t *testing.T) {
 		}
 
 		storage := &mock.StorageMock{
-			ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-				require.Equal(t, "valid-bucket", bucket)
-				require.Equal(t, "prefix/", prefix)
+			ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+				require.Equal(t, "valid-bucket", req.Bucket)
+				require.Equal(t, "prefix/", req.Prefix)
 
-				return expectedObjects, nil
+				return &fs.ListObjectsResponse{Objects: expectedObjects}, nil
 			},
 		}
 
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		objects, err := svc.ListObjects(ctx, "valid-bucket", "prefix/")
+		res, err := svc.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "valid-bucket", Prefix: "prefix/"})
 		require.NoError(t, err)
-		require.Equal(t, expectedObjects, objects)
+		require.Equal(t, expectedObjects, res.Objects)
 	})
 
 	t.Run("InvalidBucketName", func(t *testing.T) {
@@ -117,7 +117,7 @@ func TestService_ListObjects(t *testing.T) {
 		svc := service.New(storage)
 		ctx := t.Context()
 
-		_, err := svc.ListObjects(ctx, "INVALID", "")
+		_, err := svc.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "INVALID"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "validate bucket name")
 	})
@@ -130,24 +130,24 @@ func TestService_ListObjects(t *testing.T) {
 
 		// A prefix is a filter, not a path, so only length and encoding are
 		// rejected — see validate.Prefix.
-		_, err := svc.ListObjects(ctx, "valid-bucket", "invalid\xffprefix")
+		_, err := svc.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "valid-bucket", Prefix: "invalid\xffprefix"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "validate prefix")
 	})
 
 	t.Run("PrefixWithControlCharactersIsFiltered", func(t *testing.T) {
 		storage := &mock.StorageMock{
-			ListObjectsFunc: func(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
-				require.Equal(t, "\n", prefix)
+			ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+				require.Equal(t, "\n", req.Prefix)
 
-				return nil, nil
+				return &fs.ListObjectsResponse{}, nil
 			},
 		}
 
 		svc := service.New(storage)
 
 		// S3 accepts any prefix and simply matches nothing.
-		_, err := svc.ListObjects(t.Context(), "valid-bucket", "\n")
+		_, err := svc.ListObjects(t.Context(), &fs.ListObjectsRequest{Bucket: "valid-bucket", Prefix: "\n"})
 		require.NoError(t, err)
 	})
 }

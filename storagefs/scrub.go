@@ -62,12 +62,15 @@ func (s *Storage) Scrub(ctx context.Context, opts ScrubOptions) (*ScrubReport, e
 	report := &ScrubReport{}
 
 	for _, b := range buckets {
-		objects, err := s.ListObjects(ctx, b.Name, "")
+		// Unpaged on purpose: this backend still walks the bucket to answer a
+		// listing, so asking for it in pages would walk it once per page. The
+		// scrub holds one bucket's keys, which is what it held before.
+		objects, err := s.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: b.Name})
 		if err != nil {
 			return nil, errors.Wrapf(err, "list objects in %q", b.Name)
 		}
 
-		for _, o := range objects {
+		for _, o := range objects.Objects {
 			if err := ctx.Err(); err != nil {
 				return report, err
 			}
