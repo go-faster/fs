@@ -14,8 +14,13 @@
 # (part validation: InvalidPart/InvalidPartOrder/EntityTooSmall/MalformedXML;
 # ListMultipartUploads/ListParts; UploadPartCopy incl. range errors; part
 # resend), object metadata (Content-Type/Cache-Control/x-amz-meta-* round-trip,
-# ETag on PUT, atomic writes), object tagging (limits -> InvalidTag), and S3
-# XML error responses (NoSuch*, NotImplemented, precondition and range errors).
+# ETag on PUT, atomic writes), object tagging (limits -> InvalidTag), bucket
+# name validation (-> InvalidBucketName), the object ?acl subresource (canned
+# levels rendered as grants), SigV4 rejection paths (bad/invalid keys,
+# anonymous access), and S3 XML error responses (NoSuch*, NotImplemented,
+# precondition and range errors).
+#
+# See STATUS.md for the whole suite — including what fails and why.
 
 s3tests/functional/test_s3.py::test_100_continue_error_retry
 s3tests/functional/test_s3.py::test_abort_multipart_upload
@@ -35,7 +40,16 @@ s3tests/functional/test_s3.py::test_atomic_write_8mb
 s3tests/functional/test_s3.py::test_atomic_write_bucket_gone
 s3tests/functional/test_s3.py::test_basic_key_count
 s3tests/functional/test_s3.py::test_bucket_create_delete
+s3tests/functional/test_s3.py::test_bucket_create_naming_bad_ip
+s3tests/functional/test_s3.py::test_bucket_create_naming_bad_short_one
+s3tests/functional/test_s3.py::test_bucket_create_naming_bad_short_two
+s3tests/functional/test_s3.py::test_bucket_create_naming_bad_starts_nonalpha
+s3tests/functional/test_s3.py::test_bucket_create_naming_dns_dash_at_end
+s3tests/functional/test_s3.py::test_bucket_create_naming_dns_dash_dot
+s3tests/functional/test_s3.py::test_bucket_create_naming_dns_dot_dash
+s3tests/functional/test_s3.py::test_bucket_create_naming_dns_dot_dot
 s3tests/functional/test_s3.py::test_bucket_create_naming_dns_long
+s3tests/functional/test_s3.py::test_bucket_create_naming_dns_underscore
 s3tests/functional/test_s3.py::test_bucket_create_naming_good_contains_hyphen
 s3tests/functional/test_s3.py::test_bucket_create_naming_good_contains_period
 s3tests/functional/test_s3.py::test_bucket_create_naming_good_long_60
@@ -71,6 +85,7 @@ s3tests/functional/test_s3.py::test_bucket_list_maxkeys_invalid
 s3tests/functional/test_s3.py::test_bucket_list_maxkeys_none
 s3tests/functional/test_s3.py::test_bucket_list_maxkeys_one
 s3tests/functional/test_s3.py::test_bucket_list_maxkeys_zero
+s3tests/functional/test_s3.py::test_bucket_list_objects_anonymous_fail
 s3tests/functional/test_s3.py::test_bucket_list_prefix_alt
 s3tests/functional/test_s3.py::test_bucket_list_prefix_basic
 s3tests/functional/test_s3.py::test_bucket_list_prefix_delimiter_alt
@@ -81,6 +96,8 @@ s3tests/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_not_exis
 s3tests/functional/test_s3.py::test_bucket_list_prefix_empty
 s3tests/functional/test_s3.py::test_bucket_list_prefix_none
 s3tests/functional/test_s3.py::test_bucket_list_prefix_not_exist
+s3tests/functional/test_s3.py::test_bucket_list_prefix_unreadable
+s3tests/functional/test_s3.py::test_bucket_list_return_data
 s3tests/functional/test_s3.py::test_bucket_list_special_prefix
 s3tests/functional/test_s3.py::test_bucket_listv2_both_continuationtoken_startafter
 s3tests/functional/test_s3.py::test_bucket_listv2_continuationtoken
@@ -97,10 +114,12 @@ s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_whitespace
 s3tests/functional/test_s3.py::test_bucket_listv2_encoding_basic
 s3tests/functional/test_s3.py::test_bucket_listv2_fetchowner_defaultempty
 s3tests/functional/test_s3.py::test_bucket_listv2_fetchowner_empty
+s3tests/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty
 s3tests/functional/test_s3.py::test_bucket_listv2_many
 s3tests/functional/test_s3.py::test_bucket_listv2_maxkeys_none
 s3tests/functional/test_s3.py::test_bucket_listv2_maxkeys_one
 s3tests/functional/test_s3.py::test_bucket_listv2_maxkeys_zero
+s3tests/functional/test_s3.py::test_bucket_listv2_objects_anonymous_fail
 s3tests/functional/test_s3.py::test_bucket_listv2_prefix_alt
 s3tests/functional/test_s3.py::test_bucket_listv2_prefix_basic
 s3tests/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_alt
@@ -111,6 +130,7 @@ s3tests/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_not_ex
 s3tests/functional/test_s3.py::test_bucket_listv2_prefix_empty
 s3tests/functional/test_s3.py::test_bucket_listv2_prefix_none
 s3tests/functional/test_s3.py::test_bucket_listv2_prefix_not_exist
+s3tests/functional/test_s3.py::test_bucket_listv2_prefix_unreadable
 s3tests/functional/test_s3.py::test_bucket_listv2_startafter_after_list
 s3tests/functional/test_s3.py::test_bucket_listv2_startafter_not_in_list
 s3tests/functional/test_s3.py::test_bucket_listv2_startafter_unreadable
@@ -142,12 +162,16 @@ s3tests/functional/test_s3.py::test_encrypted_transfer_1kb
 s3tests/functional/test_s3.py::test_encryption_sse_c_multipart_upload
 s3tests/functional/test_s3.py::test_encryption_sse_c_unaligned_multipart_upload
 s3tests/functional/test_s3.py::test_get_obj_tagging
+s3tests/functional/test_s3.py::test_get_object_ifmatch_failed
 s3tests/functional/test_s3.py::test_get_object_ifmatch_good
 s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed
 s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good
 s3tests/functional/test_s3.py::test_get_object_ifnonematch_failed
 s3tests/functional/test_s3.py::test_get_object_ifnonematch_good
 s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed
+s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_good
+s3tests/functional/test_s3.py::test_list_buckets_bad_auth
+s3tests/functional/test_s3.py::test_list_buckets_invalid_auth
 s3tests/functional/test_s3.py::test_list_multipart_upload
 s3tests/functional/test_s3.py::test_multi_object_delete
 s3tests/functional/test_s3.py::test_multi_objectv2_delete
@@ -166,7 +190,11 @@ s3tests/functional/test_s3.py::test_multipart_upload_multiple_sizes
 s3tests/functional/test_s3.py::test_multipart_upload_overwrite_existing_object
 s3tests/functional/test_s3.py::test_multipart_upload_resend_part
 s3tests/functional/test_s3.py::test_multipart_upload_size_too_small
+s3tests/functional/test_s3.py::test_object_acl
+s3tests/functional/test_s3.py::test_object_acl_default
+s3tests/functional/test_s3.py::test_object_acl_full_control_verify_attributes
 s3tests/functional/test_s3.py::test_object_acl_full_control_verify_owner
+s3tests/functional/test_s3.py::test_object_anon_put
 s3tests/functional/test_s3.py::test_object_anon_put_write_access
 s3tests/functional/test_s3.py::test_object_copy_16m
 s3tests/functional/test_s3.py::test_object_copy_bucket_not_found
@@ -224,6 +252,8 @@ s3tests/functional/test_s3.py::test_put_object_ifnonmatch_good
 s3tests/functional/test_s3.py::test_put_object_ifnonmatch_nonexisted_good
 s3tests/functional/test_s3.py::test_put_object_ifnonmatch_overwrite_existed_failed
 s3tests/functional/test_s3.py::test_ranged_big_request_response_code
+s3tests/functional/test_s3.py::test_ranged_request_empty_object
+s3tests/functional/test_s3.py::test_ranged_request_invalid_range
 s3tests/functional/test_s3.py::test_ranged_request_response_code
 s3tests/functional/test_s3.py::test_ranged_request_return_trailing_bytes_response_code
 s3tests/functional/test_s3.py::test_ranged_request_skip_leading_bytes_response_code

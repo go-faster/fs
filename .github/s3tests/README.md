@@ -7,12 +7,17 @@ with real S3 clients.
 
 ## Files
 
-- **`s3tests.conf`** — suite configuration (endpoint + placeholder
-  credentials). The server runs without auth today, so the credentials are
-  arbitrary; boto3 signs with them and the server ignores signatures.
+- **`s3tests.conf`** — suite configuration: endpoint plus the credentials and
+  owner identities (`user_id` / `display_name`) the suite signs with.
+- **`server.yaml`** — the server config CI starts, carrying those same
+  credentials as admin keys (with matching `user_id` / `display_name`, which
+  ACL and listing `<Owner>` elements report). Keep the two in sync.
 - **`allow.txt`** — the **gating** set: node IDs of tests that are expected
   to pass. Pull requests and pushes to `main` run exactly these and fail if
   any regress. One `pytest` node ID per line; `#` starts a comment.
+- **`STATUS.md`** — the whole suite mapped into clusters: what passes, what is
+  skipped and why, and what fails grouped by root cause. Read it to tell a
+  deliberate scope decision from a bug worth fixing.
 
 ## How it works
 

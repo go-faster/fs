@@ -10,7 +10,7 @@ misbehaving.
 
 Compatibility is not self-asserted. Every change is gated in CI against the
 upstream [ceph/s3-tests](https://github.com/ceph/s3-tests) conformance suite —
-currently **220 tests**, run against an authenticated server — and exercised
+currently **245 tests**, run against an authenticated server — and exercised
 end-to-end through real SDK clients (`aws-sdk-go-v2`, `minio-go`) and the
 command-line clients `aws-cli`, `mc`, `s3cmd` and `rclone`. The machine-generated
 breakdown lives in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
@@ -29,7 +29,7 @@ single-region and ignores `LocationConstraint`.
 | **Copy** | CopyObject (server-side), with `x-amz-metadata-directive` and `x-amz-tagging-directive` (COPY / REPLACE). |
 | **Metadata** | `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, and `x-amz-meta-*` user metadata — stored and round-tripped. ETag returned on PUT. |
 | **Tagging** | GetObjectTagging / PutObjectTagging / DeleteObjectTagging and the `x-amz-tagging` header, with the S3 limits (≤10 tags, key ≤128, value ≤256). |
-| **Access control** | Canned ACLs (`private` / `public-read` / `public-read-write`) on buckets and objects, enforced for anonymous requests. |
+| **Access control** | Canned ACLs (`private` / `public-read` / `public-read-write`) on buckets and objects, enforced for anonymous requests. Object `?acl` (GetObjectACL / PutObjectACL) reads and writes that level, rendered as the grants it implies. Objects record the owner that wrote them, reported in ACL and listing `<Owner>` elements. |
 | **Security** | AWS Signature V4 — header auth, presigned URLs (≤7-day expiry), and streaming (`aws-chunked`) uploads with per-chunk signature verification. Native TLS with hot-reloadable certificates. Per-bucket CORS with OPTIONS preflight. |
 
 ## Not implemented
@@ -38,15 +38,19 @@ The following bucket subresources and operations return a proper
 `NotImplemented` (`501`) error, so clients fail fast with a typed exception
 rather than silent misbehavior:
 
-`?accelerate`, `?acl` *(echo-only; see below)*, `?analytics`, `?cors`,
+`?accelerate`, `?acl` *(bucket-level)*, `?analytics`, `?cors`,
 `?encryption`, `?inventory`, `?lifecycle`, `?logging`, `?metrics`,
 `?notification`, `?object-lock`, `?ownershipControls`, `?policy`,
 `?policyStatus`, `?publicAccessBlock`, `?replication`, `?requestPayment`,
 `?tagging` (bucket-level), `?versioning`, `?website`.
 
-The object `?acl` subresource is accepted but **echo-only** — canned ACLs are
-honored via the `x-amz-acl` header (above); the full `AccessControlPolicy`
-grammar with arbitrary grantees is not enforced.
+The object `?acl` subresource is implemented over the **canned** levels: a GET
+renders the stored level as the grants S3 reports for it (the owner's
+`FULL_CONTROL`, plus `AllUsers` `READ`/`WRITE` when public), and a PUT accepts
+either a canned `x-amz-acl` header or an `AccessControlPolicy` body and reduces
+it to the nearest level. Grants naming **specific users** are accepted and
+ignored — the full `AccessControlPolicy` grammar with arbitrary grantees is not
+enforced.
 
 ## Planned (post-v1)
 
@@ -71,8 +75,8 @@ Rejected with rationale, so expectations are clear:
   per-credential grant model (`key → {bucket-pattern: read|write|admin}`)
   covers the self-hosted need.
 - **Full ACL grammar** (arbitrary grantees, enforced `AccessControlPolicy`) —
-  the canned-ACL + public-access subset is implemented; the rest is
-  echo-only and ownership is not modeled.
+  the canned-ACL + public-access subset is implemented, and objects carry an
+  owner; per-grantee permissions are not.
 - **Object Lock / retention / legal hold** — compliance semantics without
   certified underlying storage would be misleading.
 - **SSE-C and SSE-KMS**, **replication to external S3 endpoints**,

@@ -2,7 +2,7 @@
 
 # S3 conformance
 
-`go-faster/fs` is gated in CI against **220** tests from the upstream
+`go-faster/fs` is gated in CI against **245** tests from the upstream
 [ceph/s3-tests](https://github.com/ceph/s3-tests) suite — the objective,
 client-driven measure of S3 compatibility. Every pull request runs this exact
 set and fails if any test regresses. The list only grows as features land.
@@ -15,14 +15,14 @@ set and fails if any test regresses. The list only grows as features land.
 | Object tagging | 8 |
 | Object metadata | 20 |
 | Server-side copy | 26 |
-| Conditional requests | 9 |
-| Ranged reads | 4 |
+| Conditional requests | 11 |
+| Ranged reads | 6 |
 | Encryption passthrough | 12 |
 | HTTP protocol | 2 |
-| Bucket listing | 66 |
-| Bucket lifecycle | 23 |
-| Object CRUD | 24 |
-| **Total** | **220** |
+| Bucket listing | 74 |
+| Bucket lifecycle | 32 |
+| Object CRUD | 28 |
+| **Total** | **245** |
 
 ## SDK & client coverage
 

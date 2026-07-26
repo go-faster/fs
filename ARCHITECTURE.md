@@ -61,14 +61,16 @@ The shared vocabulary every layer speaks:
   (the response carries the stored ETag), `GetObjectResponse`,
   `ObjectMetadata` (representation headers + `x-amz-meta-*` pairs), `Tag`,
   `MultipartUpload`, `Part`, and the multipart request/response structs
-  (`CreateMultipartUploadRequest` carries metadata/tags applied at
-  completion).
+  (`CreateMultipartUploadRequest` carries metadata/tags/ACL/owner applied at
+  completion), `Owner` (the principal recorded on an object), `ACL`.
 - The `fs.Storage` interface: bucket CRUD, object put/get/delete/list,
-  object tagging (get/put/delete), and the multipart operations (including
-  `ListParts`/`ListMultipartUploads`).
+  object tagging (get/put/delete), canned ACLs (`SetBucketACL`/`BucketACL`,
+  `SetObjectACL`/`ObjectACL`), object ownership (`ObjectOwner`), and the
+  multipart operations (including `ListParts`/`ListMultipartUploads`).
 - Sentinel errors (`ErrBucketNotFound`, `ErrObjectNotFound`,
   `ErrUploadNotFound`, `ErrBucketAlreadyExists`, `ErrBucketNotEmpty`,
-  `ErrInvalidBucketName`, `ErrUnsupportedOperation`, `ErrPreconditionFailed`,
+  `ErrInvalidBucketName`, `ErrInvalidKey`, `ErrUnsupportedOperation`,
+  `ErrPreconditionFailed`,
   `ErrInvalidPart`, `ErrInvalidPartOrder`, `ErrInvalidPartNumber`,
   `ErrEntityTooSmall`, `ErrInvalidTag`).
   These are the contract for cross-layer error signalling: backends return
@@ -87,10 +89,11 @@ matters, query parameters):
   `?uploads`; `PUT` → CreateBucket; `HEAD` → HeadBucket; `DELETE`
   → DeleteBucket; `POST` → DeleteObjects (`?delete`).
 - **object** (`/{bucket}/{key}`) — `GET`/`HEAD` (byte-range and conditional
-  support; `?tagging` → GetObjectTagging, `?uploadId` → ListParts),
-  `PUT` (CopyObject via `x-amz-copy-source` with metadata/tagging
+  support; `?tagging` → GetObjectTagging, `?acl` → GetObjectACL, `?uploadId`
+  → ListParts), `PUT` (CopyObject via `x-amz-copy-source` with metadata/tagging
   directives, UploadPart/UploadPartCopy via `?partNumber&uploadId`,
-  `?tagging` → PutObjectTagging, conditional PUT), `DELETE` (`?tagging` →
+  `?tagging` → PutObjectTagging, `?acl` → PutObjectACL, conditional PUT),
+  `DELETE` (`?tagging` →
   DeleteObjectTagging, `?uploadId` → AbortMultipartUpload), `POST`
   (multipart initiate/complete).
 
@@ -125,7 +128,10 @@ A table, not a policy engine: `Config` → `Store` maps each access key to a
 secret and a set of (bucket-glob → permission) grants (Read ⊆ Write ⊆ Admin),
 with optional public-read buckets. The snapshot sits behind an atomic pointer,
 so `Set` hot-reloads credentials without locking readers. `Store` satisfies the
-handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`).
+handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`, `Owner`).
+`Owner` resolves an access key to the `auth.Identity` (`user_id` /
+`display_name`, defaulting to the access key) that objects it writes are owned
+by.
 
 Credentials come from one authoritative source, selected by `auth.source`:
 
@@ -151,9 +157,21 @@ object: the auth middleware consults `fs.Storage.BucketACL`/`ObjectACL`
 directly. Reads need a public-read bucket or object; writes need a
 public-read-write bucket; bucket create/delete are never anonymous. A missing
 bucket/object is let through so the router returns the natural 404
-(existence-first ordering, matching RGW) rather than a blanket 403. This is the
-canned subset only — full ACL grammar / `AccessControlPolicy` enforcement is
-out of scope (the `?acl` subresource is echo-only).
+(existence-first ordering, matching RGW) rather than a blanket 403.
+
+The object `?acl` subresource is served from that same canned level:
+`GetObjectACL` renders it as the grants it implies (the owner's `FULL_CONTROL`,
+plus `AllUsers` `READ`/`WRITE` for the public levels) and `PutObjectACL` reduces
+a canned header or an `AccessControlPolicy` body back to one level via
+`fs.Storage.SetObjectACL`. This is the canned subset only — enforcing the full
+ACL grammar with arbitrary grantees is out of scope, so grants naming specific
+users are accepted and ignored.
+
+Every object records the **owner** that wrote it (`fs.Owner`, from the
+authenticated credential's `auth.Identity`; `anonymous` when unsigned). It is
+stored alongside the object and reported by `fs.Storage.ObjectOwner` and in
+listing `<Owner>` elements — deriving it from the caller instead would make an
+object appear to change hands depending on who read it.
 
 ### `cors` (public) — per-bucket CORS
 

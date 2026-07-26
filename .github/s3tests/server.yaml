@@ -11,31 +11,43 @@ auth:
   keys:
     - access_key: 0555b35654ad1656d804
       secret_key: "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+      user_id: "testid"
+      display_name: "M. Tester"
       grants:
         - bucket: "*"
           permission: admin
     - access_key: NOPQRSTUVWXYZABCDEFG
       secret_key: "nopqrstuvwxyzabcdefghijklmnabcdefghijklm"
+      user_id: "56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234"
+      display_name: "john.doe"
       grants:
         - bucket: "*"
           permission: admin
     - access_key: HIJKLMNOPQRSTUVWXYZA
       secret_key: "opqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+      user_id: "testx$9876543210abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      display_name: "testx$tenanteduser"
       grants:
         - bucket: "*"
           permission: admin
     - access_key: ABCDEFGHIJKLMNOPQRST
       secret_key: "abcdefghijklmnopqrstuvwxyzabcdefghijklmn"
+      user_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      display_name: "youruseridhere"
       grants:
         - bucket: "*"
           permission: admin
     - access_key: AAAAAAAAAAAAAAAAAAaa
       secret_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      user_id: "RGW11111111111111111"
+      display_name: "account1"
       grants:
         - bucket: "*"
           permission: admin
     - access_key: BBBBBBBBBBBBBBBBBBbb
       secret_key: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      user_id: "RGW22222222222222222"
+      display_name: "account2"
       grants:
         - bucket: "*"
           permission: admin
