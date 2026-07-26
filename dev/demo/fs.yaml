@@ -1,0 +1,57 @@
+# One config, three nodes.
+#
+# What differs per node — its identity and the address peers dial it on — comes
+# from the environment (FS_CLUSTER_NODE_ID, FS_CLUSTER_ADVERTISE_ADDR), so the
+# file itself is shared and there is nothing to keep in sync between copies.
+#
+# Nothing here is a production example: the secrets are literals, etcd is a
+# single member, and every credential is in the compose file next to it.
+
+server:
+  addr: ":8080"
+
+storage:
+  # Cluster mode: objects are replicated across the three nodes.
+  type: "cluster"
+  root: "/data"
+  # A demo trades durability for speed on purpose. In production this is
+  # "file+dir", which is what makes an acknowledged write survive power loss.
+  fsync: "none"
+
+cluster:
+  # No rack is set, so each node is its own failure domain — three nodes, three
+  # domains, which is the minimum rf2.5 needs to place a copy and its parity
+  # apart. Setting a rack here would collapse them into one domain and every
+  # write would be refused.
+  addr: ":7080"
+  scheme: "rf2.5"
+
+  etcd:
+    endpoints: ["http://etcd:2379"]
+    prefix: "/fs"
+
+auth:
+  # Credentials live in etcd, sealed by the cluster secret, so a key created
+  # through any node's admin API is usable on all of them. The key below seeds
+  # an empty cluster once; after that etcd is authoritative.
+  source: "etcd"
+  keys:
+    - access_key: "demo"
+      secret_key: "demodemodemo"
+      grants:
+        - bucket: "*"
+          permission: "admin"
+
+admin:
+  # The dashboard and its JSON API. The token comes from FS_ADMIN_TOKEN.
+  enabled: true
+  addr: ":8090"
+
+integrity:
+  # Verify object checksums on read, and sweep the disks for bit-rot. Both are
+  # off by default; a demo is a good place to watch them work.
+  verify_on_read: true
+  scrub_interval: "5m"
+
+observability:
+  enable_request_logging: false

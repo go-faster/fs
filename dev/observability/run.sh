@@ -2,7 +2,8 @@
 
 set -ex
 
-pushd ..
+# The repository root, two levels up since this stack lives under dev/.
+pushd ../..
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o fs ./cmd/fs
 popd
 

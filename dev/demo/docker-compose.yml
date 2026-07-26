@@ -1,0 +1,137 @@
+# A three-node fs cluster with a load generator pointed at it.
+#
+# Run it from this directory: `docker compose up --build`. Then
+#
+#   admin panel   http://127.0.0.1:8091   (token: demo-admin-token)
+#   S3            http://127.0.0.1:9001   (and 9002, 9003 — any node serves any key)
+#
+# The three nodes are deliberately symmetric: same config, same role, different
+# identity. Any of them answers any request, and the panel on one shows the
+# whole cluster, so stopping a node is a thing you can do and watch.
+
+name: fs-demo
+
+x-node: &node
+  build:
+    context: ../..
+    dockerfile: dev/demo/Dockerfile
+    target: fs
+  command: ["s3", "--config", "/etc/fs/fs.yaml"]
+  environment: &node-env
+    # Peers authenticate to each other with this; the same value on every node.
+    FS_CLUSTER_SECRET: "demo-cluster-secret-not-for-production"
+    # Guards the admin API and the dashboard behind it.
+    FS_ADMIN_TOKEN: "demo-admin-token"
+    # There is no collector here, and the default is to try one: without this
+    # every node spends its startup and shutdown failing to reach localhost.
+    # For fs under a real telemetry stack, see ../observability.
+    OTEL_TRACES_EXPORTER: "none"
+    OTEL_METRICS_EXPORTER: "none"
+    OTEL_LOGS_EXPORTER: "none"
+  volumes:
+    - ./fs.yaml:/etc/fs/fs.yaml:ro
+  depends_on:
+    etcd:
+      condition: service_healthy
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+    start_period: 10s
+
+services:
+  # The control plane. One member, which is the one thing here that a real
+  # deployment must not copy: etcd holds the topology and the sealed
+  # credentials, so production runs three or five.
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.5.17
+    command:
+      - etcd
+      - --name=demo
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=demo=http://etcd:2380
+    volumes:
+      - etcd-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  fs1:
+    <<: *node
+    environment:
+      <<: *node-env
+      FS_CLUSTER_NODE_ID: "fs1"
+      # What peers dial. Inside the compose network that is the service name.
+      FS_CLUSTER_ADVERTISE_ADDR: "fs1:7080"
+    volumes:
+      - ./fs.yaml:/etc/fs/fs.yaml:ro
+      - fs1-data:/data
+    ports:
+      - "9001:8080"
+      - "8091:8090"
+
+  fs2:
+    <<: *node
+    environment:
+      <<: *node-env
+      FS_CLUSTER_NODE_ID: "fs2"
+      FS_CLUSTER_ADVERTISE_ADDR: "fs2:7080"
+    volumes:
+      - ./fs.yaml:/etc/fs/fs.yaml:ro
+      - fs2-data:/data
+    ports:
+      - "9002:8080"
+      - "8092:8090"
+
+  fs3:
+    <<: *node
+    environment:
+      <<: *node-env
+      FS_CLUSTER_NODE_ID: "fs3"
+      FS_CLUSTER_ADVERTISE_ADDR: "fs3:7080"
+    volumes:
+      - ./fs.yaml:/etc/fs/fs.yaml:ro
+      - fs3-data:/data
+    ports:
+      - "9003:8080"
+      - "8093:8090"
+
+  # Keeps the cluster busy: several buckets, object sizes from a few KiB to tens
+  # of MiB, and a mix of writes, reads, listings and deletes spread across all
+  # three nodes.
+  loadgen:
+    build:
+      context: ../..
+      dockerfile: dev/demo/Dockerfile
+      target: loadgen
+    environment:
+      FS_ENDPOINTS: "fs1:8080,fs2:8080,fs3:8080"
+      FS_ACCESS_KEY: "demo"
+      FS_SECRET_KEY: "demodemodemo"
+      # Ops per second across all workers, and how many run at once. Turned
+      # down far enough that a laptop stays usable; raise both to make the
+      # dashboard interesting.
+      FS_RATE: "12"
+      FS_WORKERS: "4"
+    depends_on:
+      fs1:
+        condition: service_healthy
+      fs2:
+        condition: service_healthy
+      fs3:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  etcd-data:
+  fs1-data:
+  fs2-data:
+  fs3-data:

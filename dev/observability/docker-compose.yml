@@ -1,7 +1,9 @@
 services:
   fs:
     build:
-      context: ..
+      # The repository root, which is where the Dockerfile expects to find the
+      # binary run.sh cross-compiles for it.
+      context: ../..
       dockerfile: Dockerfile
     command:
       - s3
