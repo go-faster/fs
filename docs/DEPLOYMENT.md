@@ -104,6 +104,8 @@ Every cluster node needs, at minimum (`cluster` config section):
 | `advertise_addr` (or `FS_CLUSTER_ADVERTISE_ADDR`) | yes | `host:port` peers dial; the bind `addr` defaults to `:7080`. Env-overridable per instance. |
 | `secret` (or `FS_CLUSTER_SECRET`) | yes | Shared peer-auth secret, ≥16 chars. |
 | `etcd.endpoints` | yes | The control plane; run a real etcd cluster (3/5 nodes). |
+| `etcd.tls.*` | no | TLS to etcd: `ca_file`, `cert_file`/`key_file` (mutual, both or neither), `server_name`, `insecure_skip_verify`. Any of them enables TLS, and so does an `https://` endpoint. |
+| `etcd.auth.username` / `password` (or `FS_ETCD_USERNAME` / `FS_ETCD_PASSWORD`) | no | etcd role-based auth; both or neither. The env form keeps the password out of the config file. |
 | `scheme` | no | `rf2.5` (default), `rf3`, or `ec:k,m`. |
 | `rack` | no | Failure-domain label; placement spreads copies across racks first. |
 | `disks` | no | One or more `{id, path, weight}`; default one disk under the root. |
@@ -136,6 +138,15 @@ cluster:
 
 ## Security
 
+- **Protect the path to etcd.** etcd holds the node registry and — with
+  `auth.source: etcd` — the cluster's credential store, sealed with the cluster
+  secret. Anything that can write to it can reshape the topology. Use
+  `cluster.etcd.tls` and `cluster.etcd.auth` on any deployment where etcd is
+  not on a trusted network, and note that an `https://` endpoint enables TLS by
+  itself: the client takes the transport from the config, so an https endpoint
+  with no TLS block would otherwise connect in the clear. `insecure_skip_verify`
+  makes TLS decorative — anything on the path can impersonate etcd — and is for
+  development against self-signed certificates only.
 - **Authentication is off only when you disable it.** Provide `auth.keys` (or a
   root credential via `FS_ROOT_ACCESS_KEY` / `FS_ROOT_SECRET_KEY`). The compose
   and default Helm setups are insecure/anonymous for convenience — override for

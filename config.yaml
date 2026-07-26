@@ -70,6 +70,22 @@ storage:
 #     endpoints: ["http://127.0.0.1:2379"]
 #     prefix: "/fs"
 #     ttl: 10s
+#     # TLS to etcd. Any field here turns it on, and so does an https://
+#     # endpoint on its own (verifying against the system roots) — the client
+#     # takes the transport from this config and not from the URL, so an https
+#     # endpoint with nothing set would otherwise speak cleartext.
+#     tls:
+#       ca_file: "/etc/fs/etcd/ca.crt"
+#       # A client certificate for mutual TLS; both or neither.
+#       cert_file: "/etc/fs/etcd/tls.crt"
+#       key_file: "/etc/fs/etcd/tls.key"
+#       # server_name: "etcd.internal"    # when the address is not on the cert
+#       # insecure_skip_verify: false     # development only; makes TLS decorative
+#     # etcd role-based auth. FS_ETCD_USERNAME / FS_ETCD_PASSWORD override
+#     # these, which is how to avoid writing the password into this file.
+#     auth:
+#       username: "fs"
+#       password: "change-me"
 
 # Authentication & authorization (AWS SigV4). Enabled by default; disable only
 # for trusted/dev setups. A root credential can also come from the

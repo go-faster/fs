@@ -47,10 +47,12 @@ func validateClusterClientConfig(cfg Config) error {
 func dialClusterClient(ctx context.Context, cfg Config, label string, wrap func(clusterstore.PeerDialer) clusterstore.PeerDialer) (*clusterClient, error) {
 	cc := cfg.Cluster
 
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   cc.Etcd.Endpoints,
-		DialTimeout: 5 * time.Second,
-	})
+	etcdClientCfg, err := cfg.etcdClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := clientv3.New(etcdClientCfg)
 	if err != nil {
 		return nil, errors.Wrap(err, "etcd client")
 	}
