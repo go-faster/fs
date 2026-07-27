@@ -59,4 +59,4 @@ auth:
 # repository and protects nothing — it exists so CI has one, and it is all
 # zeroes to make that unmistakable. Never use a key from a git history.
 encryption:
-  master_key_file: ".github/s3tests/master.key"
+  master_key_file: "master.key"

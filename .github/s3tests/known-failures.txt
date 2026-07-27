@@ -75,3 +75,15 @@ s3tests/functional/test_s3.py::test_sse_kms_transfer_1kb
 # consulted on these two paths yet (#124 follow-up).
 s3tests/functional/test_s3.py::test_sse_s3_default_method_head
 s3tests/functional/test_s3.py::test_sse_s3_default_multipart_upload
+
+# --- Client-visible checksums (2) --------------------------------------------
+#
+# x-amz-checksum-* is accepted and ignored: the digest is neither verified nor
+# reported, so a wrong one is stored and acknowledged as if it had been
+# checked. #120.
+#
+# Listed before the tests exist at the pinned S3T_REF — s3t ignores an entry
+# naming a test it does not carry — so that the gate stays honest the moment
+# the pin moves rather than going red on the bump.
+s3tests/functional/test_s3.py::test_object_checksum_crc64nvme
+s3tests/functional/test_s3.py::test_object_checksum_sha256
