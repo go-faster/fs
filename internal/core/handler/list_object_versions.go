@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-faster/errors"
+
 	"github.com/go-faster/fs"
 )
 
@@ -144,13 +146,26 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 //
 // That fallback is not a stub: for a bucket that was never versioned, every
 // object *is* its own "null" version, and that is exactly what S3 reports. A
-// backend without fs.Versioner has only such buckets, so the answer is right
+// backend that cannot version has only such buckets, so the answer is right
 // rather than merely non-empty.
+//
+// The fallback turns on what the service *answers*, not on whether it
+// type-asserts: the service implements fs.Versioner unconditionally and
+// resolves the backend's capability underneath, so the assertion always
+// succeeds and only ErrUnsupportedOperation distinguishes a backend that
+// cannot version. Keying off the assertion alone left every such backend —
+// clusterstore among them — answering NotImplemented to a listing it can
+// perfectly well serve.
 func (h *handler) listVersions(
 	ctx context.Context, req *fs.ListObjectVersionsRequest,
 ) (*fs.ListObjectVersionsResponse, error) {
 	if versioner, ok := h.service.(fs.Versioner); ok {
-		return versioner.ListObjectVersions(ctx, req)
+		switch resp, err := versioner.ListObjectVersions(ctx, req); {
+		case err == nil:
+			return resp, nil
+		case !errors.Is(err, fs.ErrUnsupportedOperation):
+			return nil, err
+		}
 	}
 
 	page, err := h.service.ListObjects(ctx, &fs.ListObjectsRequest{
