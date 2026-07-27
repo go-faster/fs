@@ -18,6 +18,10 @@ const s3XMLNamespace = "http://s3.amazonaws.com/doc/2006-03-01/"
 
 type handler struct {
 	service fs.Storage
+	// postSecret resolves an access key to its secret, for verifying the
+	// signature on a POST-object policy. Nil when the server runs without
+	// credentials.
+	postSecret func(accessKey string) (string, bool)
 	// region is the location constraint reported for every bucket. Empty means
 	// the S3 default (us-east-1), which is reported as an empty constraint.
 	region string
@@ -77,6 +81,9 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 	}
 
 	h := handler{service: s, region: o.region}
+	if o.authenticator != nil {
+		h.postSecret = o.authenticator.Secret
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.route)

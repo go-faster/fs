@@ -11,6 +11,8 @@ var (
 	ErrInvalidBucketName    = errors.New("invalid bucket name")
 	ErrUnsupportedOperation = errors.New("unsupported operation")
 	ErrPreconditionFailed   = errors.New("precondition failed")
+	// ErrAccessDenied reports a request the caller is not authorized to make.
+	ErrAccessDenied = errors.New("access denied")
 	// ErrBucketOwnedBySomeoneElse reports a create against a bucket name that
 	// another principal already holds.
 	ErrBucketOwnedBySomeoneElse = errors.New("bucket owned by someone else")

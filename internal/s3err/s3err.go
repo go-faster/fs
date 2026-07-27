@@ -49,6 +49,10 @@ var (
 	InvalidURI              = APIError{"InvalidURI", http.StatusBadRequest, "Couldn't parse the specified URI."}
 	InvalidArgument         = APIError{"InvalidArgument", http.StatusBadRequest, "Invalid Argument."}
 	InvalidRequest          = APIError{codeInvalidRequest, http.StatusBadRequest, "Invalid Request."}
+	MalformedPOSTRequest    = APIError{
+		"MalformedPOSTRequest", http.StatusBadRequest,
+		"The body of your POST request is not well-formed multipart/form-data.",
+	}
 	MalformedXML            = APIError{"MalformedXML", http.StatusBadRequest, "The XML you provided was not well-formed or did not validate against our published schema."}
 	MissingContentLength    = APIError{"MissingContentLength", http.StatusLengthRequired, "You must provide the Content-Length HTTP header."}
 	InvalidPart             = APIError{"InvalidPart", http.StatusBadRequest, "One or more of the specified parts could not be found."}
@@ -123,6 +127,8 @@ func FromError(err error) APIError {
 		return InvalidArgument
 	case errors.Is(err, fs.ErrEntityTooSmall):
 		return EntityTooSmall
+	case errors.Is(err, fs.ErrAccessDenied):
+		return AccessDenied
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
 	case errors.Is(err, fs.ErrInvalidDigest):

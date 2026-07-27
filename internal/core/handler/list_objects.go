@@ -315,8 +315,13 @@ func decodeContinuationToken(token string) string {
 
 // writeXML writes an S3 XML response with the standard header.
 func writeXML(ctx context.Context, w http.ResponseWriter, r *http.Request, v any) {
+	writeXMLStatus(ctx, w, r, http.StatusOK, v)
+}
+
+// writeXMLStatus renders an XML document under a chosen status code.
+func writeXMLStatus(ctx context.Context, w http.ResponseWriter, r *http.Request, status int, v any) {
 	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 
 	if _, err := w.Write([]byte(xml.Header)); err != nil {
 		renderError(ctx, w, r, err)
