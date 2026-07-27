@@ -272,6 +272,49 @@ func (s Service) BucketOwner(ctx context.Context, bucket string) (fs.Owner, erro
 	return owned.BucketOwner(ctx, bucket)
 }
 
+// BucketCORS implements fs.BucketCORSStore. A backend that cannot store rules
+// reports none, which the S3 layer renders as NoSuchCORSConfiguration.
+func (s Service) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSRule, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketCORSStore)
+	if !ok {
+		return nil, nil
+	}
+
+	return store.BucketCORS(ctx, bucket)
+}
+
+// SetBucketCORS implements fs.BucketCORSStore.
+func (s Service) SetBucketCORS(ctx context.Context, bucket string, rules []fs.CORSRule) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketCORSStore)
+	if !ok {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store CORS rules")
+	}
+
+	return store.SetBucketCORS(ctx, bucket, rules)
+}
+
+// DeleteBucketCORS implements fs.BucketCORSStore.
+func (s Service) DeleteBucketCORS(ctx context.Context, bucket string) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketCORSStore)
+	if !ok {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store CORS rules")
+	}
+
+	return store.DeleteBucketCORS(ctx, bucket)
+}
+
 // ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
 // when it can describe an object without opening it, and reporting
 // ErrUnsupportedOperation when it cannot.

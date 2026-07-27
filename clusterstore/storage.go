@@ -459,3 +459,18 @@ func (s *Storage) ObjectAttributes(ctx context.Context, bucket, key string) (*fs
 		UploadID:     sc.UploadID,
 	}, nil
 }
+
+// BucketCORS implements fs.BucketCORSStore.
+func (s *Storage) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSRule, error) {
+	return s.coord.BucketCORS(ctx, bucket)
+}
+
+// SetBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) SetBucketCORS(ctx context.Context, bucket string, rules []fs.CORSRule) error {
+	return s.coord.SetBucketCORS(ctx, bucket, rules)
+}
+
+// DeleteBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) DeleteBucketCORS(ctx context.Context, bucket string) error {
+	return s.coord.SetBucketCORS(ctx, bucket, nil)
+}

@@ -57,6 +57,8 @@ type BucketInfo struct {
 	// Owner is the principal that created the bucket; absent for buckets
 	// created before ownership was recorded.
 	Owner fs.Owner `json:"owner,omitzero"`
+	// CORS is the bucket's rule set, as set through the ?cors subresource.
+	CORS []fs.CORSRule `json:"cors,omitempty"`
 	// Scheme overrides the cluster default replication scheme for this
 	// bucket's objects ("rf2.5", "rf3", "ec:k,m"); empty applies the default.
 	// Changing it affects new writes immediately; existing objects follow
@@ -220,6 +222,31 @@ func (c *Coordinator) SetBucketACL(ctx context.Context, bucket string, acl fs.AC
 	info.ACL = acl
 
 	return c.writeBucket(ctx, topo, info)
+}
+
+// SetBucketCORS rewrites the bucket record with a new CORS rule set; nil
+// clears it.
+func (c *Coordinator) SetBucketCORS(ctx context.Context, bucket string, rules []fs.CORSRule) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.CORS = rules
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// BucketCORS returns the bucket's CORS rule set, nil when it has none.
+func (c *Coordinator) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSRule, error) {
+	info, err := c.fetchBucket(ctx, c.topo.Topology(), bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return info.CORS, nil
 }
 
 // SetBucketScheme rewrites the bucket record with a new object scheme

@@ -83,9 +83,10 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 		inner = authMiddleware(o.authenticator, s, o.ownerIsolation, inner)
 	}
 
-	if o.cors != nil {
-		inner = corsMiddleware(o.cors, inner)
-	}
+	// Always installed: a bucket can carry CORS rules of its own now, so
+	// whether cross-origin requests are answered is no longer decided by
+	// whether the deployment configured any.
+	inner = corsMiddleware(o.cors, s, inner)
 
 	return withRequestID(optionsGuard(inner))
 }
@@ -172,6 +173,8 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case q.Has("location"):
 			h.GetBucketLocation(w, r)
+		case q.Has("cors"):
+			h.GetBucketCORS(w, r)
 		case q.Has("versions"):
 			h.ListObjectVersions(w, r)
 		case q.Has("uploads"):
@@ -184,6 +187,11 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.ListObjectsV1(w, r)
 		}
 	case http.MethodPut:
+		if q.Has("cors") {
+			h.PutBucketCORS(w, r)
+			return
+		}
+
 		if hasUnsupportedBucketSubresource(q) {
 			s3err.WriteAPI(w, r, s3err.NotImplemented)
 			return
@@ -193,6 +201,11 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 	case http.MethodHead:
 		h.HeadBucket(w, r)
 	case http.MethodDelete:
+		if q.Has("cors") {
+			h.DeleteBucketCORS(w, r)
+			return
+		}
+
 		if hasUnsupportedBucketSubresource(q) {
 			s3err.WriteAPI(w, r, s3err.NotImplemented)
 			return
@@ -264,7 +277,7 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 // server does not implement; requests carrying them get a NotImplemented error
 // rather than being misinterpreted as a plain listing or create.
 var unsupportedBucketSubresources = []string{
-	"accelerate", "acl", "analytics", "cors", "encryption", "inventory",
+	"accelerate", "acl", "analytics", "encryption", "inventory",
 	"lifecycle", "logging", "metrics", "notification", "object-lock",
 	"ownershipControls", "policy", "policyStatus", "publicAccessBlock",
 	"replication", "requestPayment", "tagging", "versioning", "website",

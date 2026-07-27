@@ -53,6 +53,8 @@ type bucket struct {
 	// owner is the principal that created the bucket; zero when created
 	// without an identity.
 	owner fs.Owner
+	// cors is the rule set set through the ?cors subresource.
+	cors []fs.CORSRule
 }
 
 // objectState is the state conditional requests are evaluated against. The
@@ -699,4 +701,37 @@ func (s *Storage) ObjectAttributes(_ context.Context, bucketName, key string) (*
 		Parts:        append([]fs.ObjectPart(nil), obj.parts...),
 		UploadID:     obj.uploadID,
 	}, nil
+}
+
+// BucketCORS implements fs.BucketCORSStore.
+func (s *Storage) BucketCORS(_ context.Context, bucketName string) ([]fs.CORSRule, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	return append([]fs.CORSRule(nil), b.cors...), nil
+}
+
+// SetBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) SetBucketCORS(_ context.Context, bucketName string, rules []fs.CORSRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.ErrBucketNotFound
+	}
+
+	b.cors = append([]fs.CORSRule(nil), rules...)
+
+	return nil
+}
+
+// DeleteBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) DeleteBucketCORS(ctx context.Context, bucketName string) error {
+	return s.SetBucketCORS(ctx, bucketName, nil)
 }

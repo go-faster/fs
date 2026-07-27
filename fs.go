@@ -3,6 +3,7 @@ package fs
 
 import (
 	"io"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,48 @@ type ObjectMetadata struct {
 func (m ObjectMetadata) IsZero() bool {
 	return m.ContentType == "" && m.CacheControl == "" && m.ContentDisposition == "" &&
 		m.ContentEncoding == "" && m.Expires == "" && len(m.UserMetadata) == 0
+}
+
+// CORSRule allows cross-origin requests matching AllowedOrigins and
+// AllowedMethods. It lives here, rather than in the cors package, because a
+// bucket's rules are stored with the bucket; the cors package aliases it.
+type CORSRule struct {
+	AllowedOrigins []string
+	AllowedMethods []string
+	AllowedHeaders []string
+	ExposeHeaders  []string
+	MaxAgeSeconds  int
+}
+
+// AllowsHeaders reports whether the rule permits every requested header (the
+// comma-separated Access-Control-Request-Headers value).
+func (r *CORSRule) AllowsHeaders(requested string) bool {
+	if requested == "" {
+		return true
+	}
+
+	for h := range strings.SplitSeq(requested, ",") {
+		if h = strings.TrimSpace(h); h == "" {
+			continue
+		}
+
+		if !corsHeaderAllowed(r.AllowedHeaders, h) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// corsHeaderAllowed reports whether one requested header is permitted.
+func corsHeaderAllowed(allowed []string, header string) bool {
+	for _, a := range allowed {
+		if a == "*" || strings.EqualFold(a, header) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Tag is a single object tag.

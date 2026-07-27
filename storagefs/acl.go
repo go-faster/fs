@@ -23,6 +23,8 @@ type bucketMeta struct {
 	// Owner is the principal that created the bucket; absent for buckets
 	// created before ownership was recorded.
 	Owner fs.Owner `json:"owner,omitzero"`
+	// CORS is the bucket's rule set, as set through the ?cors subresource.
+	CORS []fs.CORSRule `json:"cors,omitempty"`
 }
 
 func (s *Storage) bucketMetaPath(bucket string) string {
@@ -149,4 +151,36 @@ func normalizeACL(a fs.ACL) fs.ACL {
 	}
 
 	return a
+}
+
+// BucketCORS implements fs.BucketCORSStore.
+func (s *Storage) BucketCORS(_ context.Context, bucket string) ([]fs.CORSRule, error) {
+	if !s.bucketExists(bucket) {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	return s.readBucketMeta(bucket).CORS, nil
+}
+
+// SetBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) SetBucketCORS(_ context.Context, bucket string, rules []fs.CORSRule) error {
+	if !s.bucketExists(bucket) {
+		return fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	meta := s.readBucketMeta(bucket)
+	meta.CORS = rules
+
+	return s.writeBucketMeta(bucket, meta)
+}
+
+// DeleteBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) DeleteBucketCORS(ctx context.Context, bucket string) error {
+	return s.SetBucketCORS(ctx, bucket, nil)
 }

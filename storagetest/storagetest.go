@@ -119,6 +119,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Attributes/PartLayout":                 testObjectAttributesPartLayout,
 	"Keyspace/OverlappingKeys":              testOverlappingKeys,
 	"Ownership/BucketOwner":                 testBucketOwner,
+	"CORS/RoundTrip":                        testBucketCORS,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1193,6 +1194,47 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testBucketCORS covers fs.BucketCORSStore: rules survive a round trip, and a
+// bucket without them reports none rather than an error, which is what the S3
+// layer turns into NoSuchCORSConfiguration.
+func testBucketCORS(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	store, ok := storage.(fs.BucketCORSStore)
+	if !ok {
+		t.Skip("backend does not store CORS rules")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	rules, err := store.BucketCORS(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, rules)
+
+	want := []fs.CORSRule{{
+		AllowedOrigins: []string{"https://example.com", "*.suffix"},
+		AllowedMethods: []string{"GET", "PUT"},
+		AllowedHeaders: []string{"*"},
+		ExposeHeaders:  []string{"x-amz-meta-one"},
+		MaxAgeSeconds:  3000,
+	}}
+
+	require.NoError(t, store.SetBucketCORS(ctx, testBucket, want))
+
+	got, err := store.BucketCORS(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
+	require.NoError(t, store.DeleteBucketCORS(ctx, testBucket))
+
+	got, err = store.BucketCORS(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	_, err = store.BucketCORS(ctx, testBucket+"-absent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
 // testBucketOwner covers fs.BucketOwnership: a bucket remembers who created
