@@ -37,3 +37,30 @@ observability:
   enable_metrics: true
   enable_tracing: true
 
+
+# Server-side encryption of object bodies at rest (SSE-S3).
+#
+# Off unless a master key is given. It is deliberately not defaulted on with a
+# generated key: a key this server invents and stores next to the data protects
+# against nothing an attacker holding the disk cannot undo. The key has to come
+# from somewhere the disk does not.
+#
+# Losing every master key loses the data. There is no recovery path — that is
+# what encryption at rest means.
+#
+# encryption:
+#   # 32 bytes, as 64 hex characters, standard base64, or raw. Prefer the
+#   # FS_MASTER_KEY environment variable, which overrides this and is what most
+#   # secret stores can inject.
+#   master_key_file: "/run/secrets/fs-master-key"
+#
+#   # Encrypt every object, including requests that do not ask. Without this,
+#   # encryption applies only where the client sends
+#   # x-amz-server-side-encryption.
+#   default_algorithm: "AES256"
+#
+#   # Keys kept only to read objects written before a rotation. Remove an entry
+#   # once nothing is wrapped by it — earlier, and those objects become
+#   # unreadable.
+#   # previous_key_files:
+#   #   - "/run/secrets/fs-master-key.old"

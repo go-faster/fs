@@ -62,6 +62,14 @@ func WithOwnerIsolation(enabled bool) HandlerOption {
 	}
 }
 
+// WithDefaultEncryption encrypts every object whose request does not name an
+// algorithm; see handler.WithDefaultEncryption. Off by default.
+func WithDefaultEncryption(algorithm string) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithDefaultEncryption(algorithm))
+	}
+}
+
 // WithRegion sets the region name reported by GetBucketLocation. Empty (the
 // default) reports the S3 default region as an empty location constraint.
 func WithRegion(region string) HandlerOption {
@@ -103,6 +111,12 @@ type Config struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
+
+	// DefaultEncryption applies server-side encryption ("AES256") to every
+	// object whose request does not name an algorithm. Empty leaves it to the
+	// request. The Storage must be able to encrypt, or such writes are
+	// refused rather than stored in the clear.
+	DefaultEncryption string
 
 	// HealthPath is the path serving a plaintext "OK" liveness check. Defaults to
 	// DefaultHealthPath ("/health"). Set to "-" to disable the health endpoint.
@@ -277,6 +291,10 @@ func (s *Server) buildHandler() http.Handler {
 
 	if s.cfg.OwnerIsolation {
 		opts = append(opts, WithOwnerIsolation(true))
+	}
+
+	if s.cfg.DefaultEncryption != "" {
+		opts = append(opts, WithDefaultEncryption(s.cfg.DefaultEncryption))
 	}
 
 	mux := http.NewServeMux()

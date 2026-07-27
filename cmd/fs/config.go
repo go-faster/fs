@@ -44,6 +44,9 @@ type Config struct {
 	// Integrity configuration
 	Integrity IntegrityConfig `yaml:"integrity"`
 
+	// Encryption configures server-side encryption of object bodies at rest.
+	Encryption EncryptionConfig `yaml:"encryption,omitempty"`
+
 	// Observability configuration
 	Observability ObservabilityConfig `yaml:"observability"`
 
@@ -590,6 +593,10 @@ func (c *Config) Validate() error {
 
 	if c.Server.IdleTimeout <= 0 {
 		return errors.New("server.idle_timeout must be positive")
+	}
+
+	if err := c.Encryption.Validate(); err != nil {
+		return err
 	}
 
 	if c.Observability.ServiceName == "" {

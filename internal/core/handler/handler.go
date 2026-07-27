@@ -25,16 +25,27 @@ type handler struct {
 	// region is the location constraint reported for every bucket. Empty means
 	// the S3 default (us-east-1), which is reported as an empty constraint.
 	region string
+	// defaultEncryption is the algorithm applied to a write that does not name
+	// one. Empty leaves objects unencrypted unless the request asks.
+	defaultEncryption string
 }
 
 // Option configures the handler built by New.
 type Option func(*options)
 
 type options struct {
-	authenticator  Authenticator
-	cors           CORSResolver
-	region         string
-	ownerIsolation bool
+	authenticator     Authenticator
+	cors              CORSResolver
+	region            string
+	ownerIsolation    bool
+	defaultEncryption string
+}
+
+// WithDefaultEncryption encrypts every object whose request does not say
+// otherwise, with algorithm ("AES256"). Empty (the default) leaves encryption
+// to the request.
+func WithDefaultEncryption(algorithm string) Option {
+	return func(o *options) { o.defaultEncryption = algorithm }
 }
 
 // WithAuthenticator enables SigV4 authentication and grant-based authorization
@@ -80,7 +91,7 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 		opt(&o)
 	}
 
-	h := handler{service: s, region: o.region}
+	h := handler{service: s, region: o.region, defaultEncryption: o.defaultEncryption}
 	if o.authenticator != nil {
 		h.postSecret = o.authenticator.Secret
 	}

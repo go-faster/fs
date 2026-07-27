@@ -66,6 +66,8 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 
 	w.Header().Set("Accept-Ranges", "bytes")
 
+	writeSSE(w, resp.ServerSideEncryption)
+
 	// S3 reports how many tags an object carries so a client can tell "no tags"
 	// from "tags I have not fetched" without a second request.
 	if resp.TagCount > 0 {

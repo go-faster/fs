@@ -202,9 +202,15 @@ Command-line flags override YAML configuration values.`,
 						return errors.Wrap(err, "storage fsync policy")
 					}
 
+					keyring, err := cfg.Encryption.Keyring()
+					if err != nil {
+						return errors.Wrap(err, "server-side encryption")
+					}
+
 					fsStorage, err := storagefs.New(absRoot,
 						storagefs.WithSyncPolicy(syncPolicy),
 						storagefs.WithVerifyReads(cfg.Integrity.VerifyOnRead),
+						storagefs.WithEncryption(keyring),
 					)
 					if err != nil {
 						return fmt.Errorf("failed to create storage: %w", err)
@@ -221,6 +227,14 @@ Command-line flags override YAML configuration values.`,
 					zap.String("fsync", cfg.Storage.Fsync),
 					zap.Bool("verify_on_read", cfg.Integrity.VerifyOnRead),
 					zap.String("storage_type", cfg.Storage.Type),
+				)
+
+				// Whether bodies are encrypted is the kind of thing an operator
+				// must be able to confirm from the log rather than infer.
+				lg.Info("Encryption",
+					zap.Bool("at_rest", cfg.Encryption.Enabled()),
+					zap.String("default_algorithm", cfg.Encryption.DefaultAlgorithm),
+					zap.Int("retired_keys", len(cfg.Encryption.PreviousKeyFiles)),
 				)
 
 				// Build the credential store now that the storage backend (and,
@@ -288,9 +302,11 @@ Command-line flags override YAML configuration values.`,
 					HealthPath:     cfg.Server.HealthPath,
 					Region:         cfg.Server.Region,
 					OwnerIsolation: cfg.Auth.OwnerIsolation,
-					Buckets:        cfg.Storage.Buckets,
-					Auth:           authStore,
-					WrapHandler:    wrap,
+
+					DefaultEncryption: cfg.Encryption.DefaultAlgorithm,
+					Buckets:           cfg.Storage.Buckets,
+					Auth:              authStore,
+					WrapHandler:       wrap,
 					// Readiness probes storage reachability (health is liveness only).
 					Ready: func(ctx context.Context) error {
 						_, err := storage.ListBuckets(ctx)
