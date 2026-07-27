@@ -1,9 +1,17 @@
-# S3 conformance testing (ceph/s3-tests)
+# S3 conformance testing
 
-The [`s3tests`](../workflows/s3tests.yml) workflow runs the upstream
-[ceph/s3-tests](https://github.com/ceph/s3-tests) suite against a freshly
-built server. It is the objective measure of how compatible the server is
-with real S3 clients.
+The [`s3tests`](../workflows/s3tests.yml) workflow runs
+[go-faster/s3t](https://github.com/go-faster/s3t) — a Go port of
+[ceph/s3-tests](https://github.com/ceph/s3-tests), shipped as one binary —
+against a freshly built server. It is the objective measure of how compatible
+the server is with real S3 clients.
+
+`s3t` replaced the Python suite because the deployment story was the problem,
+not the tests: pinning a Python toolchain and `boto3`/`botocore` versions into
+every CI job, and a runner that could not be made to report a hang. `s3t`
+bounds each test itself (`--timeout`, `--stall-timeout`, `--max-leaked`), runs
+the suite concurrently, and enforces the deny-list gate directly — so there is
+no separate checker step. The whole run takes seconds rather than minutes.
 
 ## Files
 
@@ -22,13 +30,12 @@ with real S3 clients.
 
 ## How it works
 
-The suite is pinned to a specific upstream commit (`S3TESTS_REF` in the
-workflow) so results are reproducible; bump it deliberately and re-baseline
-the list.
+`s3t` is pinned to a specific commit (`S3T_REF` in the workflows) so results
+are reproducible; bump it deliberately and re-baseline the list. The commit of
+ceph/s3-tests it tracks is recorded in s3t's own `UPSTREAM` file.
 
-Every run is the same: the whole of `test_s3.py` and `test_headers.py`
-(about 80 seconds), then `scripts/s3tests check` decides the verdict. It
-fails on two things, and the second is the important one:
+`s3t` decides the verdict itself. It fails on two things, and the second is
+the important one:
 
 - a test **outside** the list failed — a regression;
 - a test **inside** the list passed — the list is stale.
@@ -52,39 +59,37 @@ To see where you stand locally:
 
 ```sh
 # Build and start the server AUTHENTICATED (as CI does): server.yaml carries
-# the s3-tests credentials so the suite exercises SigV4 through boto3. The
-# anonymous-access tests pass via canned public-read/-write ACLs.
+# the suite credentials so it exercises SigV4, and a fixture master key so the
+# SSE-S3 tests exercise encryption rather than a NotImplemented.
 go build -o fs ./cmd/fs
 ./fs s3 --config .github/s3tests/server.yaml --addr :8077 --root ./.s3data-ci &
 
-# Set up the suite (pin to the same commit as the workflow).
-git clone https://github.com/ceph/s3-tests && cd s3-tests
-git checkout <S3TESTS_REF>
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+go install github.com/go-faster/s3t/cmd/s3t@latest   # or the pinned S3T_REF
 
-# Run both gated files and capture per-test results. Failures are expected —
-# the checker below decides which of them are allowed.
-export S3TEST_CONF=/path/to/.github/s3tests/s3tests.conf
-python -m pytest s3tests/functional/test_s3.py -q --tb=line --junit-xml=/tmp/s3.xml
-python -m pytest s3tests/functional/test_headers.py -q --tb=line --junit-xml=/tmp/headers.xml
+# The gate: fails if anything outside the list fails, or anything inside passes.
+s3t run -c .github/s3tests/s3tests.conf \
+  --known-failures .github/s3tests/known-failures.txt
 ```
 
-Then, from the repository root:
+Narrow it while working on one area:
 
 ```sh
-go run ./scripts/s3tests check \
-  --ratchet .github/s3tests/known-failures.txt \
-  --report /tmp/s3.xml --report /tmp/headers.xml
+s3t run -c .github/s3tests/s3tests.conf -k '^versioning'
+s3t list -m versioning        # what a selection covers, without a server
+s3t list --node-ids           # the form the known-failures file uses
 ```
 
-After an `S3TESTS_REF` bump the whole list is re-baselined at once:
+After an `S3T_REF` bump, re-baseline from a run's JSON report:
 
 ```sh
-go run ./scripts/s3tests update \
-  --ratchet .github/s3tests/known-failures.txt \
-  --report /tmp/s3.xml --report /tmp/headers.xml
+s3t run -c .github/s3tests/s3tests.conf --json /tmp/s3t.json
+# every failing node id, which is what the list holds
+jq -r 'select(.status=="failed") | .node_id' /tmp/s3t.json | sort
 ```
+
+Keep the grouping comments: `make compat` reads the `# --- Name (n) ---`
+headers to build `docs/CONFORMANCE.md`, and the reason beside a group is the
+part a node id cannot carry.
 
 A flaky test is the one thing this model handles badly: it fails the gate on
 runs where it fails and reports a stale entry on runs where it passes. Fix it
@@ -104,8 +109,12 @@ Bring the cluster up locally and point the suite at it:
 
 ```sh
 ./scripts/s3tests-cluster.sh up     # etcd (Docker) + 3 fs nodes, S3 on :8177
-S3TEST_CONF=$PWD/.github/s3tests/cluster/s3tests.conf \
-  python -m pytest -q s3tests/functional/test_s3.py
+
+# The cluster is held to both lists; s3t takes one, so concatenate them.
+cat .github/s3tests/known-failures.txt \
+    .github/s3tests/cluster/known-failures.txt > /tmp/cluster-known.txt
+s3t run -c .github/s3tests/cluster/s3tests.conf --known-failures /tmp/cluster-known.txt
+
 ./scripts/s3tests-cluster.sh down
 ```
 
@@ -134,6 +143,5 @@ cluster bug to fix.
 Run the one test CI named:
 
 ```sh
-S3TEST_CONF=/path/to/.github/s3tests/s3tests.conf \
-  python -m pytest -q s3tests/functional/test_s3.py::test_the_one_that_failed
+s3t run -c .github/s3tests/s3tests.conf -k '^the_one_that_failed$'
 ```

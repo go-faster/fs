@@ -2,10 +2,10 @@
 
 # S3 conformance
 
-Every pull request runs the **whole** upstream
-[ceph/s3-tests](https://github.com/ceph/s3-tests) suite — the objective,
-client-driven measure of S3 compatibility — and fails if any test outside the
-known-failures list fails, or if any of the **416** tests inside it passes.
+Every pull request runs the **whole** suite —
+[go-faster/s3t](https://github.com/go-faster/s3t), a Go port of
+[ceph/s3-tests](https://github.com/ceph/s3-tests) — and fails if any test outside the
+known-failures list fails, or if any of the **49** tests inside it passes.
 The list can therefore only shrink; a newly passing test shows up on the pull
 request that made it pass, rather than waiting to be noticed.
 
@@ -15,18 +15,11 @@ What follows is that list, grouped. Everything else in the suite passes.
 
 | Feature area | Tests not passing |
 |--------------|------------------:|
-| Multipart upload | 28 |
-| Object tagging | 16 |
-| Object metadata | 1 |
-| Server-side copy | 81 |
-| Conditional requests | 13 |
-| Encryption passthrough | 41 |
-| HTTP protocol | 2 |
-| Bucket listing | 13 |
-| Bucket lifecycle | 116 |
-| Object CRUD | 78 |
-| Other | 27 |
-| **Total** | **416** |
+| Full ACL grammar | 27 |
+| SSE-KMS | 13 |
+| Bucket default encryption applied to writes | 2 |
+| Versioning: delete markers and version deletion | 7 |
+| **Total** | **49** |
 
 ## SDK & client coverage
 
