@@ -125,27 +125,69 @@ func (h *handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 	// with its S3 error code.
 	for _, obj := range req.Objects {
 		cond, err := obj.conditions()
+
+		var deleted DeletedObject
+
 		if err == nil {
-			err = h.deleteWithConditions(r, bucket, obj.Key, cond)
+			deleted, err = h.deleteOne(r, bucket, obj, cond)
 		}
 
 		if err != nil && !errors.Is(err, fs.ErrObjectNotFound) {
 			api := s3err.FromError(err)
 			result.Errors = append(result.Errors, DeleteError{
-				Key:     obj.Key,
-				Code:    api.Code,
-				Message: api.Message,
+				Key:       obj.Key,
+				Code:      api.Code,
+				Message:   api.Message,
+				VersionId: obj.VersionId,
 			})
 
 			continue
 		}
 
 		if !req.Quiet {
-			result.Deleted = append(result.Deleted, DeletedObject{Key: obj.Key})
+			result.Deleted = append(result.Deleted, deleted)
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 	_ = xml.NewEncoder(w).Encode(result)
+}
+
+// deleteOne deletes a single entry of a batch, reporting it the way S3 does.
+//
+// A batch delete on a versioned bucket has the same two shapes as a single
+// one: an entry naming a version removes it, and an entry without one leaves a
+// delete marker. The result element differs between them — a marker reports
+// its own new id — and a client uses that to tell which happened.
+func (h *handler) deleteOne(
+	r *http.Request, bucket string, obj ObjectToDelete, cond fs.Conditions,
+) (DeletedObject, error) {
+	if versioner, ok := h.service.(fs.Versioner); ok && cond.IsZero() {
+		result, err := versioner.DeleteObjectVersion(r.Context(), bucket, obj.Key, obj.VersionId)
+
+		switch {
+		case err == nil:
+		case errors.Is(err, fs.ErrObjectNotFound):
+		case errors.Is(err, fs.ErrUnsupportedOperation):
+			// A backend that cannot version: fall through to a plain delete.
+			return DeletedObject{Key: obj.Key}, h.deleteWithConditions(r, bucket, obj.Key, cond)
+		default:
+			return DeletedObject{}, err
+		}
+
+		out := DeletedObject{Key: obj.Key}
+
+		if result.DeleteMarker {
+			out.DeleteMarker = true
+			out.DeleteMarkerVersionId = result.VersionID
+		} else {
+			out.VersionId = result.VersionID
+		}
+
+		return out, nil
+	}
+
+	return DeletedObject{Key: obj.Key, VersionId: obj.VersionId},
+		h.deleteWithConditions(r, bucket, obj.Key, cond)
 }

@@ -459,6 +459,22 @@ func (s Service) ListObjectVersions(
 	return versioner.ListObjectVersions(ctx, req)
 }
 
+// DeleteObjectVersion implements fs.Versioner.
+func (s Service) DeleteObjectVersion(
+	ctx context.Context, bucket, key, versionID string,
+) (fs.DeleteResult, error) {
+	versioner, err := s.versioner(bucket)
+	if err != nil {
+		return fs.DeleteResult{}, err
+	}
+
+	if err := validate.Key(key); err != nil {
+		return fs.DeleteResult{}, errors.Wrap(err, "validate object key")
+	}
+
+	return versioner.DeleteObjectVersion(ctx, bucket, key, versionID)
+}
+
 // versioner validates the bucket name and resolves the backend's versioning
 // capability.
 func (s Service) versioner(bucket string) (fs.Versioner, error) {

@@ -266,6 +266,28 @@ type Versioner interface {
 	// ListObjectVersions returns one page of a bucket's versions and delete
 	// markers, newest first within each key.
 	ListObjectVersions(ctx context.Context, req *ListObjectVersionsRequest) (*ListObjectVersionsResponse, error)
+	// DeleteObjectVersion performs a delete that is aware of versions, and is
+	// the only delete a versioned bucket should take.
+	//
+	// With an empty versionID it inserts a delete marker and reports its id:
+	// the key stops resolving, and every version written before it is still
+	// there. With a versionID it permanently removes exactly that version,
+	// which is the only way bytes actually leave a versioned bucket.
+	//
+	// On a bucket that is not versioned it deletes outright and reports a zero
+	// DeleteResult, so a caller does not have to ask about bucket state first.
+	DeleteObjectVersion(ctx context.Context, bucket, key, versionID string) (DeleteResult, error)
+}
+
+// DeleteResult describes what a delete did, which S3 reports in headers a
+// client uses to tell "the key is gone" from "the key now has a tombstone".
+type DeleteResult struct {
+	// VersionID is the delete marker's own version id, or the id of the
+	// version that was removed. Empty on an unversioned bucket.
+	VersionID string
+	// DeleteMarker reports that the delete inserted a marker rather than
+	// removing bytes.
+	DeleteMarker bool
 }
 
 // ObjectAttributer is the optional capability of describing an object without
