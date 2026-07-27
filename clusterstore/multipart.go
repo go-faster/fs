@@ -49,6 +49,10 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		return nil, err
 	}
 
+	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+		return nil, err
+	}
+
 	uploadID := uuid.New().String()
 
 	rec, err := s.coord.Put(ctx, &PutRequest{

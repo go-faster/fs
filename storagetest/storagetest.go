@@ -75,6 +75,8 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"PutObject/NestedKey":                   testPutObjectNestedKey,
 	"PutObject/Overwrite":                   testPutObjectOverwrite,
 	"PutObject/BucketNotFound":              testPutObjectBucketNotFound,
+	"PutObject/EncryptionNeverIgnored":      testEncryptionNeverIgnored,
+	"PutObject/EncryptionUnknownAlgorithm":  testEncryptionUnknownAlgorithmRefused,
 	"GetObject":                             testGetObject,
 	"GetObject/BucketNotFound":              testGetObjectBucketNotFound,
 	"GetObject/ObjectNotFound":              testGetObjectObjectNotFound,
@@ -1824,4 +1826,62 @@ func testACLObjectSetNotFound(t *testing.T, storage fs.Storage) {
 
 	require.ErrorIs(t, storage.SetObjectACL(ctx, testBucket, "nope.txt", fs.ACLPublicRead), fs.ErrObjectNotFound)
 	require.ErrorIs(t, storage.SetObjectACL(ctx, "missing", testObjectKey, fs.ACLPublicRead), fs.ErrBucketNotFound)
+}
+
+// testEncryptionNeverIgnored holds every backend to the same rule: a write
+// asking for server-side encryption is either encrypted or refused, never
+// stored in the clear and reported as done.
+//
+// It is written as a contract rather than a per-backend test because ignoring
+// an unknown field is the natural thing for a backend to do, and the result is
+// invisible — an object stored in the clear reads back perfectly, so nothing
+// downstream notices that the encryption a client asked for did not happen.
+func testEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	require.NoError(t, storage.CreateBucket(ctx, "bucket"))
+
+	body := []byte("should never be stored in the clear")
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Reader: bytes.NewReader(body), Bucket: "bucket", Key: "obj", Size: int64(len(body)),
+		ServerSideEncryption: "AES256",
+	})
+	if err != nil {
+		// Refused: the backend cannot encrypt and says so. Nothing may have
+		// been written.
+		require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
+
+		_, err = storage.GetObject(ctx, "bucket", "obj")
+		require.ErrorIs(t, err, fs.ErrObjectNotFound,
+			"a refused encrypted write must not leave an object behind")
+
+		return
+	}
+
+	// Accepted: the backend must report the object as encrypted, and must
+	// still return the plaintext.
+	resp, err := storage.GetObject(ctx, "bucket", "obj")
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Reader.Close() }()
+
+	require.NotEmpty(t, resp.ServerSideEncryption,
+		"the write was accepted as encrypted but the object does not report an algorithm")
+
+	got, err := io.ReadAll(resp.Reader)
+	require.NoError(t, err)
+	require.Equal(t, body, got)
+}
+
+// testEncryptionUnknownAlgorithmRefused: an algorithm no backend implements
+// must never be accepted, whatever the backend does about AES256.
+func testEncryptionUnknownAlgorithmRefused(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	require.NoError(t, storage.CreateBucket(ctx, "bucket"))
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Reader: bytes.NewReader([]byte("x")), Bucket: "bucket", Key: "obj", Size: 1,
+		ServerSideEncryption: "aws:kms",
+	})
+	require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
 }
