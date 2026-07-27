@@ -6,8 +6,8 @@ aspirations; keep it in sync when the structure changes (see
 
 ## Purpose and scope
 
-An S3-compatible object storage server for development and testing. It runs as
-a single node, without authentication, and returns S3 XML responses. It is
+An S3-compatible object storage server that runs as a single node or as a
+replicated, failure-domain-aware cluster, returning S3 XML responses. It is
 usable two ways:
 
 - as a **CLI** (`cmd/fs`) — a turnkey server with health checks, timeouts,
@@ -15,8 +15,18 @@ usable two ways:
 - as an **embeddable library** — mount the S3 handler into your own server, or
   run the managed `server.Server`, with a pluggable storage backend.
 
-Deliberate non-goals in the current scope: authentication, object versioning,
-and multi-node/replicated operation.
+**This document describes the single-node core** — the layers every deployment
+runs, from the HTTP wire down to a storage backend. Cluster mode composes with
+that core rather than modifying it: `clusterstore` is another `fs.Storage`
+implementation, so everything below holds unchanged when it is wired in. Its own
+packages (`clusterstore`, `internal/cluster/*`) are not yet described here; for
+those see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
+[docs/FAILURE-MODEL.md](docs/FAILURE-MODEL.md) and
+[docs/SIZING.md](docs/SIZING.md).
+
+Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
+lists as implemented is in, and everything in its "Not implemented" section
+returns a typed `NotImplemented`.
 
 ## Layered design
 
