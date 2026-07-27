@@ -210,7 +210,9 @@ func TestMasterKeyAbsolutePathUnchanged(t *testing.T) {
 	require.NoError(t, os.WriteFile(cfgPath, []byte(
 		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n  type: \"filesystem\"\n"+
 			"observability:\n  service_name: \"go-faster/fs\"\n"+
-			"encryption:\n  master_key_file: \""+keyPath+"\"\n"), 0o600))
+			// Single-quoted: YAML does not read backslash escapes there, and on
+			// Windows an absolute path is full of them.
+			"encryption:\n  master_key_file: '"+keyPath+"'\n"), 0o600))
 
 	cfg, err := LoadConfig(cfgPath)
 	require.NoError(t, err)
