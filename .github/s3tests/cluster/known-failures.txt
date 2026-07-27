@@ -38,19 +38,14 @@ s3tests/functional/test_s3.py::test_versioning_obj_list_marker
 s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite_suspended
 s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_removal
 
-# --- Server-side encryption on clusterstore (8) ------------------------------
+# --- Bucket default encryption on clusterstore (4) ---------------------------
 #
-# clusterstore cannot encrypt on this branch, so it refuses rather than
-# storing plaintext under a header claiming otherwise. The coordinator
-# encrypting before it fragments — so parity, repair and peer transfer stay
-# keyless — is #124's cluster half.
-#
-# Remove these once that lands and the node template carries a master key.
+# clusterstore encrypts now (#124) and the node template carries the fixture
+# master key, so the explicitly-encrypted uploads pass here as they do
+# single-node. What is left is the same gap the single-node list records: the
+# bucket's ?encryption default is stored and reported but not consulted on
+# these write paths.
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_1b
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_1kb
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_1mb
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_8mb
-s3tests/functional/test_s3.py::test_sse_s3_encrypted_upload_1b
-s3tests/functional/test_s3.py::test_sse_s3_encrypted_upload_1kb
-s3tests/functional/test_s3.py::test_sse_s3_encrypted_upload_1mb
-s3tests/functional/test_s3.py::test_sse_s3_encrypted_upload_8mb
