@@ -304,9 +304,10 @@ never listed as buckets.
   `aws-sdk-go-v2`) against an in-process server, exercising each SDK's own
   request encoding (path-style addressing, checksum trailers, error typing).
 - **S3 conformance CI** (`.github/workflows/s3tests.yml`) — the upstream
-  ceph/s3-tests suite, gated on a curated allow-list
-  (`.github/s3tests/allow.txt`). This is the objective measure of real-client
-  compatibility; grow the allow-list as features land.
+  ceph/s3-tests suite, run in full and gated on a deny-list
+  (`.github/s3tests/known-failures.txt`) that may only shrink. This is the
+  objective measure of real-client compatibility; delete lines as features
+  land.
   `docs/CONFORMANCE.md` is generated from it (`make compat`, drift-checked).
 - **CLI smoke matrix** (`.github/workflows/cli-smoke.yml`,
   `scripts/cli-smoke.sh`) — a live binary driven by aws-cli, MinIO `mc`,
