@@ -123,6 +123,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Keyspace/OverlappingKeys":              testOverlappingKeys,
 	"Ownership/BucketOwner":                 testBucketOwner,
 	"CORS/RoundTrip":                        testBucketCORS,
+	"Versioning/BucketState":                testBucketVersioningState,
 	"Settings/PublicAccessAndOwnership":     testBucketSettings,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
@@ -1198,6 +1199,38 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testBucketVersioningState covers the bucket half of fs.Versioner: the three
+// states, and the fact that "never configured" is one of them.
+func testBucketVersioningState(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	versioner, ok := storage.(fs.Versioner)
+	if !ok {
+		t.Skip("backend does not implement fs.Versioner")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	// A bucket nobody has configured is unset, which the S3 layer reports as
+	// no status at all — not as Suspended.
+	state, err := versioner.BucketVersioning(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, fs.VersioningUnset, state)
+
+	for _, want := range []fs.VersioningState{
+		fs.VersioningSuspended, fs.VersioningEnabled, fs.VersioningEnabled, fs.VersioningSuspended,
+	} {
+		require.NoError(t, versioner.SetBucketVersioning(ctx, testBucket, want))
+
+		got, err := versioner.BucketVersioning(ctx, testBucket)
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+	}
+
+	_, err = versioner.BucketVersioning(ctx, testBucket+"-absent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
 // testBucketCORS covers fs.BucketCORSStore: rules survive a round trip, and a

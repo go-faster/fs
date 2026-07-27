@@ -202,6 +202,8 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.GetBucketOwnershipControls(w, r)
 		case q.Has("encryption"):
 			h.GetBucketEncryption(w, r)
+		case q.Has("versioning"):
+			h.GetBucketVersioning(w, r)
 		case q.Has("versions"):
 			h.ListObjectVersions(w, r)
 		case q.Has("uploads"):
@@ -226,6 +228,8 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			return
 		case q.Has("encryption"):
 			h.PutBucketEncryption(w, r)
+		case q.Has("versioning"):
+			h.PutBucketVersioning(w, r)
 			return
 		}
 
@@ -327,7 +331,7 @@ var unsupportedBucketSubresources = []string{
 	"accelerate", "acl", "analytics", "inventory",
 	"lifecycle", "logging", "metrics", "notification", "object-lock",
 	"policy", "policyStatus",
-	"replication", "requestPayment", "tagging", "versioning", "website",
+	"replication", "requestPayment", "tagging", "website",
 }
 
 func hasUnsupportedBucketSubresource(q map[string][]string) bool {

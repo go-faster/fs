@@ -3,6 +3,7 @@ package fs
 
 import (
 	"io"
+	"sort"
 	"strings"
 	"time"
 )
@@ -62,6 +63,46 @@ func (m ObjectMetadata) IsZero() bool {
 		m.ContentEncoding == "" && m.Expires == "" && len(m.UserMetadata) == 0
 }
 
+// ObjectVersion is one entry of a version listing: a stored version, or a
+// delete marker recording that the key was deleted at that point.
+type ObjectVersion struct {
+	Key       string
+	VersionID string
+	// IsLatest reports that this is the key's current version.
+	IsLatest bool
+	// DeleteMarker reports that this entry records a deletion, not content.
+	DeleteMarker bool
+	Size         int64
+	ETag         string
+	LastModified time.Time
+	Owner        Owner
+}
+
+// ListObjectVersionsRequest describes one page of a version listing. It mirrors
+// ListObjectsRequest, with the version-aware cursor S3 uses: a key marker and,
+// within that key, a version marker.
+type ListObjectVersionsRequest struct {
+	Bucket    string
+	Prefix    string
+	Delimiter string
+	// KeyMarker and VersionIDMarker are the exclusive lower bound: listing
+	// resumes after that version of that key.
+	KeyMarker       string
+	VersionIDMarker string
+	Limit           int
+}
+
+// ListObjectVersionsResponse is one page of a version listing, newest version
+// first within each key.
+type ListObjectVersionsResponse struct {
+	Versions       []ObjectVersion
+	CommonPrefixes []string
+	IsTruncated    bool
+	// NextKeyMarker and NextVersionIDMarker are where the next page resumes.
+	NextKeyMarker       string
+	NextVersionIDMarker string
+}
+
 // CORSRule allows cross-origin requests matching AllowedOrigins and
 // AllowedMethods. It lives here, rather than in the cors package, because a
 // bucket's rules are stored with the bucket; the cors package aliases it.
@@ -103,6 +144,37 @@ func corsHeaderAllowed(allowed []string, header string) bool {
 
 	return false
 }
+
+// VersioningState is a bucket's versioning setting. The zero value means the
+// bucket was never versioned, which is a third state and not a synonym for
+// Suspended: a never-versioned bucket reports no status at all, and its
+// objects have no version IDs until the first enable adopts them as "null".
+//
+// A bucket moves unversioned -> Enabled -> Suspended -> Enabled -> ... and can
+// never go back to unversioned; that is S3's model, and it is what lets the
+// read path assume that a bucket with any versioning history keeps its
+// versions forever.
+type VersioningState string
+
+// The versioning states a bucket can be in.
+const (
+	// VersioningUnset is a bucket that has never had versioning configured.
+	VersioningUnset VersioningState = ""
+	// VersioningEnabled makes every write create a new version.
+	VersioningEnabled VersioningState = "Enabled"
+	// VersioningSuspended sends writes to the "null" version while retaining
+	// the versions written while it was enabled.
+	VersioningSuspended VersioningState = "Suspended"
+)
+
+// NullVersionID is the version ID of an object written while versioning was
+// suspended, and of one that predates the first enable.
+//
+// It is a real version ID, not a sentinel for "no version": clients send it,
+// listings report it, and a delete addressed at it removes exactly that
+// version. Code that treats it as equivalent to the empty string will work
+// until the first suspended write.
+const NullVersionID = "null"
 
 // PublicAccessBlock is a bucket's public-access-block configuration: four
 // independent switches over the ways a bucket can become publicly readable.
@@ -181,6 +253,9 @@ type PutObjectResponse struct {
 	// ServerSideEncryption echoes the algorithm the object was encrypted
 	// with, empty when it was stored in the clear.
 	ServerSideEncryption string
+	// VersionID names the version this write created, empty on a bucket that
+	// is not versioned.
+	VersionID string
 }
 
 // GetObjectResponse represents the response for GetObject operation.
@@ -190,6 +265,9 @@ type GetObjectResponse struct {
 	LastModified time.Time
 	ETag         string
 	Metadata     ObjectMetadata
+	// VersionID names the version served, empty on a bucket that is not
+	// versioned.
+	VersionID string
 	// TagCount is how many tags the object carries, reported on GET and HEAD
 	// as x-amz-tagging-count. Backends fill it from metadata they already read;
 	// zero means untagged (the header is then omitted).
@@ -328,4 +406,84 @@ type CompleteMultipartUploadResponse struct {
 	// ServerSideEncryption echoes the algorithm the completed object was
 	// encrypted with, empty when it was stored in the clear.
 	ServerSideEncryption string
+}
+
+// FoldVersionPage turns a bucket's gathered versions into one page: applies
+// the prefix and delimiter, orders keys ascending with each key's versions
+// newest-first, applies the key/version marker, and cuts at Limit.
+//
+// It lives here for the same reason FoldPage does: the rules are subtle enough
+// to get wrong in three places, and backends outside this repository implement
+// the same interface. The ordering is S3's — a version listing is a flat
+// sequence ordered by key, then by version age within the key.
+func (r *ListObjectVersionsRequest) FoldVersionPage(byKey map[string][]ObjectVersion) *ListObjectVersionsResponse {
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		if r.Prefix == "" || strings.HasPrefix(key, r.Prefix) {
+			keys = append(keys, key)
+		}
+	}
+
+	sort.Strings(keys)
+
+	out := &ListObjectVersionsResponse{}
+	seenPrefix := make(map[string]struct{})
+
+	limit := r.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	for _, key := range keys {
+		// Delimiter folding collapses a whole keyspace into one entry, exactly
+		// as it does for an object listing.
+		if r.Delimiter != "" {
+			rest := strings.TrimPrefix(key, r.Prefix)
+			if idx := strings.Index(rest, r.Delimiter); idx >= 0 {
+				folded := r.Prefix + rest[:idx+len(r.Delimiter)]
+				if _, ok := seenPrefix[folded]; ok {
+					continue
+				}
+
+				if folded <= r.KeyMarker {
+					continue
+				}
+
+				if len(out.Versions)+len(out.CommonPrefixes) >= limit {
+					out.IsTruncated = true
+					return out
+				}
+
+				seenPrefix[folded] = struct{}{}
+				out.CommonPrefixes = append(out.CommonPrefixes, folded)
+
+				continue
+			}
+		}
+
+		if key < r.KeyMarker {
+			continue
+		}
+
+		for _, v := range byKey[key] {
+			// Within the marker's own key, resume after the named version.
+			if key == r.KeyMarker && r.VersionIDMarker != "" && v.VersionID <= r.VersionIDMarker {
+				continue
+			}
+
+			if key == r.KeyMarker && r.VersionIDMarker == "" && r.KeyMarker != "" {
+				continue
+			}
+
+			if len(out.Versions)+len(out.CommonPrefixes) >= limit {
+				out.IsTruncated = true
+				return out
+			}
+
+			out.Versions = append(out.Versions, v)
+			out.NextKeyMarker, out.NextVersionIDMarker = v.Key, v.VersionID
+		}
+	}
+
+	return out
 }

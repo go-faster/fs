@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -20,7 +21,20 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, fs.ErrBucketNotFound
 	}
 
+	// On a versioned bucket the write lands in the key's version directory
+	// under its own ID; the plain key tree is not touched at all, so the two
+	// layouts never have to agree about anything.
+	versioned := s.versionedBucket(req.Bucket)
+
+	var versionID string
+
 	objectPath := filepath.Join(bucketPath, objectRelPath(req.Key))
+
+	if versioned {
+		versionID = fs.NewVersionID()
+		objectPath = s.versionBodyPath(req.Bucket, req.Key, versionID)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(objectPath), defaultDirPermissions); err != nil {
 		return nil, errors.Wrap(err, "create object directory")
 	}
@@ -102,7 +116,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	defer s.putMu.Unlock()
 
 	if cond := req.Conditions(); !cond.IsZero() {
-		state, err := s.currentObjectState(req.Bucket, req.Key, objectPath)
+		state, err := s.objectStateFor(req.Bucket, req.Key, bucketPath, versioned)
 		if err != nil {
 			_ = os.Remove(tmp.Name())
 			return nil, err
@@ -127,7 +141,19 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	sc := newSidecar(req.Key, etag, etag, req.Metadata, req.Tags, req.ACL, req.Owner)
 	sc.Encryption = enc.finish(size)
 
-	if err := s.writeSidecar(req.Bucket, sc); err != nil {
+	// A versioned write records the same sidecar under the version's own id,
+	// encryption record included, so a version reads back exactly as the
+	// current object would.
+	if versioned {
+		if err := s.writeVersionSidecar(req.Bucket, req.Key, &versionSidecar{
+			sidecar:   *sc,
+			VersionID: versionID,
+			Size:      size,
+			Modified:  time.Now().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			return nil, err
+		}
+	} else if err := s.writeSidecar(req.Bucket, sc); err != nil {
 		return nil, err
 	}
 
@@ -135,6 +161,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	return &fs.PutObjectResponse{
 		ETag:                 etag,
+		VersionID:            versionID,
 		ServerSideEncryption: req.ServerSideEncryption,
 	}, nil
 }

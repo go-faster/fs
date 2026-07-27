@@ -36,13 +36,13 @@ func (h *handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srcBucket, srcKey, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	source, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
 	if !ok {
 		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-copy-source"))
 		return
 	}
 
-	src, err := h.service.GetObject(ctx, srcBucket, srcKey)
+	src, err := h.getObjectVersion(ctx, source.Bucket, source.Key, source.VersionID)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return

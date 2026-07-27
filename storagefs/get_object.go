@@ -19,6 +19,18 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		return nil, fs.ErrBucketNotFound
 	}
 
+	// A key with versions is served from the newest one. This is checked
+	// before the plain path rather than after, because a bucket that was
+	// versioned and then suspended can have both: the versions written while
+	// it was enabled, and an older object from before the first enable. The
+	// versions are newer by construction.
+	switch current, err := s.currentVersionResponse(bucket, key); {
+	case err != nil:
+		return nil, err
+	case current != nil:
+		return current, nil
+	}
+
 	// #nosec G304 -- objectPath is constructed from validated bucket and key.
 	f, err := os.Open(objectPath)
 	if os.IsNotExist(err) {

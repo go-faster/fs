@@ -100,3 +100,9 @@ observability:
   enable_request_logging: false
   enable_metrics: false
   enable_tracing: false
+
+# Every node shares one master key, as a real deployment would: the coordinator
+# that seals a body and the one that opens it are not necessarily the same
+# node. Fixture key, all zeroes, protects nothing — see ../server.yaml.
+encryption:
+  master_key_file: ".github/s3tests/master.key"

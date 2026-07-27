@@ -59,6 +59,9 @@ type bucket struct {
 	publicAccessBlock *fs.PublicAccessBlock
 	// objectOwnership is the ?ownershipControls rule; empty when unset.
 	objectOwnership string
+	// versioning is the bucket's versioning state; empty means never
+	// configured, which is distinct from Suspended.
+	versioning fs.VersioningState
 }
 
 // objectState is the state conditional requests are evaluated against. The
@@ -824,4 +827,32 @@ func refuseEncryption(algorithm string) error {
 
 	return errors.Wrapf(fs.ErrUnsupportedOperation,
 		"server-side encryption (%s) is not supported by this storage backend", algorithm)
+}
+
+// SetBucketVersioning implements fs.Versioner.
+func (s *Storage) SetBucketVersioning(_ context.Context, bucketName string, state fs.VersioningState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.ErrBucketNotFound
+	}
+
+	b.versioning = state
+
+	return nil
+}
+
+// BucketVersioning implements fs.Versioner.
+func (s *Storage) BucketVersioning(_ context.Context, bucketName string) (fs.VersioningState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.VersioningUnset, fs.ErrBucketNotFound
+	}
+
+	return b.versioning, nil
 }

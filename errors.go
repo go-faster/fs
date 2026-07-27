@@ -13,6 +13,11 @@ var (
 	ErrPreconditionFailed   = errors.New("precondition failed")
 	// ErrAccessDenied reports a request the caller is not authorized to make.
 	ErrAccessDenied = errors.New("access denied")
+	// ErrMethodNotAllowedOnDeleteMarker reports a read addressed at a delete
+	// marker. A marker exists but has no content, which S3 distinguishes from
+	// a missing key: the caller asked for something that is there and cannot
+	// be read, not for something that is not there.
+	ErrMethodNotAllowedOnDeleteMarker = errors.New("method not allowed on a delete marker")
 	// ErrBucketOwnedBySomeoneElse reports a create against a bucket name that
 	// another principal already holds.
 	ErrBucketOwnedBySomeoneElse = errors.New("bucket owned by someone else")

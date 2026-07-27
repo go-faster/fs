@@ -1,33 +1,51 @@
 # Tests that pass against a single-node server but FAIL against a cluster.
-# The s3tests-cluster workflow honors ../known-failures.txt and ratchets this
-# file, so a test that fails on one node and passes on three is not listed
+#
+# The s3tests-cluster job honors ../known-failures.txt and gates on this file
+# as well, so a test that fails on one node and passes on three is not listed
 # here.
 #
-# This is a BUG LIST, not a scope statement. Contrast ../known-failures.txt,
-# where an entry means "not implemented / out of scope"; an entry here means
-# behaviour that already works on storagefs and does not on the replicated
-# data plane. Add one only to unblock CI while a fix is in flight, with the
-# root cause and the issue number, and take it out again with the fix.
+# This is a BUG LIST, not a scope statement. In ../known-failures.txt an entry
+# means "not implemented / out of scope"; an entry here means behaviour that
+# already works on storagefs and does not on the replicated data plane. Add one
+# only with the root cause and the issue number, and take it out with the fix.
 #
 # The 19 entries this file was created with are gone: they were four bugs
 # (#98 ranged GET, #99 conditional GET, #100 zero-byte Content-Length,
-# #101 chunked PutObject), all fixed. It was empty until the entries below.
+# #101 chunked PutObject), all fixed.
+
+# --- Object versioning on clusterstore (12) -----------------------------------
 #
-# --- Default bucket encryption on clusterstore (#124) -----------------------
+# clusterstore records a bucket's versioning state but does not keep object
+# versions: it implements the bucket half of fs.Versioner and neither
+# GetObjectVersion nor ListObjectVersions. A versioned write on the cluster
+# overwrites where it should create a version.
 #
-# ?encryption is served by backends that can encrypt, and clusterstore cannot
-# yet — the coordinator has to encrypt before it fragments, so that parity,
-# repair and peer transfer stay keyless, and that is not built. So it answers
-# NotImplemented where storagefs answers the configuration.
+# Deferred rather than unknown: mapping versions onto clusterstore's retained
+# generations is named in #123's own scope and is the part not in this pass.
+# Reading degrades correctly meanwhile — a ?versions listing on the cluster
+# reports each object as its own "null" version, which is what a
+# never-versioned bucket is.
+s3tests/functional/test_s3.py::test_multipart_copy_versioned
+s3tests/functional/test_s3.py::test_multipart_put_current_object_if_none_match
+s3tests/functional/test_s3.py::test_object_copy_versioned_bucket
+s3tests/functional/test_s3.py::test_object_copy_versioned_url_encoding
+s3tests/functional/test_s3.py::test_put_current_object_if_match
+s3tests/functional/test_s3.py::test_put_current_object_if_none_match
+s3tests/functional/test_s3.py::test_versioning_bucket_atomic_upload_return_version_id
+s3tests/functional/test_s3.py::test_versioning_bucket_create_suspend
+s3tests/functional/test_s3.py::test_versioning_copy_obj_version
+s3tests/functional/test_s3.py::test_versioning_obj_list_marker
+s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite_suspended
+s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_removal
+
+# --- Bucket default encryption on clusterstore (4) ---------------------------
 #
-# The alternative was to let clusterstore *store* a default it cannot honor,
-# which would pass these three and produce a bucket configured for an
-# encryption that never happens — every write to it refused, or worse,
-# accepted in the clear. Failing three tests is the better trade, and it is
-# the reason fs.BucketEncrypter is a separate capability rather than another
-# method on fs.BucketSettingsStore.
-#
-# Remove these with clusterstore encryption.
-s3tests/functional/test_s3.py::test_delete_bucket_encryption_s3
-s3tests/functional/test_s3.py::test_get_bucket_encryption_s3
-s3tests/functional/test_s3.py::test_put_bucket_encryption_s3
+# clusterstore encrypts now (#124) and the node template carries the fixture
+# master key, so the explicitly-encrypted uploads pass here as they do
+# single-node. What is left is the same gap the single-node list records: the
+# bucket's ?encryption default is stored and reported but not consulted on
+# these write paths.
+s3tests/functional/test_s3.py::test_sse_s3_default_upload_1b
+s3tests/functional/test_s3.py::test_sse_s3_default_upload_1kb
+s3tests/functional/test_s3.py::test_sse_s3_default_upload_1mb
+s3tests/functional/test_s3.py::test_sse_s3_default_upload_8mb

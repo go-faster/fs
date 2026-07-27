@@ -252,11 +252,16 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg}
 	s.handler = s.buildHandler()
 	s.http = &http.Server{
-		Addr:         cfg.Addr,
-		Handler:      s.handler,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		IdleTimeout:  cfg.IdleTimeout,
+		Addr:    cfg.Addr,
+		Handler: s.handler,
+		// ReadTimeout and WriteTimeout are deliberately left unset: they cap
+		// the duration of a whole transfer, which truncates large objects
+		// served to slow clients. withProgressDeadlines re-arms both as a
+		// no-progress deadline instead. ReadHeaderTimeout still bounds the
+		// part that has no body to make progress on — the request head, where
+		// a stalled peer is a slowloris.
+		ReadHeaderTimeout: cfg.ReadTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
 	if cfg.TLS != nil {
@@ -316,7 +321,9 @@ func (s *Server) buildHandler() http.Handler {
 		h = s.cfg.WrapHandler(h)
 	}
 
-	return h
+	// Outermost, so the deadlines cover every byte of the request and response
+	// including whatever WrapHandler adds.
+	return withProgressDeadlines(h, s.cfg.ReadTimeout, s.cfg.WriteTimeout)
 }
 
 // readyHandler runs the readiness probe: 200 when ready, 503 with the error

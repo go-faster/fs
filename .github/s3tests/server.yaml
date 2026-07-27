@@ -53,3 +53,10 @@ auth:
       grants:
         - bucket: "*"
           permission: admin
+
+# Server-side encryption, so the suite's SSE-S3 tests exercise the real thing
+# rather than a NotImplemented. The key below is a fixture in a public
+# repository and protects nothing — it exists so CI has one, and it is all
+# zeroes to make that unmistakable. Never use a key from a git history.
+encryption:
+  master_key_file: ".github/s3tests/master.key"

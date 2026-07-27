@@ -1,7 +1,6 @@
-# ceph/s3-tests: what passes, what is skipped, what fails
+# S3 conformance: what passes, what fails, and why
 
-A map of the upstream suite, grouped by **why** each cluster lands where it
-does. It exists so a reader can tell at a glance which failures are deliberate
+A map of the suite, grouped by **why** each cluster lands where it does. It exists so a reader can tell at a glance which failures are deliberate
 scope decisions and which are bugs worth fixing next — a raw pass count cannot
 make that distinction.
 
@@ -22,34 +21,43 @@ green**: deleting a line from the list is what CI demands, and updating a
 paragraph here is what it cannot. Treat the numbers as of their last refresh
 and the reasoning as the durable part; refresh them when a cluster moves.
 
-Counts are from `s3tests/functional/test_s3.py` at the pinned `S3TESTS_REF`,
-run against an authenticated single-node server on `storagefs`.
+Counts are from [go-faster/s3t](https://github.com/go-faster/s3t) at the
+pinned `S3T_REF`, run against an authenticated single-node server on
+`storagefs` with a fixture master key.
 
 ## Totals
 
 | Outcome | Tests |
 |---------|------:|
-| Passing | 305 |
-| Failing | 439 |
-| Skipped | 94 |
-| **Collected** | **838** |
+| Passing | 252 |
+| Failing | 49 |
+| **Ported** | **301** |
 
-`test_headers.py` is gated too: 48 collected, 25 passing. Of its 23 failures,
-13 are SigV2 (excluded as a retired algorithm), 6 are unpassable by any server
-(botocore re-signs the request they try to break, so they fail on RGW as well),
-2 are answered by Go's `net/http` before a handler runs (`Expect: 200` -> 417),
-and the rest need the bucket ACL grammar.
+The denominator changed with the harness: `s3t` is a port in progress and
+carries 301 of upstream's tests, so this is not comparable to the old
+838-test numbers. What *is* comparable is the shape of the failures, and the
+grouping below is unchanged.
 
-Passing here (305) exceeds this file's share of the gate (297) on purpose. A
-test is promoted only once it passes **deterministically across two runs**, and
-some passes are accidental —
-they pass because the operation is unimplemented and the test only asserts that
-*an* error is raised. Those are called out below and are never allow-listed.
+Cluster mode adds 20 more failures, listed in
+[`cluster/known-failures.txt`](cluster/known-failures.txt): object versioning
+and server-side encryption are not on `clusterstore` yet.
 
-## Skipped (94)
+`s3t` does not yet port `test_headers.py`, so the SigV2 and header-edge cases
+the old runs reported are simply not measured here rather than passing.
 
-Skips come from the suite itself, not from us: each needs a Ceph extension or a
-fixture the config cannot provide.
+Some passes are accidental — they pass because the operation is unimplemented
+and the test only asserts that *an* error is raised. Those are called out
+below; they count as passing because the suite says so, not because the
+feature is there.
+
+## Skipped
+
+`s3t` reports no skips for this configuration: the tests upstream skips for
+missing Ceph extensions, extra storage classes or a cloud endpoint are among
+those it has not ported.
+
+The old, unported skip breakdown, kept because it explains what is *not*
+coming back:
 
 | Reason | Tests |
 |--------|------:|
@@ -113,11 +121,15 @@ remaining `?acl` failures live.
 
 `x-amz-checksum-*` (CRC32, CRC32C, CRC64NVME, SHA1, SHA256) is not
 implemented: the algorithm is accepted and ignored, so the digest is neither
-verified nor reported. 11 tests. Note for whoever picks this up: a first
-attempt that verified the digest turned these from fast failures into client
-*hangs*, and the server was answering both the request and its retry with 400
-in milliseconds — the stall is on the client side after the second response,
-and worth understanding before landing the feature.
+verified nor reported. 11 tests.
+
+Note for whoever picks this up: a first attempt that verified the digest turned
+these from fast failures into client *hangs*, which is why the feature was
+backed out of #137. That stall has since been explained and fixed — the server
+was cutting off any response whose transfer outlived `WriteTimeout`, leaving
+the client waiting on a body short of the Content-Length it had been promised.
+It was never a checksum bug, and the obstacle that stopped the feature is no
+longer there.
 
 ### Assorted wire details
 

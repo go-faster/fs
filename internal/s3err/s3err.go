@@ -43,6 +43,10 @@ var (
 		"The server side encryption configuration was not found.",
 	}
 
+	IllegalVersioningConfiguration = APIError{
+		"IllegalVersioningConfigurationException", http.StatusBadRequest,
+		"The versioning configuration specified in the request is invalid.",
+	}
 	OwnershipControlsNotFound = APIError{
 		"OwnershipControlsNotFoundError", http.StatusNotFound,
 		"The bucket ownership controls were not found.",
@@ -132,6 +136,8 @@ func FromError(err error) APIError {
 		return InvalidArgument
 	case errors.Is(err, fs.ErrEntityTooSmall):
 		return EntityTooSmall
+	case errors.Is(err, fs.ErrMethodNotAllowedOnDeleteMarker):
+		return MethodNotAllowed
 	case errors.Is(err, fs.ErrAccessDenied):
 		return AccessDenied
 	case errors.Is(err, fs.ErrInvalidTag):

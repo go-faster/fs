@@ -520,3 +520,18 @@ func (s *Storage) BucketObjectOwnership(ctx context.Context, bucket string) (str
 func (s *Storage) SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error {
 	return s.coord.SetBucketObjectOwnership(ctx, bucket, ownership)
 }
+
+// SetBucketVersioning implements fs.Versioner.
+func (s *Storage) SetBucketVersioning(ctx context.Context, bucket string, state fs.VersioningState) error {
+	return s.coord.SetBucketVersioning(ctx, bucket, state)
+}
+
+// BucketVersioning implements fs.Versioner.
+func (s *Storage) BucketVersioning(ctx context.Context, bucket string) (fs.VersioningState, error) {
+	info, err := s.coord.fetchBucket(ctx, s.coord.topo.Topology(), bucket)
+	if err != nil {
+		return fs.VersioningUnset, err
+	}
+
+	return info.Versioning, nil
+}

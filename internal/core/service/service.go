@@ -407,6 +407,73 @@ func (s Service) settingsStore(bucket string) (fs.BucketSettingsStore, error) {
 	return store, nil
 }
 
+// SetBucketVersioning implements fs.Versioner.
+func (s Service) SetBucketVersioning(ctx context.Context, bucket string, state fs.VersioningState) error {
+	versioner, err := s.versioner(bucket)
+	if err != nil {
+		return err
+	}
+
+	return versioner.SetBucketVersioning(ctx, bucket, state)
+}
+
+// BucketVersioning implements fs.Versioner.
+func (s Service) BucketVersioning(ctx context.Context, bucket string) (fs.VersioningState, error) {
+	versioner, err := s.versioner(bucket)
+	if err != nil {
+		return fs.VersioningUnset, err
+	}
+
+	return versioner.BucketVersioning(ctx, bucket)
+}
+
+// GetObjectVersion implements fs.Versioner.
+func (s Service) GetObjectVersion(
+	ctx context.Context, bucket, key, versionID string,
+) (*fs.GetObjectResponse, error) {
+	versioner, err := s.versioner(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return versioner.GetObjectVersion(ctx, bucket, key, versionID)
+}
+
+// ListObjectVersions implements fs.Versioner.
+func (s Service) ListObjectVersions(
+	ctx context.Context, req *fs.ListObjectVersionsRequest,
+) (*fs.ListObjectVersionsResponse, error) {
+	versioner, err := s.versioner(req.Bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validate.Prefix(req.Prefix); err != nil {
+		return nil, errors.Wrap(err, "validate prefix")
+	}
+
+	return versioner.ListObjectVersions(ctx, req)
+}
+
+// versioner validates the bucket name and resolves the backend's versioning
+// capability.
+func (s Service) versioner(bucket string) (fs.Versioner, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	versioner, ok := s.storage.(fs.Versioner)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot version objects")
+	}
+
+	return versioner, nil
+}
+
 // ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
 // when it can describe an object without opening it, and reporting
 // ErrUnsupportedOperation when it cannot.
