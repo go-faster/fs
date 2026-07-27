@@ -126,10 +126,18 @@ func TestObjectMetadata_NonASCIIRoundTrip(t *testing.T) {
 		"x-amz-meta-note": "Hello Worldé",
 	}).Code)
 
-	// Read the raw map: the header is emitted all-lowercase on purpose, the way
-	// AWS emits it, and Header.Get would look for the canonical spelling.
-	header := do(t, h, http.MethodHead, "/bucket-a/obj", "", nil).Header()
-	require.Equal(t, []string{"Hello World\xe9"}, header[http.CanonicalHeaderKey("x-amz-meta-note")])
+	// Scan the map case-insensitively: the header is emitted all-lowercase on
+	// purpose, the way AWS emits it, so neither Header.Get nor a canonical-key
+	// lookup would find it.
+	var got []string
+
+	for name, values := range do(t, h, http.MethodHead, "/bucket-a/obj", "", nil).Header() {
+		if strings.EqualFold(name, "x-amz-meta-note") {
+			got = values
+		}
+	}
+
+	require.Equal(t, []string{"Hello World\xe9"}, got)
 }
 
 // TestOptions_WithoutOrigin covers the OPTIONS that is not a preflight: 400,
