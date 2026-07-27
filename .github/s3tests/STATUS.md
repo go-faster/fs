@@ -29,8 +29,8 @@ run against an authenticated single-node server on `storagefs`.
 
 | Outcome | Tests |
 |---------|------:|
-| Passing | 305 |
-| Failing | 439 |
+| Passing | 360 |
+| Failing | 384 |
 | Skipped | 94 |
 | **Collected** | **838** |
 
@@ -40,11 +40,16 @@ run against an authenticated single-node server on `storagefs`.
 2 are answered by Go's `net/http` before a handler runs (`Expect: 200` -> 417),
 and the rest need the bucket ACL grammar.
 
-Passing here (305) exceeds this file's share of the gate (297) on purpose. A
-test is promoted only once it passes **deterministically across two runs**, and
-some passes are accidental —
-they pass because the operation is unimplemented and the test only asserts that
-*an* error is raised. Those are called out below and are never allow-listed.
+Passing here (360) and this file's share of the gate (838 collected, less 94
+skipped, less its 384 known failures) now agree exactly: everything measured
+as passing is promoted. A test is promoted only once it passes
+**deterministically across two runs**, which is how the 360 above was
+established.
+
+Some passes are still accidental — they pass because the operation is
+unimplemented and the test only asserts that *an* error is raised. Those are
+called out below; they count as passing because the suite says so, not because
+the feature is there.
 
 ## Skipped (94)
 
@@ -113,11 +118,15 @@ remaining `?acl` failures live.
 
 `x-amz-checksum-*` (CRC32, CRC32C, CRC64NVME, SHA1, SHA256) is not
 implemented: the algorithm is accepted and ignored, so the digest is neither
-verified nor reported. 11 tests. Note for whoever picks this up: a first
-attempt that verified the digest turned these from fast failures into client
-*hangs*, and the server was answering both the request and its retry with 400
-in milliseconds — the stall is on the client side after the second response,
-and worth understanding before landing the feature.
+verified nor reported. 11 tests.
+
+Note for whoever picks this up: a first attempt that verified the digest turned
+these from fast failures into client *hangs*, which is why the feature was
+backed out of #137. That stall has since been explained and fixed — the server
+was cutting off any response whose transfer outlived `WriteTimeout`, leaving
+the client waiting on a body short of the Content-Length it had been promised.
+It was never a checksum bug, and the obstacle that stopped the feature is no
+longer there.
 
 ### Assorted wire details
 
