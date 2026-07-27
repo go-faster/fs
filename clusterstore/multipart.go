@@ -252,6 +252,20 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 	l := s.locks.of(req.Bucket, key)
 	l.Lock()
 
+	// A conditional completion is evaluated under the object's lock, so it is
+	// atomic against other writers exactly as a conditional PutObject is.
+	if cond := req.Conditions; !cond.IsZero() {
+		state, stateErr := s.objectState(ctx, req.Bucket, key)
+		if stateErr == nil {
+			stateErr = cond.CheckWrite(state)
+		}
+
+		if stateErr != nil {
+			l.Unlock()
+			return nil, stateErr
+		}
+	}
+
 	sc, err := s.coord.Put(ctx, &PutRequest{
 		Bucket: req.Bucket,
 		Key:    key,

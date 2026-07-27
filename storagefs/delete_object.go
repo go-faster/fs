@@ -14,12 +14,36 @@ import (
 //
 // NB: bucket and key are already sanitized.
 func (s *Storage) DeleteObject(ctx context.Context, bucket, key string) error {
+	return s.DeleteObjectIf(ctx, bucket, key, fs.Conditions{})
+}
+
+// DeleteObjectIf implements fs.ConditionalDeleter: it deletes the object only
+// while cond holds. The condition is evaluated under putMu, the same lock that
+// serializes writes to the key, so no writer can slip between the check and the
+// unlink.
+//
+// NB: bucket and key are already sanitized.
+func (s *Storage) DeleteObjectIf(_ context.Context, bucket, key string, cond fs.Conditions) error {
 	bucketPath := filepath.Join(s.root, bucket)
 	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
 		return fs.ErrBucketNotFound
 	}
 
 	objectPath := filepath.Join(bucketPath, toOSPath(key))
+
+	if !cond.IsZero() {
+		s.putMu.Lock()
+		defer s.putMu.Unlock()
+
+		state, err := s.currentObjectState(bucket, key, objectPath)
+		if err != nil {
+			return err
+		}
+
+		if err := cond.CheckDelete(state); err != nil {
+			return err
+		}
+	}
 
 	if err := os.Remove(objectPath); err != nil {
 		if os.IsNotExist(err) {

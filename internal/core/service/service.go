@@ -214,6 +214,26 @@ func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
 	return s.storage.DeleteObject(ctx, bucket, key)
 }
 
+// DeleteObjectIf implements fs.ConditionalDeleter by forwarding to the backend
+// when it supports conditional deletes, and reporting ErrUnsupportedOperation
+// when it does not — never by falling back to a racy check-then-delete.
+func (s Service) DeleteObjectIf(ctx context.Context, bucket, key string, cond fs.Conditions) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	deleter, ok := s.storage.(fs.ConditionalDeleter)
+	if !ok {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot delete conditionally")
+	}
+
+	return deleter.DeleteObjectIf(ctx, bucket, key, cond)
+}
+
 func (s Service) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 	if err := validate.BucketName(bucket); err != nil {
 		return nil, errors.Wrap(err, "validate bucket name")

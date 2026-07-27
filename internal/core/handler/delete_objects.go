@@ -18,10 +18,33 @@ type DeleteObjectsRequest struct {
 	Quiet   bool             `xml:"Quiet"`
 }
 
-// ObjectToDelete represents an object to be deleted.
+// ObjectToDelete represents an object to be deleted. ETag, Size and
+// LastModifiedTime are the per-object conditional-delete guards: when present,
+// the key is deleted only while it still matches them.
 type ObjectToDelete struct {
-	Key       string `xml:"Key"`
-	VersionId string `xml:"VersionId,omitempty"`
+	Key              string `xml:"Key"`
+	VersionId        string `xml:"VersionId,omitempty"`
+	ETag             string `xml:"ETag,omitempty"`
+	Size             *int64 `xml:"Size,omitempty"`
+	LastModifiedTime string `xml:"LastModifiedTime,omitempty"`
+}
+
+// conditions renders the object's guards as storage conditions. A malformed
+// timestamp is reported rather than dropped, so an unenforceable guard fails
+// the entry instead of silently deleting unconditionally.
+func (o ObjectToDelete) conditions() (fs.Conditions, error) {
+	cond := fs.Conditions{IfMatch: o.ETag, Size: o.Size}
+
+	if o.LastModifiedTime != "" {
+		t, err := http.ParseTime(o.LastModifiedTime)
+		if err != nil {
+			return fs.Conditions{}, errors.Wrap(errMalformedCondition, "LastModifiedTime")
+		}
+
+		cond.LastModified = &t
+	}
+
+	return cond, nil
 }
 
 // DeleteObjectsResult represents the response for deleting multiple objects.
@@ -82,7 +105,11 @@ func (h *handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 	// (the operation is idempotent); any other failure is reported per-object
 	// with its S3 error code.
 	for _, obj := range req.Objects {
-		err := h.service.DeleteObject(ctx, bucket, obj.Key)
+		cond, err := obj.conditions()
+		if err == nil {
+			err = h.deleteWithConditions(r, bucket, obj.Key, cond)
+		}
+
 		if err != nil && !errors.Is(err, fs.ErrObjectNotFound) {
 			api := s3err.FromError(err)
 			result.Errors = append(result.Errors, DeleteError{

@@ -67,11 +67,18 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	cond, err := requestConditions(r)
+	if err != nil {
+		renderAPIError(ctx, w, r, s3err.InvalidArgument, err)
+		return
+	}
+
 	req := &fs.CompleteMultipartUploadRequest{
-		Bucket:   bucket,
-		Key:      key,
-		UploadID: uploadID,
-		Parts:    parts,
+		Bucket:     bucket,
+		Key:        key,
+		UploadID:   uploadID,
+		Parts:      parts,
+		Conditions: cond,
 	}
 
 	resp, err := h.service.CompleteMultipartUpload(ctx, req)

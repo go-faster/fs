@@ -63,16 +63,16 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	s.putMu.Lock()
 	defer s.putMu.Unlock()
 
-	if req.IfNoneMatch != "" || req.IfMatch != "" {
-		exists, currentETag, err := s.currentObjectState(req.Bucket, req.Key, objectPath)
+	if cond := req.Conditions(); !cond.IsZero() {
+		state, err := s.currentObjectState(req.Bucket, req.Key, objectPath)
 		if err != nil {
 			_ = os.Remove(tmp.Name())
 			return nil, err
 		}
 
-		if req.PreconditionFailed(exists, currentETag) {
+		if err := cond.CheckWrite(state); err != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fs.ErrPreconditionFailed
+			return nil, err
 		}
 	}
 
@@ -93,22 +93,29 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	return &fs.PutObjectResponse{ETag: etag}, nil
 }
 
-// currentObjectState reports whether the object at path exists and its ETag,
-// preferring the sidecar's stored ETag and falling back to recompute-on-read.
-func (s *Storage) currentObjectState(bucket, key, path string) (exists bool, etag string, err error) {
+// currentObjectState reports the state conditional requests are evaluated
+// against: whether the object at path exists, and its ETag, size and
+// modification time. The ETag prefers the sidecar's stored value and falls back
+// to recompute-on-read.
+func (s *Storage) currentObjectState(bucket, key, path string) (fs.ObjectState, error) {
 	info, statErr := os.Stat(path)
 	if os.IsNotExist(statErr) {
-		return false, "", nil
+		return fs.ObjectState{}, nil
 	}
 
 	if statErr != nil {
-		return false, "", errors.Wrap(statErr, "stat object")
+		return fs.ObjectState{}, errors.Wrap(statErr, "stat object")
 	}
 
-	etag, err = s.objectETag(bucket, key, path, info)
+	etag, err := s.objectETag(bucket, key, path, info)
 	if err != nil {
-		return false, "", err
+		return fs.ObjectState{}, err
 	}
 
-	return true, etag, nil
+	return fs.ObjectState{
+		Exists:       true,
+		ETag:         etag,
+		Size:         info.Size(),
+		LastModified: info.ModTime(),
+	}, nil
 }

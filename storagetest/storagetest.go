@@ -114,6 +114,8 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Conditional/IfMatch":                   testConditionalIfMatch,
 	"Conditional/ConcurrentSingleWinner":    testConditionalConcurrentSingleWinner,
 	"Conditional/ConcurrentCASSingleWinner": testConditionalConcurrentCASSingleWinner,
+	"Conditional/Delete":                    testConditionalDelete,
+	"Conditional/CompleteMultipart":         testConditionalCompleteMultipart,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1167,9 +1169,14 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	// If-Match: * against a missing object fails.
+	// If-Match against a missing object is a miss, not a failed precondition:
+	// S3 answers a conditional write to a key that is not there with 404
+	// NoSuchKey.
 	_, err := putConditional(t, storage, "obj", []byte("x"), "", "*")
-	require.ErrorIs(t, err, fs.ErrPreconditionFailed)
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	_, err = putConditional(t, storage, "obj", []byte("x"), "", `"deadbeef"`)
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 
 	put, err := putConditional(t, storage, "obj", []byte("v1"), "*", "")
 	require.NoError(t, err)
@@ -1183,6 +1190,94 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testConditionalDelete covers fs.ConditionalDeleter: a guarded delete removes
+// the object only while it still matches, and a guard against a key that is
+// already gone is not an error — deletion is idempotent.
+func testConditionalDelete(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	deleter, ok := storage.(fs.ConditionalDeleter)
+	if !ok {
+		t.Skip("backend does not implement fs.ConditionalDeleter")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	put, err := putConditional(t, storage, "obj", []byte("body"), "", "")
+	require.NoError(t, err)
+
+	// Wrong ETag fails and leaves the object in place.
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: `"deadbeef"`})
+	require.ErrorIs(t, err, fs.ErrPreconditionFailed)
+	require.Equal(t, []byte("body"), readObject(t, storage, "obj"))
+
+	// Wrong size fails too.
+	badSize := int64(9999)
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{Size: &badSize})
+	require.ErrorIs(t, err, fs.ErrPreconditionFailed)
+
+	// Matching size passes the guard.
+	size := int64(len("body"))
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{Size: &size})
+	require.NoError(t, err)
+
+	// The key is gone: a guard has nothing left to protect, so it is not a
+	// failed precondition but a plain miss the caller reports as success.
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: `"deadbeef"`})
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	// Recreate and delete with the matching ETag.
+	put, err = putConditional(t, storage, "obj", []byte("body"), "", "")
+	require.NoError(t, err)
+	require.NoError(t, deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: put.ETag}))
+}
+
+// testConditionalCompleteMultipart covers conditions on multipart completion:
+// the same guards a conditional PUT gets, evaluated at the moment the assembled
+// object lands.
+func testConditionalCompleteMultipart(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	complete := func(key string, cond fs.Conditions) error {
+		upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+			Bucket: testBucket,
+			Key:    key,
+		})
+		require.NoError(t, err)
+
+		body := []byte("part-body")
+
+		part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
+			Bucket:     testBucket,
+			Key:        key,
+			UploadID:   upload.UploadID,
+			PartNumber: 1,
+			Reader:     bytes.NewReader(body),
+			Size:       int64(len(body)),
+		})
+		require.NoError(t, err)
+
+		_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+			Bucket:     testBucket,
+			Key:        key,
+			UploadID:   upload.UploadID,
+			Parts:      []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+			Conditions: cond,
+		})
+
+		return err
+	}
+
+	// If-None-Match: * completes onto an absent key, and refuses the second.
+	require.NoError(t, complete("mp", fs.Conditions{IfNoneMatch: "*"}))
+	require.ErrorIs(t, complete("mp", fs.Conditions{IfNoneMatch: "*"}), fs.ErrPreconditionFailed)
+
+	// If-Match against a key that is not there is a miss, as it is for PUT.
+	require.ErrorIs(t, complete("absent", fs.Conditions{IfMatch: "*"}), fs.ErrObjectNotFound)
 }
 
 // testConditionalConcurrentSingleWinner is the race regression: N goroutines

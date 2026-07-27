@@ -126,7 +126,10 @@ func TestPutObject_ConditionalIfMatch(t *testing.T) {
 		do(t, h, http.MethodPut, "/bucket-a/obj", "v2", map[string]string{"If-Match": etag}).Code)
 	require.Equal(t, "v2", do(t, h, http.MethodGet, "/bucket-a/obj", "", nil).Body.String())
 
-	// If-Match: * on a missing object -> 412.
-	require.Equal(t, http.StatusPreconditionFailed,
+	// If-Match on a missing object -> 404: S3 reports a conditional write
+	// against a key that is not there as a miss, not a failed precondition.
+	require.Equal(t, http.StatusNotFound,
 		do(t, h, http.MethodPut, "/bucket-a/missing", "x", map[string]string{"If-Match": "*"}).Code)
+	require.Equal(t, http.StatusNotFound,
+		do(t, h, http.MethodPut, "/bucket-a/missing", "x", map[string]string{"If-Match": `"nope"`}).Code)
 }

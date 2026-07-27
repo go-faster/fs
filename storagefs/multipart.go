@@ -401,6 +401,24 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		return nil, errors.Wrap(err, "close final file")
 	}
 
+	// Finalize under putMu so a conditional completion is evaluated atomically
+	// against other writers to this key, exactly as a conditional PutObject is.
+	s.putMu.Lock()
+	defer s.putMu.Unlock()
+
+	if cond := req.Conditions; !cond.IsZero() {
+		state, err := s.currentObjectState(meta.Bucket, meta.Key, objectPath)
+		if err != nil {
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
+
+		if err := cond.CheckWrite(state); err != nil {
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
+	}
+
 	if err := os.Rename(tmpName, objectPath); err != nil {
 		_ = os.Remove(tmpName)
 		return nil, errors.Wrap(err, "rename final object")

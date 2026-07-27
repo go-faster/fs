@@ -3,6 +3,11 @@ package handler
 import (
 	"net/http"
 	"strings"
+
+	"github.com/go-faster/errors"
+
+	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 func (h *handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
@@ -24,10 +29,19 @@ func (h *handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Regular delete object.
-	err := h.service.DeleteObject(ctx, bucket, key)
+	cond, err := requestConditions(r)
 	if err != nil {
+		s3err.WriteAPI(w, r, s3err.InvalidArgument)
+		return
+	}
+
+	// Regular delete object. Deleting a key that is already gone is a success
+	// in S3 — the operation is idempotent — including when the request carried
+	// a condition, which simply has nothing left to guard.
+	if err := h.deleteWithConditions(r, bucket, key, cond); err != nil &&
+		!errors.Is(err, fs.ErrObjectNotFound) {
 		renderError(ctx, w, r, err)
+
 		return
 	}
 

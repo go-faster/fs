@@ -212,26 +212,19 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	// while it is still streaming the first: the second waits for the lock, the
 	// first waits for body bytes the client will not send until the second
 	// returns, and both die on the read timeout.
-	if req.IfNoneMatch != "" || req.IfMatch != "" {
+	if cond := req.Conditions(); !cond.IsZero() {
 		l := s.locks.of(req.Bucket, req.Key)
 		l.Lock()
 
 		defer l.Unlock()
 
-		var (
-			exists      bool
-			currentETag string
-		)
-
-		switch cur, err := s.coord.Stat(ctx, req.Bucket, req.Key); {
-		case err == nil:
-			exists, currentETag = true, cur.ETag
-		case !errors.Is(err, ErrNotFound):
+		state, err := s.objectState(ctx, req.Bucket, req.Key)
+		if err != nil {
 			return nil, err
 		}
 
-		if req.PreconditionFailed(exists, currentETag) {
-			return nil, fs.ErrPreconditionFailed
+		if err := cond.CheckWrite(state); err != nil {
+			return nil, err
 		}
 	}
 
@@ -274,11 +267,52 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 
 // DeleteObject implements fs.Storage.
 func (s *Storage) DeleteObject(ctx context.Context, bucket, key string) error {
+	return s.DeleteObjectIf(ctx, bucket, key, fs.Conditions{})
+}
+
+// DeleteObjectIf implements fs.ConditionalDeleter. The condition is evaluated
+// under the same per-key lock a conditional write takes, so no write can land
+// between the check and the delete.
+func (s *Storage) DeleteObjectIf(ctx context.Context, bucket, key string, cond fs.Conditions) error {
 	if err := s.mustBucket(ctx, bucket); err != nil {
 		return err
 	}
 
+	if !cond.IsZero() {
+		l := s.locks.of(bucket, key)
+		l.Lock()
+
+		defer l.Unlock()
+
+		state, err := s.objectState(ctx, bucket, key)
+		if err != nil {
+			return err
+		}
+
+		if err := cond.CheckDelete(state); err != nil {
+			return err
+		}
+	}
+
 	return mapObjectErr(s.coord.Delete(ctx, bucket, key), key)
+}
+
+// objectState reports the state conditional requests are evaluated against.
+// The caller must hold the object's lock.
+func (s *Storage) objectState(ctx context.Context, bucket, key string) (fs.ObjectState, error) {
+	switch cur, err := s.coord.Stat(ctx, bucket, key); {
+	case err == nil:
+		return fs.ObjectState{
+			Exists:       true,
+			ETag:         cur.ETag,
+			Size:         cur.Size,
+			LastModified: cur.Modified,
+		}, nil
+	case errors.Is(err, ErrNotFound):
+		return fs.ObjectState{}, nil
+	default:
+		return fs.ObjectState{}, err
+	}
 }
 
 // GetObjectTagging implements fs.Storage.

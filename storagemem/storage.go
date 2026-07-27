@@ -46,6 +46,22 @@ type bucket struct {
 	acl          fs.ACL
 }
 
+// objectState is the state conditional requests are evaluated against. The
+// caller must hold the store's lock.
+func (b *bucket) objectState(key string) fs.ObjectState {
+	obj, ok := b.objects[key]
+	if !ok {
+		return fs.ObjectState{}
+	}
+
+	return fs.ObjectState{
+		Exists:       true,
+		ETag:         obj.etag,
+		Size:         int64(len(obj.data)),
+		LastModified: obj.lastModified,
+	}
+}
+
 type uploadPart struct {
 	partNumber   int
 	data         []byte
@@ -173,15 +189,8 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	// Evaluate any conditional-write header atomically with the store: the
 	// whole method holds s.mu, so no concurrent writer can slip a write in
 	// between this check and the assignment below.
-	existing, present := b.objects[req.Key]
-
-	var currentETag string
-	if present {
-		currentETag = existing.etag
-	}
-
-	if req.PreconditionFailed(present, currentETag) {
-		return nil, fs.ErrPreconditionFailed
+	if err := req.Conditions().CheckWrite(b.objectState(req.Key)); err != nil {
+		return nil, err
 	}
 
 	// Read all data from the reader
@@ -373,12 +382,22 @@ type readSeekNopCloser struct {
 func (readSeekNopCloser) Close() error { return nil }
 
 func (s *Storage) DeleteObject(ctx context.Context, bucketName, key string) error {
+	return s.DeleteObjectIf(ctx, bucketName, key, fs.Conditions{})
+}
+
+// DeleteObjectIf implements fs.ConditionalDeleter. The whole method holds s.mu,
+// so the condition is evaluated atomically with the delete.
+func (s *Storage) DeleteObjectIf(_ context.Context, bucketName, key string, cond fs.Conditions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	b, exists := s.buckets[bucketName]
 	if !exists {
 		return fs.ErrBucketNotFound
+	}
+
+	if err := cond.CheckDelete(b.objectState(key)); err != nil {
+		return err
 	}
 
 	if _, exists := b.objects[key]; !exists {
@@ -568,6 +587,12 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		if p, ok := upload.parts[part.PartNumber]; ok {
 			data = append(data, p.data...)
 		}
+	}
+
+	// Conditional completion is evaluated under s.mu, atomically with the
+	// store, exactly as a conditional PutObject is.
+	if err := req.Conditions.CheckWrite(b.objectState(upload.key)); err != nil {
+		return nil, err
 	}
 
 	etag := multipartETag(parts, upload.parts)

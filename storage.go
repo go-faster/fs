@@ -167,3 +167,16 @@ type Storage interface {
 	CompleteMultipartUpload(ctx context.Context, req *CompleteMultipartUploadRequest) (*CompleteMultipartUploadResponse, error)
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }
+
+// ConditionalDeleter is the optional capability of deleting an object only if
+// it still matches a condition. Backends implement it by evaluating cond under
+// the same lock that serializes writes to the key, so the check and the delete
+// are atomic; a backend that cannot do that must not implement it, and the S3
+// layer rejects conditional deletes against it rather than racing.
+//
+// DeleteObjectIf returns ErrObjectNotFound when the object is absent (deletion
+// is idempotent: the caller reports that as success) and ErrPreconditionFailed
+// when the object is present but cond does not hold.
+type ConditionalDeleter interface {
+	DeleteObjectIf(ctx context.Context, bucket, key string, cond Conditions) error
+}

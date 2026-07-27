@@ -150,6 +150,11 @@ type CompleteMultipartUploadRequest struct {
 	Key      string
 	UploadID string
 	Parts    []CompletedPart
+	// Conditions are the conditional-write headers carried by the completion
+	// request. A backend that supports them must evaluate them atomically with
+	// the write, exactly as it does for a conditional PutObject; the zero value
+	// imposes no condition.
+	Conditions Conditions
 }
 
 // CompleteMultipartUploadResponse represents the response for completing multipart upload.
