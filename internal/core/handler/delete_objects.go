@@ -86,6 +86,12 @@ func (h *handler) HandleBucketPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A multipart/form-data body is a browser upload (POST object).
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		h.PostObject(w, r, bucket)
+		return
+	}
+
 	// Unknown POST operation to bucket.
 	ctx := r.Context()
 	renderError(ctx, w, r, fs.ErrUnsupportedOperation)

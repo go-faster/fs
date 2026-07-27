@@ -71,6 +71,19 @@ func authMiddleware(a Authenticator, store fs.Storage, ownerIsolation bool, next
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bucket, key, action := requestScope(r)
 
+		// A browser upload carries its authorization in the form, not in the
+		// request: the policy is signed, the request is not, and the browser
+		// never had a credential to sign with. Let it through and let the
+		// handler judge the policy — but tell it whether the bucket would
+		// have accepted an anonymous write, which is what an unsigned,
+		// policy-less form depends on.
+		if isPostObjectRequest(r) {
+			next.ServeHTTP(w, r.WithContext(
+				withAnonymousWrite(r.Context(), anonymousPostAllowed(r.Context(), store, bucket))))
+
+			return
+		}
+
 		if hasSigV4Credentials(r) {
 			res, err := verifier.Verify(r)
 			if err != nil {
@@ -271,4 +284,47 @@ func bucketOnlyRequest(r *http.Request) bool {
 	_, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 
 	return key == "" && len(r.URL.Query()) == 0
+}
+
+// anonymousPostAllowed reports whether the bucket accepts an unauthenticated
+// browser upload.
+//
+// A POST arrives addressed at the bucket, but what it writes is an object, so
+// the permission that decides it is the bucket's anonymous-write level — the
+// same one that governs PUT /bucket/key — and not the rule that refuses
+// bucket-level writes to anonymous callers.
+func anonymousPostAllowed(ctx context.Context, store fs.Storage, bucket string) bool {
+	level, err := store.BucketACL(ctx, bucket)
+
+	return err == nil && level.AllowsAnonWrite()
+}
+
+// isPostObjectRequest reports whether the request is a browser upload: a POST
+// of multipart/form-data addressed at a bucket.
+func isPostObjectRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+
+	if _, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/"); key != "" {
+		return false
+	}
+
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+}
+
+// anonymousWriteKey is the context key under which a browser upload records
+// whether the bucket would accept an unauthenticated write.
+type anonymousWriteKey struct{}
+
+func withAnonymousWrite(ctx context.Context, allowed bool) context.Context {
+	return context.WithValue(ctx, anonymousWriteKey{}, allowed)
+}
+
+// anonymousWriteAllowed reports what the auth middleware decided about an
+// unauthenticated write to this bucket.
+func anonymousWriteAllowed(ctx context.Context) bool {
+	allowed, _ := ctx.Value(anonymousWriteKey{}).(bool)
+
+	return allowed
 }

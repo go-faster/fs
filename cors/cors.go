@@ -5,17 +5,20 @@
 // CORS response headers to matching cross-origin requests.
 package cors
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/go-faster/fs"
+)
 
 // Rule allows cross-origin requests matching AllowedOrigins and AllowedMethods.
-// A "*" entry in AllowedOrigins or AllowedHeaders matches anything.
-type Rule struct {
-	AllowedOrigins []string
-	AllowedMethods []string
-	AllowedHeaders []string
-	ExposeHeaders  []string
-	MaxAgeSeconds  int
-}
+// A "*" entry in AllowedOrigins or AllowedHeaders matches anything, and an
+// origin pattern may contain one "*" standing for any run of characters.
+//
+// It is an alias for the domain type: a bucket's rules are stored with the
+// bucket, so storage has to name them too, and one type avoids converting at
+// every seam.
+type Rule = fs.CORSRule
 
 // Config is a per-bucket CORS configuration with an optional default applied to
 // buckets without a specific entry.
@@ -45,45 +48,38 @@ func Match(rules []Rule, origin, method string) *Rule {
 	return nil
 }
 
-// AllowsHeaders reports whether the rule permits every requested header (the
-// comma-separated Access-Control-Request-Headers value).
-func (r *Rule) AllowsHeaders(requested string) bool {
-	if requested == "" {
+func originAllowed(allowed []string, origin string) bool {
+	for _, a := range allowed {
+		if originPatternMatches(a, origin) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// originPatternMatches reports whether an AllowedOrigin pattern covers origin.
+//
+// S3 allows a single "*" anywhere in the pattern, standing for any run of
+// characters, and the rest is anchored: "*suffix" matches only origins ending
+// in "suffix", so "foo.suffix.get" does not match. Anchoring is the whole
+// point — an unanchored match would let "evil.com/foo.suffix" through.
+func originPatternMatches(pattern, origin string) bool {
+	if pattern == "*" {
 		return true
 	}
 
-	for h := range strings.SplitSeq(requested, ",") {
-		h = strings.TrimSpace(h)
-		if h == "" {
-			continue
-		}
-
-		if !headerAllowed(r.AllowedHeaders, h) {
-			return false
-		}
+	prefix, suffix, wildcard := strings.Cut(pattern, "*")
+	if !wildcard {
+		return strings.EqualFold(pattern, origin)
 	}
 
-	return true
-}
-
-func originAllowed(allowed []string, origin string) bool {
-	for _, a := range allowed {
-		if a == "*" || strings.EqualFold(a, origin) {
-			return true
-		}
+	if len(origin) < len(prefix)+len(suffix) {
+		return false
 	}
 
-	return false
-}
-
-func headerAllowed(allowed []string, header string) bool {
-	for _, a := range allowed {
-		if a == "*" || strings.EqualFold(a, header) {
-			return true
-		}
-	}
-
-	return false
+	return strings.EqualFold(origin[:len(prefix)], prefix) &&
+		strings.EqualFold(origin[len(origin)-len(suffix):], suffix)
 }
 
 func contains(ss []string, s string) bool {

@@ -200,6 +200,35 @@ type BucketOwnership interface {
 	BucketOwner(ctx context.Context, bucket string) (Owner, error)
 }
 
+// BucketCORSStore is the optional capability of storing a bucket's CORS rules,
+// which is what the ?cors subresource reads and writes.
+//
+// CORS can also be supplied at construction (server.WithCORS) for deployments
+// that configure it out of band. A bucket's stored rules win when it has any:
+// a client that called PutBucketCors expects that to be what applies.
+//
+// BucketCORS returns nil rules when the bucket has no configuration, which the
+// S3 layer reports as NoSuchCORSConfiguration.
+type BucketCORSStore interface {
+	BucketCORS(ctx context.Context, bucket string) ([]CORSRule, error)
+	SetBucketCORS(ctx context.Context, bucket string, rules []CORSRule) error
+	DeleteBucketCORS(ctx context.Context, bucket string) error
+}
+
+// BucketSettingsStore is the optional capability of storing the small
+// per-bucket settings that have no home of their own: the public-access-block
+// configuration and the object-ownership rule.
+//
+// Both distinguish "unset" from any particular value — S3 reports an absent
+// configuration as its own error rather than as a default — so both getters
+// return a zero value that means absent: a nil block, an empty ownership.
+type BucketSettingsStore interface {
+	BucketPublicAccessBlock(ctx context.Context, bucket string) (*PublicAccessBlock, error)
+	SetBucketPublicAccessBlock(ctx context.Context, bucket string, block *PublicAccessBlock) error
+	BucketObjectOwnership(ctx context.Context, bucket string) (string, error)
+	SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error
+}
+
 // ObjectAttributer is the optional capability of describing an object without
 // opening it, including the part layout a completed multipart object was
 // assembled from. It backs GetObjectAttributes and reading a single part with

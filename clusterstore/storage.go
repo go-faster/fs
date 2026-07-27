@@ -459,3 +459,48 @@ func (s *Storage) ObjectAttributes(ctx context.Context, bucket, key string) (*fs
 		UploadID:     sc.UploadID,
 	}, nil
 }
+
+// BucketCORS implements fs.BucketCORSStore.
+func (s *Storage) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSRule, error) {
+	return s.coord.BucketCORS(ctx, bucket)
+}
+
+// SetBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) SetBucketCORS(ctx context.Context, bucket string, rules []fs.CORSRule) error {
+	return s.coord.SetBucketCORS(ctx, bucket, rules)
+}
+
+// DeleteBucketCORS implements fs.BucketCORSStore.
+func (s *Storage) DeleteBucketCORS(ctx context.Context, bucket string) error {
+	return s.coord.SetBucketCORS(ctx, bucket, nil)
+}
+
+// BucketPublicAccessBlock implements fs.BucketSettingsStore.
+func (s *Storage) BucketPublicAccessBlock(ctx context.Context, bucket string) (*fs.PublicAccessBlock, error) {
+	info, err := s.coord.fetchBucket(ctx, s.coord.topo.Topology(), bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return info.PublicAccessBlock, nil
+}
+
+// SetBucketPublicAccessBlock implements fs.BucketSettingsStore.
+func (s *Storage) SetBucketPublicAccessBlock(ctx context.Context, bucket string, block *fs.PublicAccessBlock) error {
+	return s.coord.SetBucketPublicAccessBlock(ctx, bucket, block)
+}
+
+// BucketObjectOwnership implements fs.BucketSettingsStore.
+func (s *Storage) BucketObjectOwnership(ctx context.Context, bucket string) (string, error) {
+	info, err := s.coord.fetchBucket(ctx, s.coord.topo.Topology(), bucket)
+	if err != nil {
+		return "", err
+	}
+
+	return info.ObjectOwnership, nil
+}
+
+// SetBucketObjectOwnership implements fs.BucketSettingsStore.
+func (s *Storage) SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error {
+	return s.coord.SetBucketObjectOwnership(ctx, bucket, ownership)
+}

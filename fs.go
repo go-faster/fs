@@ -3,6 +3,7 @@ package fs
 
 import (
 	"io"
+	"strings"
 	"time"
 )
 
@@ -60,6 +61,72 @@ func (m ObjectMetadata) IsZero() bool {
 	return m.ContentType == "" && m.CacheControl == "" && m.ContentDisposition == "" &&
 		m.ContentEncoding == "" && m.Expires == "" && len(m.UserMetadata) == 0
 }
+
+// CORSRule allows cross-origin requests matching AllowedOrigins and
+// AllowedMethods. It lives here, rather than in the cors package, because a
+// bucket's rules are stored with the bucket; the cors package aliases it.
+type CORSRule struct {
+	AllowedOrigins []string
+	AllowedMethods []string
+	AllowedHeaders []string
+	ExposeHeaders  []string
+	MaxAgeSeconds  int
+}
+
+// AllowsHeaders reports whether the rule permits every requested header (the
+// comma-separated Access-Control-Request-Headers value).
+func (r *CORSRule) AllowsHeaders(requested string) bool {
+	if requested == "" {
+		return true
+	}
+
+	for h := range strings.SplitSeq(requested, ",") {
+		if h = strings.TrimSpace(h); h == "" {
+			continue
+		}
+
+		if !corsHeaderAllowed(r.AllowedHeaders, h) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// corsHeaderAllowed reports whether one requested header is permitted.
+func corsHeaderAllowed(allowed []string, header string) bool {
+	for _, a := range allowed {
+		if a == "*" || strings.EqualFold(a, header) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// PublicAccessBlock is a bucket's public-access-block configuration: four
+// independent switches over the ways a bucket can become publicly readable.
+// Absent (a nil *PublicAccessBlock) means no configuration, which S3 reports
+// as NoSuchPublicAccessBlockConfiguration rather than as all-false.
+type PublicAccessBlock struct {
+	BlockPublicACLs       bool
+	IgnorePublicACLs      bool
+	BlockPublicPolicy     bool
+	RestrictPublicBuckets bool
+}
+
+// Object-ownership settings, which decide who owns objects another principal
+// writes into a bucket. Empty means the bucket has no configuration.
+const (
+	// OwnershipBucketOwnerEnforced disables ACLs entirely; the bucket owner
+	// owns every object.
+	OwnershipBucketOwnerEnforced = "BucketOwnerEnforced"
+	// OwnershipBucketOwnerPreferred gives the bucket owner objects written
+	// with the bucket-owner-full-control canned ACL.
+	OwnershipBucketOwnerPreferred = "BucketOwnerPreferred"
+	// OwnershipObjectWriter leaves each object owned by its writer.
+	OwnershipObjectWriter = "ObjectWriter"
+)
 
 // Tag is a single object tag.
 type Tag struct {

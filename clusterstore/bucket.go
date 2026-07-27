@@ -57,6 +57,12 @@ type BucketInfo struct {
 	// Owner is the principal that created the bucket; absent for buckets
 	// created before ownership was recorded.
 	Owner fs.Owner `json:"owner,omitzero"`
+	// CORS is the bucket's rule set, as set through the ?cors subresource.
+	CORS []fs.CORSRule `json:"cors,omitempty"`
+	// PublicAccessBlock is the ?publicAccessBlock configuration; nil when unset.
+	PublicAccessBlock *fs.PublicAccessBlock `json:"public_access_block,omitempty"`
+	// ObjectOwnership is the ?ownershipControls rule; empty when unset.
+	ObjectOwnership string `json:"object_ownership,omitempty"`
 	// Scheme overrides the cluster default replication scheme for this
 	// bucket's objects ("rf2.5", "rf3", "ec:k,m"); empty applies the default.
 	// Changing it affects new writes immediately; existing objects follow
@@ -218,6 +224,63 @@ func (c *Coordinator) SetBucketACL(ctx context.Context, bucket string, acl fs.AC
 	}
 
 	info.ACL = acl
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// SetBucketCORS rewrites the bucket record with a new CORS rule set; nil
+// clears it.
+func (c *Coordinator) SetBucketCORS(ctx context.Context, bucket string, rules []fs.CORSRule) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.CORS = rules
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// BucketCORS returns the bucket's CORS rule set, nil when it has none.
+func (c *Coordinator) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSRule, error) {
+	info, err := c.fetchBucket(ctx, c.topo.Topology(), bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return info.CORS, nil
+}
+
+// SetBucketPublicAccessBlock rewrites the bucket record's public-access-block
+// configuration; nil clears it.
+func (c *Coordinator) SetBucketPublicAccessBlock(
+	ctx context.Context, bucket string, block *fs.PublicAccessBlock,
+) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.PublicAccessBlock = block
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// SetBucketObjectOwnership rewrites the bucket record's ownership rule; empty
+// clears it.
+func (c *Coordinator) SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.ObjectOwnership = ownership
 
 	return c.writeBucket(ctx, topo, info)
 }

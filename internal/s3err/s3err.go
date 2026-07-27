@@ -14,6 +14,10 @@ import (
 	"github.com/go-faster/fs"
 )
 
+// codeInvalidRequest is shared by the generic invalid-request error and the
+// CORS preflight errors, which S3 reports under the same code.
+const codeInvalidRequest = "InvalidRequest"
+
 // APIError describes an S3 error: a stable wire code, its HTTP status, and a
 // default human-readable message.
 type APIError struct {
@@ -29,13 +33,26 @@ var (
 	NoSuchKey               = APIError{"NoSuchKey", http.StatusNotFound, "The specified key does not exist."}
 	NoSuchUpload            = APIError{"NoSuchUpload", http.StatusNotFound, "The specified multipart upload does not exist."}
 	NoSuchBucketPolicy      = APIError{"NoSuchBucketPolicy", http.StatusNotFound, "The bucket policy does not exist."}
+	NoSuchCORSConfiguration = APIError{"NoSuchCORSConfiguration", http.StatusNotFound, "The CORS configuration does not exist."}
+	NoSuchPublicAccessBlock = APIError{
+		"NoSuchPublicAccessBlockConfiguration", http.StatusNotFound,
+		"The public access block configuration was not found.",
+	}
+	OwnershipControlsNotFound = APIError{
+		"OwnershipControlsNotFoundError", http.StatusNotFound,
+		"The bucket ownership controls were not found.",
+	}
 	BucketAlreadyExists     = APIError{"BucketAlreadyExists", http.StatusConflict, "The requested bucket name is not available."}
 	BucketAlreadyOwnedByYou = APIError{"BucketAlreadyOwnedByYou", http.StatusConflict, "The bucket you tried to create already exists and you own it."}
 	BucketNotEmpty          = APIError{"BucketNotEmpty", http.StatusConflict, "The bucket you tried to delete is not empty."}
 	InvalidBucketName       = APIError{"InvalidBucketName", http.StatusBadRequest, "The specified bucket is not valid."}
 	InvalidURI              = APIError{"InvalidURI", http.StatusBadRequest, "Couldn't parse the specified URI."}
 	InvalidArgument         = APIError{"InvalidArgument", http.StatusBadRequest, "Invalid Argument."}
-	InvalidRequest          = APIError{"InvalidRequest", http.StatusBadRequest, "Invalid Request."}
+	InvalidRequest          = APIError{codeInvalidRequest, http.StatusBadRequest, "Invalid Request."}
+	MalformedPOSTRequest    = APIError{
+		"MalformedPOSTRequest", http.StatusBadRequest,
+		"The body of your POST request is not well-formed multipart/form-data.",
+	}
 	MalformedXML            = APIError{"MalformedXML", http.StatusBadRequest, "The XML you provided was not well-formed or did not validate against our published schema."}
 	MissingContentLength    = APIError{"MissingContentLength", http.StatusLengthRequired, "You must provide the Content-Length HTTP header."}
 	InvalidPart             = APIError{"InvalidPart", http.StatusBadRequest, "One or more of the specified parts could not be found."}
@@ -59,7 +76,8 @@ var (
 	MethodNotAllowed        = APIError{"MethodNotAllowed", http.StatusMethodNotAllowed, "The specified method is not allowed against this resource."}
 	NotImplemented          = APIError{"NotImplemented", http.StatusNotImplemented, "A header or operation you provided implies functionality that is not implemented."}
 	MissingRequestBody      = APIError{"MissingRequestBodyError", http.StatusBadRequest, "Request body is empty."}
-	MissingOriginHeader     = APIError{"InvalidRequest", http.StatusBadRequest, "Insufficient information. Origin request header needed."}
+	MissingOriginHeader     = APIError{codeInvalidRequest, http.StatusBadRequest, "Insufficient information. Origin request header needed."}
+	MissingRequestMethod    = APIError{codeInvalidRequest, http.StatusBadRequest, "Insufficient information. Access-Control-Request-Method header needed."}
 	InternalError           = APIError{"InternalError", http.StatusInternalServerError, "We encountered an internal error. Please try again."}
 )
 
@@ -109,6 +127,8 @@ func FromError(err error) APIError {
 		return InvalidArgument
 	case errors.Is(err, fs.ErrEntityTooSmall):
 		return EntityTooSmall
+	case errors.Is(err, fs.ErrAccessDenied):
+		return AccessDenied
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
 	case errors.Is(err, fs.ErrInvalidDigest):
