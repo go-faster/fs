@@ -31,7 +31,7 @@ concurrency:
 env:
   # Pinned for reproducibility; bump deliberately and re-baseline the
   # known-failures list.
-  S3T_REF: 05a4517597380c7bb3077c485688e3cafc96b92d
+  S3T_REF: fbd2bac17af4e561973a91b4a3a18e796c35a506
   S3_PORT: '8077'
 
 jobs:
@@ -59,7 +59,20 @@ jobs:
           fi
 
       - name: Install s3t
-        run: go install "github.com/go-faster/s3t/cmd/s3t@${S3T_REF}"
+        run: |
+          # The checksum database occasionally answers 500, which fails an
+          # otherwise fine install. Retry rather than re-run the job by hand:
+          # it has cost two red pipelines already, and neither was a real
+          # failure. Verification is not skipped — only retried.
+          for attempt in 1 2 3; do
+            if go install "github.com/go-faster/s3t/cmd/s3t@${S3T_REF}"; then
+              exit 0
+            fi
+            echo "install attempt ${attempt} failed; retrying"
+            sleep 5
+          done
+          echo "::error::could not install s3t after 3 attempts"
+          exit 1
 
       - name: Build server
         run: go build -o fs ./cmd/fs
