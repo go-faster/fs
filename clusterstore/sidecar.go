@@ -10,6 +10,8 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs/internal/sse"
+
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 )
@@ -33,9 +35,21 @@ type Sidecar struct {
 	// config form ("rf2.5", "rf3", "ec:k,m"). Recording it makes reads immune
 	// to later per-bucket scheme changes.
 	Scheme string `json:"scheme"`
-	// Size is the exact object length, needed to re-plan fragment sizes and
-	// to unpad EC reconstructions.
+	// Size is the exact length of the bytes as *stored*, needed to re-plan
+	// fragment sizes and to unpad EC reconstructions. For an encrypted object
+	// that is the ciphertext length, not the object's logical size — which is
+	// deliberate: every fragment, parity and repair calculation works on what
+	// is actually on disk, so none of them needs a key. The logical size lives
+	// in Encryption.PlainSize.
 	Size int64 `json:"size"`
+	// Encryption records how the stored bytes are encrypted, absent when they
+	// are stored in the clear.
+	Encryption *EncryptionInfo `json:"encryption,omitempty"`
+	// RequestedEncryption is the algorithm a multipart upload asked for when
+	// it was created, carried on the upload's own record so that each part and
+	// the completed object are sealed the same way. It is only ever set on an
+	// upload record, which has no body of its own to encrypt.
+	RequestedEncryption string `json:"requested_encryption,omitempty"`
 	// Generation names the fragment set this sidecar commits.
 	Generation string `json:"generation"`
 	// Seq is a per-object write sequence (previous committed Seq + 1): the
@@ -167,4 +181,32 @@ func newGeneration() (string, error) {
 	}
 
 	return hex.EncodeToString(b[:]), nil
+}
+
+// EncryptionInfo is the sidecar record of an object's encryption, mirroring
+// what storagefs keeps so both backends read the same way.
+type EncryptionInfo struct {
+	// Algorithm is the S3 name reported to clients; only "AES256" exists.
+	Algorithm string `json:"algorithm"`
+	// Key is the object's data key, sealed by a master key it names.
+	Key sse.WrappedKey `json:"key"`
+	// NonceBase is the per-object random the chunk nonces derive from.
+	NonceBase []byte `json:"nonce_base"`
+	// PlainSize is the object's logical size: what a client is told, and what
+	// a read must be given so a truncated body is detectable.
+	PlainSize int64 `json:"plain_size"`
+}
+
+// LogicalSize is the object's size as a client sees it: the plaintext length
+// for an encrypted object, and the stored length otherwise.
+//
+// Every client-facing answer — listings, HEAD, conditional writes, attributes
+// — goes through this rather than reading Size, because Size is the stored
+// length and reporting it would leak one tag per 64 KiB into the object size.
+func (sc *Sidecar) LogicalSize() int64 {
+	if sc.Encryption != nil {
+		return sc.Encryption.PlainSize
+	}
+
+	return sc.Size
 }
