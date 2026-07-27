@@ -31,7 +31,7 @@ concurrency:
 env:
   # Pinned for reproducibility; bump deliberately and re-baseline the
   # known-failures list.
-  S3T_REF: 05a4517597380c7bb3077c485688e3cafc96b92d
+  S3T_REF: fbd2bac17af4e561973a91b4a3a18e796c35a506
   S3_PORT: '8077'
 
 jobs:
