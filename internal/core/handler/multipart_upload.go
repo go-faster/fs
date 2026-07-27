@@ -56,6 +56,10 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 		Tags:     tags,
 		ACL:      fs.ParseACL(r.Header.Get("X-Amz-Acl")),
 		Owner:    callerOwner(ctx),
+
+		// Settled here rather than at completion: by then the parts are
+		// already on disk, and would have been staged in the clear.
+		ServerSideEncryption: h.requestedEncryption(r),
 	})
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -70,6 +74,7 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
+	writeSSE(w, h.requestedEncryption(r))
 	w.WriteHeader(http.StatusOK)
 	_ = xml.NewEncoder(w).Encode(result)
 }

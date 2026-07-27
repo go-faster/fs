@@ -373,3 +373,104 @@ func TestEachObjectHasItsOwnKey(t *testing.T) {
 	require.NotEqual(t, a.Encryption.Key.Ciphertext, b.Encryption.Key.Ciphertext)
 	require.NotEqual(t, a.Encryption.NonceBase, b.Encryption.NonceBase)
 }
+
+// TestMultipartEncrypted covers the path a large object actually takes. The
+// completed object must be ciphertext, readable, and seekable.
+func TestMultipartEncrypted(t *testing.T) {
+	s, root := encryptedStore(t, newMasterKey(t))
+
+	up, err := s.CreateMultipartUpload(t.Context(), &fs.CreateMultipartUploadRequest{
+		Bucket: "b", Key: "big", ServerSideEncryption: sse.Algorithm,
+	})
+	require.NoError(t, err)
+
+	// Part sizes deliberately not multiples of the chunk size, so completion
+	// cannot get away with concatenating the parts as they were sealed.
+	partBodies := [][]byte{
+		bytes.Repeat([]byte("first part;"), 9000),
+		bytes.Repeat([]byte("second part;"), 7000),
+		[]byte("third and last"),
+	}
+
+	completed := make([]fs.CompletedPart, 0, len(partBodies))
+
+	for i, body := range partBodies {
+		p, err := s.UploadPart(t.Context(), &fs.UploadPartRequest{
+			Bucket: "b", Key: "big", UploadID: up.UploadID,
+			PartNumber: i + 1, Reader: bytes.NewReader(body), Size: int64(len(body)),
+		})
+		require.NoError(t, err)
+
+		sum := md5.Sum(body) //nolint:gosec // Matches the ETag the store computes.
+		require.Equal(t, hex.EncodeToString(sum[:]), p.ETag,
+			"a part's ETag must be the MD5 of its plaintext")
+		require.Equal(t, int64(len(body)), p.Size, "a part must report its plaintext size")
+
+		completed = append(completed, fs.CompletedPart{PartNumber: i + 1, ETag: p.ETag})
+	}
+
+	resp, err := s.CompleteMultipartUpload(t.Context(), &fs.CompleteMultipartUploadRequest{
+		Bucket: "b", Key: "big", UploadID: up.UploadID, Parts: completed,
+	})
+	require.NoError(t, err)
+	require.Equal(t, sse.Algorithm, resp.ServerSideEncryption)
+
+	want := bytes.Join(partBodies, nil)
+
+	got, getResp := readAll(t, s, "big")
+	require.Equal(t, want, got)
+	require.Equal(t, int64(len(want)), getResp.Size)
+	require.Equal(t, sse.Algorithm, getResp.ServerSideEncryption)
+
+	stored, err := os.ReadFile(bodyPath(root, "big"))
+	require.NoError(t, err)
+	require.False(t, bytes.Contains(stored, []byte("second part")),
+		"the completed object holds plaintext")
+	require.Equal(t, sse.CipherSize(int64(len(want))), int64(len(stored)),
+		"the completed object must be one uniform chunk stream")
+
+	// And it must still seek, which is what re-sealing at completion buys.
+	head, err := s.GetObject(t.Context(), "b", "big")
+	require.NoError(t, err)
+
+	defer func() { _ = head.Reader.Close() }()
+
+	rs, ok := head.Reader.(io.ReadSeeker)
+	require.True(t, ok)
+
+	_, err = rs.Seek(int64(len(want))-20, io.SeekStart)
+	require.NoError(t, err)
+
+	tail, err := io.ReadAll(rs)
+	require.NoError(t, err)
+	require.Equal(t, want[len(want)-20:], tail)
+}
+
+// TestMultipartPartsStagedEncrypted: an abandoned upload leaves its parts on
+// disk, so the parts themselves must be ciphertext — not just the object they
+// would have become.
+func TestMultipartPartsStagedEncrypted(t *testing.T) {
+	s, _ := encryptedStore(t, newMasterKey(t))
+
+	up, err := s.CreateMultipartUpload(t.Context(), &fs.CreateMultipartUploadRequest{
+		Bucket: "b", Key: "big", ServerSideEncryption: sse.Algorithm,
+	})
+	require.NoError(t, err)
+
+	body := bytes.Repeat([]byte("staged secret;"), 5000)
+
+	_, err = s.UploadPart(t.Context(), &fs.UploadPartRequest{
+		Bucket: "b", Key: "big", UploadID: up.UploadID,
+		PartNumber: 1, Reader: bytes.NewReader(body), Size: int64(len(body)),
+	})
+	require.NoError(t, err)
+
+	// The upload is never completed; the part stays in staging.
+	partPath := filepath.Join(s.multipart.uploadPath(up.UploadID), "1")
+
+	staged, err := os.ReadFile(partPath)
+	require.NoError(t, err)
+	require.Equal(t, sse.CipherSize(int64(len(body))), int64(len(staged)))
+	require.False(t, bytes.Contains(staged, []byte("staged secret")),
+		"an in-progress part is readable plaintext on disk")
+}

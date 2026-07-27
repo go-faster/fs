@@ -218,6 +218,11 @@ type CreateMultipartUploadRequest struct {
 	Metadata ObjectMetadata
 	Tags     []Tag
 	ACL      ACL
+	// ServerSideEncryption asks for the completed object to be encrypted at
+	// rest, and carries the algorithm ("AES256"). It is settled when the
+	// upload starts, not when it completes, because the parts are already on
+	// disk by then and would have been staged in the clear.
+	ServerSideEncryption string
 	// Owner is the principal starting the upload; it owns the completed object.
 	Owner Owner
 }
@@ -320,4 +325,7 @@ type CompleteMultipartUploadResponse struct {
 	Bucket   string
 	Key      string
 	ETag     string
+	// ServerSideEncryption echoes the algorithm the completed object was
+	// encrypted with, empty when it was stored in the clear.
+	ServerSideEncryption string
 }

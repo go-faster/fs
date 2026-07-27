@@ -182,6 +182,68 @@ func (s *Storage) encryptTo(dst io.Writer, algorithm string, part uint32) (*obje
 	return &objectWriter{w: enc, enc: enc, info: info, cipherHash: cipherHash}, nil
 }
 
+// sealPart returns the sink one multipart part should be written to. Parts of
+// an encrypted upload are sealed as they arrive rather than at completion,
+// because an upload that is abandoned leaves its parts on disk — and a part
+// staged in the clear is object content at rest in the clear, which is the one
+// thing this feature exists to prevent.
+//
+// Each part is sealed under the upload's key with its own part number in the
+// nonce domain, so no two parts of one upload ever share a nonce.
+func (s *Storage) sealPart(dst io.Writer, meta *multipartMetadata, partNumber int) (*objectWriter, error) {
+	if meta.Encryption == nil {
+		return &objectWriter{w: dst}, nil
+	}
+
+	c, err := s.cipherFor(meta.Encryption, uint32(partNumber)) //nolint:gosec // Part numbers are 1..10000.
+	if err != nil {
+		return nil, err
+	}
+
+	enc := sse.NewWriter(dst, c)
+
+	return &objectWriter{w: enc, enc: enc}, nil
+}
+
+// completionAlgorithm is the algorithm the completed object is sealed with:
+// the one the upload was started with, since that is when the client asked.
+func completionAlgorithm(meta *multipartMetadata) string {
+	if meta.Encryption == nil {
+		return ""
+	}
+
+	return meta.Encryption.Algorithm
+}
+
+// openStagedPart reads a staged part back as plaintext.
+//
+// Its plaintext length is derived from the file rather than recorded, because
+// a part is a complete chunk stream of its own and the mapping is exact — and
+// unlike an object, a part has nowhere to record it: the completion request
+// carries only part numbers and ETags.
+func (s *Storage) openStagedPart(f *os.File, meta *multipartMetadata, partNumber int) (io.Reader, error) {
+	if meta.Encryption == nil {
+		return f, nil
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, errors.Wrap(err, "stat part")
+	}
+
+	plainSize, ok := sse.PlainSize(info.Size())
+	if !ok {
+		return nil, errors.Errorf("part %d is %d bytes, which is not a sealed part", partNumber, info.Size())
+	}
+
+	c, err := s.cipherFor(meta.Encryption, uint32(partNumber)) //nolint:gosec // Part numbers are 1..10000.
+	if err != nil {
+		return nil, err
+	}
+
+	return sse.NewReader(f, c, plainSize), nil
+}
+
 // decryptingFile serves an encrypted body as the seekable stream the read path
 // expects, and closes the file underneath it.
 //
