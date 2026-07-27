@@ -43,10 +43,10 @@ env:
 jobs:
   s3tests:
     runs-on: ubuntu-latest
-    # The suite takes about 80 seconds. Anything near this bound is a hang, and
-    # a hang has to end as a failure with the logs attached rather than as a
-    # job that never reports.
-    timeout-minutes: 15
+    # Sized so the per-file timeouts below always fire first: a job timeout
+    # cancels the run and takes the diagnostic with it, whereas a per-file
+    # timeout fails the step and leaves the report and the server log behind.
+    timeout-minutes: 25
     steps:
       - name: Checkout fs
         uses: actions/checkout@v7
@@ -120,7 +120,7 @@ jobs:
 
             # SIGINT rather than SIGTERM so pytest still writes its report for
             # the tests that did run, which names the one it is stuck on.
-            timeout --signal=INT --kill-after=30s 8m \
+            timeout --signal=INT --kill-after=30s 5m \
               python -m pytest -p no:cacheprovider -q --no-header --tb=line \
                 --junit-xml="${out}" "s3tests/functional/${file}" || rc=$?
 
@@ -129,7 +129,7 @@ jobs:
             # from 124 up is the timeout and nothing else; a lower non-zero is
             # pytest reporting test failures, which is the normal case here.
             if [ "${rc}" -ge 124 ]; then
-              echo "::error::${file} did not finish within 8m — the suite is stuck"
+              echo "::error::${file} did not finish within 5m — the suite is stuck"
               echo "--- last 200 lines of the server log ---"
               tail -n 200 "${GITHUB_WORKSPACE}/fs-server.log" || true
               return 1
