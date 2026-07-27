@@ -33,6 +33,7 @@
 #
 # See STATUS.md for the whole suite — including what fails and why.
 
+
 s3tests/functional/test_headers.py::test_bucket_create_bad_contentlength_empty
 s3tests/functional/test_headers.py::test_bucket_create_bad_contentlength_negative
 s3tests/functional/test_headers.py::test_bucket_create_bad_contentlength_none
@@ -101,12 +102,15 @@ s3tests/functional/test_s3.py::test_bucket_get_location
 s3tests/functional/test_s3.py::test_bucket_head
 s3tests/functional/test_s3.py::test_bucket_head_notexist
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_alt
+s3tests/functional/test_s3.py::test_bucket_list_delimiter_basic
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_dot
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_empty
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_none
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_not_exist
+s3tests/functional/test_s3.py::test_bucket_list_delimiter_not_skip_special
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_percentage
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_prefix
+s3tests/functional/test_s3.py::test_bucket_list_delimiter_prefix_ends_with_delimiter
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_prefix_underscore
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_unreadable
 s3tests/functional/test_s3.py::test_bucket_list_delimiter_whitespace
@@ -143,12 +147,14 @@ s3tests/functional/test_s3.py::test_bucket_listv2_both_continuationtoken_startaf
 s3tests/functional/test_s3.py::test_bucket_listv2_continuationtoken
 s3tests/functional/test_s3.py::test_bucket_listv2_continuationtoken_empty
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_alt
+s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_basic
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_dot
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_empty
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_none
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_not_exist
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_percentage
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_prefix
+s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_ends_with_delimiter
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_underscore
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_unreadable
 s3tests/functional/test_s3.py::test_bucket_listv2_delimiter_whitespace

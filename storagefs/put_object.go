@@ -20,10 +20,22 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, fs.ErrBucketNotFound
 	}
 
-	objectPath := filepath.Join(bucketPath, toOSPath(req.Key))
+	objectPath := filepath.Join(bucketPath, objectRelPath(req.Key))
 	if err := os.MkdirAll(filepath.Dir(objectPath), defaultDirPermissions); err != nil {
 		return nil, errors.Wrap(err, "create object directory")
 	}
+
+	// A key is a directory here, so it has to exist before the content can be
+	// put inside it — but a write that is then refused (a failed precondition,
+	// a digest mismatch) must not leave that directory behind as debris no
+	// listing reports and no delete removes.
+	committed := false
+
+	defer func() {
+		if !committed {
+			pruneEmptyDirs(filepath.Dir(objectPath), bucketPath)
+		}
+	}()
 
 	// Stream to a staging temp file while hashing, then rename into place so a
 	// partially written object is never visible in the bucket; the sidecar is
@@ -97,6 +109,8 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, etag, req.Metadata, req.Tags, req.ACL, req.Owner)); err != nil {
 		return nil, err
 	}
+
+	committed = true
 
 	return &fs.PutObjectResponse{ETag: etag}, nil
 }

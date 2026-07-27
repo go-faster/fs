@@ -29,7 +29,7 @@ func (s *Storage) DeleteObjectIf(_ context.Context, bucket, key string, cond fs.
 		return fs.ErrBucketNotFound
 	}
 
-	objectPath := filepath.Join(bucketPath, toOSPath(key))
+	objectPath := filepath.Join(bucketPath, objectRelPath(key))
 
 	if !cond.IsZero() {
 		s.putMu.Lock()

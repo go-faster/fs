@@ -20,7 +20,7 @@ func (s *Storage) ObjectAttributes(_ context.Context, bucket, key string) (*fs.O
 		return nil, fs.ErrBucketNotFound
 	}
 
-	objectPath := filepath.Join(bucketPath, toOSPath(key))
+	objectPath := filepath.Join(bucketPath, objectRelPath(key))
 
 	info, err := os.Stat(objectPath)
 	if os.IsNotExist(err) {

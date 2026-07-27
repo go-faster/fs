@@ -47,7 +47,7 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 	// The file MUST be stored with OS-native separators.
 	// On Windows: root\test-bucket\path\to\nested\file.txt
 	// On Unix: root/test-bucket/path/to/nested/file.txt
-	expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
+	expectedPath := filepath.Join(root, "test-bucket", filepath.Join(filepath.FromSlash(s3Key), "#obj"))
 
 	// Verify file exists at the correct OS-native path.
 	info, err := os.Stat(expectedPath)
@@ -93,8 +93,10 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 	relPath, err := filepath.Rel(filepath.Join(root, "test-bucket"), expectedPath)
 	require.NoError(t, err)
 
+	// path/to/nested/file.txt/#obj — one directory per key component, with the
+	// content leaf inside the last of them.
 	depth := strings.Count(relPath, string(filepath.Separator))
-	require.Equal(t, 3, depth, "Should have 3 levels: path/to/nested/file.txt")
+	require.Equal(t, 4, depth, "3 key levels plus the content leaf")
 }
 
 // TestGetObject_WindowsPathSeparators verifies that GetObject can retrieve files
@@ -117,7 +119,7 @@ func TestGetObject_WindowsPathSeparators(t *testing.T) {
 
 	content := []byte("test data")
 
-	osPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
+	osPath := filepath.Join(root, "test-bucket", filepath.Join(filepath.FromSlash(s3Key), "#obj"))
 	err = os.MkdirAll(filepath.Dir(osPath), 0750)
 	require.NoError(t, err)
 
@@ -159,7 +161,7 @@ func TestDeleteObject_WindowsPathSeparators(t *testing.T) {
 
 	content := []byte("content")
 
-	osPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
+	osPath := filepath.Join(root, "test-bucket", filepath.Join(filepath.FromSlash(s3Key), "#obj"))
 	err = os.MkdirAll(filepath.Dir(osPath), 0750)
 	require.NoError(t, err)
 
@@ -206,7 +208,7 @@ func TestPutObject_DeepNestedPath_WindowsFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify correct path structure.
-	expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
+	expectedPath := filepath.Join(root, "test-bucket", filepath.Join(filepath.FromSlash(s3Key), "#obj"))
 	info, err := os.Stat(expectedPath)
 	require.NoError(t, err)
 	require.False(t, info.IsDir())
@@ -259,10 +261,17 @@ func TestPutGetDelete_MultipleSeparators(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verify file exists at correct path.
-	expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
+	// Empty key components are real: "a//b" and "a/b" are different keys, so
+	// each empty one gets its own directory rather than collapsing away.
+	expectedPath := filepath.Join(root, "test-bucket",
+		"path", "#empty", "with", "#empty", "#empty", "multiple",
+		"#empty", "#empty", "#empty", "slashes", "file.txt", "#obj")
 	_, err = os.Stat(expectedPath)
 	require.NoError(t, err)
+
+	// The collapsed spelling is a different object, not the same one.
+	_, err = storage.GetObject(ctx, "test-bucket", "path/with/multiple/slashes/file.txt")
+	require.Error(t, err)
 
 	// Get object.
 	resp, err := storage.GetObject(ctx, "test-bucket", s3Key)
@@ -312,10 +321,20 @@ func TestPutObject_TrailingSlash(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verify file exists (with trailing separator converted).
-	expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(s3Key))
+	// A key ending in the delimiter has a trailing empty component, which the
+	// layout represents rather than dropping.
+	expectedPath := filepath.Join(root, "test-bucket", "path", "to", "dir", "#empty", "#obj")
 	_, err = os.Stat(expectedPath)
 	require.NoError(t, err)
+
+	// It reads back under the name it was written with, and "path/to/dir" is a
+	// different key that does not exist.
+	resp, err := storage.GetObject(ctx, "test-bucket", s3Key)
+	require.NoError(t, err)
+	require.NoError(t, resp.Reader.Close())
+
+	_, err = storage.GetObject(ctx, "test-bucket", "path/to/dir")
+	require.Error(t, err)
 }
 
 // TestRoundTrip_ComplexPaths verifies complete round-trip with various complex paths.
@@ -358,7 +377,7 @@ func TestRoundTrip_ComplexPaths(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify OS-native path exists.
-			expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(tc.key))
+			expectedPath := filepath.Join(root, "test-bucket", filepath.Join(filepath.FromSlash(tc.key), "#obj"))
 			info, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			require.False(t, info.IsDir())

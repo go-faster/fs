@@ -117,6 +117,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Conditional/Delete":                    testConditionalDelete,
 	"Conditional/CompleteMultipart":         testConditionalCompleteMultipart,
 	"Attributes/PartLayout":                 testObjectAttributesPartLayout,
+	"Keyspace/OverlappingKeys":              testOverlappingKeys,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1191,6 +1192,51 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testOverlappingKeys covers the flatness of the S3 keyspace: a key that is a
+// prefix of another at a delimiter boundary, and a key that ends in one, are
+// ordinary names. A backend that maps a key onto a filesystem path has to work
+// for this, because the second write finds a file where it wants a directory.
+func testOverlappingKeys(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	keys := map[string][]byte{
+		"foo":         []byte("just foo"),
+		"foo/bar":     []byte("under foo"),
+		"foo/bar/baz": []byte("under foo/bar"),
+		"asdf/":       []byte("trailing delimiter"),
+		"a//b":        []byte("empty component"),
+	}
+
+	// Write in an order that puts each parent before its child, which is the
+	// order that breaks a path-shaped keyspace.
+	for _, key := range []string{"foo", "foo/bar", "foo/bar/baz", "asdf/", "a//b"} {
+		_, err := putConditional(t, storage, key, keys[key], "", "")
+		require.NoErrorf(t, err, "put %q", key)
+	}
+
+	for key, want := range keys {
+		require.Equalf(t, want, readObject(t, storage, key), "read %q", key)
+	}
+
+	// Every key is listed exactly once, under the name it was written with.
+	page, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket})
+	require.NoError(t, err)
+
+	listed := make([]string, 0, len(page.Objects))
+	for _, o := range page.Objects {
+		listed = append(listed, o.Key)
+	}
+
+	require.ElementsMatch(t, []string{"foo", "foo/bar", "foo/bar/baz", "asdf/", "a//b"}, listed)
+
+	// Deleting the parent leaves the child alone.
+	require.NoError(t, storage.DeleteObject(ctx, testBucket, "foo/bar"))
+	require.Equal(t, keys["foo/bar/baz"], readObject(t, storage, "foo/bar/baz"))
+	require.Equal(t, keys["foo"], readObject(t, storage, "foo"))
 }
 
 // testObjectAttributesPartLayout covers fs.ObjectAttributer: a completed

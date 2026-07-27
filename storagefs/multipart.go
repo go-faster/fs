@@ -341,13 +341,22 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	})
 
 	// Create the final object path.
-	objectPath := filepath.Join(s.root, meta.Bucket, toOSPath(meta.Key))
+	objectPath := filepath.Join(s.root, meta.Bucket, objectRelPath(meta.Key))
 
-	// Ensure parent directory exists.
+	// Ensure the key's directory exists. As in PutObject, a completion that is
+	// then refused must not leave it behind.
 	objectDir := filepath.Dir(objectPath)
 	if err := os.MkdirAll(objectDir, 0750); err != nil {
 		return nil, errors.Wrap(err, "create object directory")
 	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			pruneEmptyDirs(objectDir, filepath.Join(s.root, meta.Bucket))
+		}
+	}()
 
 	// Assemble into a staging temp file, then rename into place so a partially
 	// assembled object is never visible even if the process dies mid-complete.
@@ -454,6 +463,8 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	if err := s.writeSidecar(meta.Bucket, sc); err != nil {
 		return nil, err
 	}
+
+	committed = true
 
 	return &fs.CompleteMultipartUploadResponse{
 		Location: "/" + meta.Bucket + "/" + meta.Key,
