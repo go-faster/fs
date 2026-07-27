@@ -114,7 +114,7 @@ func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*f
 	return &fs.Part{
 		PartNumber:   req.PartNumber,
 		ETag:         sc.ETag,
-		Size:         sc.Size,
+		Size:         sc.LogicalSize(),
 		LastModified: sc.Modified,
 	}, nil
 }
@@ -153,7 +153,7 @@ func (s *Storage) ListParts(ctx context.Context, bucket, key, uploadID string) (
 		parts = append(parts, fs.Part{
 			PartNumber:   partNumber(sc),
 			ETag:         sc.ETag,
-			Size:         sc.Size,
+			Size:         sc.LogicalSize(),
 			LastModified: sc.Modified,
 		})
 	}
@@ -251,7 +251,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		// only record of where one part ends and the next begins.
 		layout = append(layout, fs.ObjectPart{
 			PartNumber: part.PartNumber,
-			Size:       sc.Size,
+			Size:       sc.LogicalSize(),
 			ETag:       sc.ETag,
 		})
 

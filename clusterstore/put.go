@@ -16,6 +16,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster/placement"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/cluster/transport"
+	"github.com/go-faster/fs/internal/sse"
 )
 
 // asyncTimeout bounds one async remainder task (parity/trailing-replica
@@ -48,6 +49,9 @@ type PutRequest struct {
 	// ContentMD5 is the hex digest the client claims the body has. The write
 	// is refused before it is committed when the fragments say otherwise.
 	ContentMD5 string
+	// ServerSideEncryption asks for the body to be encrypted before it is
+	// fragmented; empty stores it in the clear.
+	ServerSideEncryption string
 }
 
 // Put writes an object at its bucket's scheme, acknowledging only once the
@@ -81,7 +85,22 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 	s := c.EffectiveScheme(ctx, req.Bucket)
 	pkey := placement.ObjectKey(req.Bucket, req.Key)
 
-	plan, err := fragment.Plan(topo, s, pkey, req.Size)
+	// Encryption happens here, above the fragmenter, so that everything below
+	// — shards, parity, repair, peer transfer, the scrubber — moves ciphertext
+	// and never needs a key. The plan is therefore made for the *stored* size,
+	// which is the plaintext plus one tag per chunk.
+	encInfo, sealer, err := c.beginEncryption(req.ServerSideEncryption)
+	if err != nil {
+		return nil, err
+	}
+
+	storedSize := req.Size
+	if encInfo != nil {
+		storedSize = sse.CipherSize(req.Size)
+		encInfo.PlainSize = req.Size
+	}
+
+	plan, err := fragment.Plan(topo, s, pkey, storedSize)
 	if err != nil {
 		return nil, err
 	}
@@ -111,18 +130,25 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		return rc, err
 	}
 
+	// The ETag and the content checksum are taken from the plaintext, so they
+	// are what they would have been without encryption and every existing
+	// formula still holds. The fragmenter downstream sees ciphertext.
 	hasher := md5.New() //nolint:gosec // Content checksum, not a security primitive.
 	body := io.TeeReader(req.Body, hasher)
 
+	if sealer != nil {
+		body = sse.NewEncryptingReader(body, sealer)
+	}
+
 	// Synchronous quorum phase. For EC every shard (data and parity) must land
 	// before the ack — there is no safe async path to complete a shard set.
-	if err := fragment.EncodeDataStream(plan, s, req.Size, body, sink); err != nil {
+	if err := fragment.EncodeDataStream(plan, s, storedSize, body, sink); err != nil {
 		c.discardGeneration(ctx, plan, peers, req.Bucket, req.Key, gen)
 		return nil, errors.Wrap(err, "write quorum fragments")
 	}
 
 	if s.Kind == scheme.EC {
-		if err := fragment.EncodeParityStream(plan, s, req.Size, sink, reopen); err != nil {
+		if err := fragment.EncodeParityStream(plan, s, storedSize, sink, reopen); err != nil {
 			c.discardGeneration(ctx, plan, peers, req.Bucket, req.Key, gen)
 			return nil, errors.Wrap(err, "write EC parity shards")
 		}
@@ -153,7 +179,8 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		Bucket:             req.Bucket,
 		Key:                req.Key,
 		Scheme:             s.String(),
-		Size:               req.Size,
+		Size:               storedSize,
+		Encryption:         encInfo,
 		Generation:         gen,
 		Seq:                seq,
 		Modified:           time.Now().UTC(),

@@ -32,6 +32,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/fragment"
 	"github.com/go-faster/fs/internal/cluster/scheme"
+	"github.com/go-faster/fs/internal/sse"
 )
 
 // Sentinel errors of the coordinator.
@@ -87,6 +88,9 @@ type Config struct {
 	// accounting, which is what a cluster without a control plane (tests,
 	// StaticTopology) does — the counters live in etcd.
 	Usage UsageObserver
+	// Keyring holds the master key object bodies are encrypted under. Nil
+	// leaves the cluster unable to encrypt, and writes asking for it refused.
+	Keyring *sse.Keyring
 }
 
 // Coordinator is the cluster object data plane: quorum writes, failover
@@ -98,6 +102,7 @@ type Coordinator struct {
 	schemeFor SchemeFunc
 	onErr     func(bucket, key string, err error)
 	usage     UsageObserver
+	keyring   *sse.Keyring
 
 	// epochs remembers recent topology snapshots so reads, deletes and repair
 	// can reach fragments still sitting at a previous epoch's placement.
@@ -154,6 +159,7 @@ func New(cfg Config) (*Coordinator, error) {
 		schemeFor: schemeFor,
 		onErr:     onErr,
 		usage:     cfg.Usage,
+		keyring:   cfg.Keyring,
 		queue:     make(chan func(), queueLen),
 		inflight:  make(map[string]int),
 	}

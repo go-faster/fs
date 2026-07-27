@@ -163,7 +163,7 @@ func (s *Storage) listFromIndex(ctx context.Context, req *fs.ListObjectsRequest)
 	for _, sc := range sidecars {
 		out.Objects = append(out.Objects, fs.Object{
 			Key:          sc.Key,
-			Size:         sc.Size,
+			Size:         sc.LogicalSize(),
 			LastModified: sc.Modified,
 			ETag:         sc.ETag,
 			Owner:        sc.Owner,
@@ -201,7 +201,7 @@ func (s *Storage) listFromSidecars(ctx context.Context, req *fs.ListObjectsReque
 	for _, sc := range sidecars {
 		objects = append(objects, fs.Object{
 			Key:          sc.Key,
-			Size:         sc.Size,
+			Size:         sc.LogicalSize(),
 			LastModified: sc.Modified,
 			ETag:         sc.ETag,
 			Owner:        sc.Owner,
@@ -216,10 +216,6 @@ func (s *Storage) listFromSidecars(ctx context.Context, req *fs.ListObjectsReque
 // resolve to a single winner.
 func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 	if err := s.mustBucket(ctx, req.Bucket); err != nil {
-		return nil, err
-	}
-
-	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
 		return nil, err
 	}
 
@@ -257,12 +253,17 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		ACL:        req.ACL,
 		Owner:      req.Owner,
 		ContentMD5: req.ContentMD5,
+
+		ServerSideEncryption: req.ServerSideEncryption,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &fs.PutObjectResponse{ETag: sc.ETag}, nil
+	return &fs.PutObjectResponse{
+		ETag:                 sc.ETag,
+		ServerSideEncryption: encryptionAlgorithm(sc),
+	}, nil
 }
 
 // GetObject implements fs.Storage.
@@ -276,13 +277,24 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		return nil, mapObjectErr(err, key)
 	}
 
+	if sc.Encryption != nil {
+		decrypted, err := s.coord.openEncrypted(rc, sc.Encryption)
+		if err != nil {
+			_ = rc.Close()
+			return nil, err
+		}
+
+		rc = decrypted
+	}
+
 	return &fs.GetObjectResponse{
-		Reader:       rc,
-		Size:         sc.Size,
-		LastModified: sc.Modified,
-		ETag:         sc.ETag,
-		Metadata:     sc.ObjectMetadata(),
-		TagCount:     len(sc.Tags),
+		Reader:               rc,
+		Size:                 sc.LogicalSize(),
+		ServerSideEncryption: encryptionAlgorithm(sc),
+		LastModified:         sc.Modified,
+		ETag:                 sc.ETag,
+		Metadata:             sc.ObjectMetadata(),
+		TagCount:             len(sc.Tags),
 	}, nil
 }
 
@@ -326,7 +338,7 @@ func (s *Storage) objectState(ctx context.Context, bucket, key string) (fs.Objec
 		return fs.ObjectState{
 			Exists:       true,
 			ETag:         cur.ETag,
-			Size:         cur.Size,
+			Size:         cur.LogicalSize(),
 			LastModified: cur.Modified,
 		}, nil
 	case errors.Is(err, ErrNotFound):
@@ -457,7 +469,7 @@ func (s *Storage) ObjectAttributes(ctx context.Context, bucket, key string) (*fs
 
 	return &fs.ObjectAttributes{
 		ETag:         sc.ETag,
-		Size:         sc.Size,
+		Size:         sc.LogicalSize(),
 		LastModified: sc.Modified,
 		Parts:        append([]fs.ObjectPart(nil), sc.Parts...),
 		UploadID:     sc.UploadID,
