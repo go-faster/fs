@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/sse"
 )
 
 const (
@@ -36,6 +37,11 @@ type multipartMetadata struct {
 	Tags     []fs.Tag          `json:"tags,omitempty"`
 	ACL      fs.ACL            `json:"acl,omitempty"`
 	Owner    fs.Owner          `json:"owner,omitzero"`
+	// Encryption is the upload's own key, protecting the parts while they sit
+	// in staging. It is not the completed object's key: an upload that is
+	// abandoned leaves parts on disk, and those must be ciphertext too, so the
+	// parts are sealed on arrival rather than at completion.
+	Encryption *encryptionInfo `json:"encryption,omitempty"`
 }
 
 // multipartManager manages multipart uploads with disk-based persistence.
@@ -133,6 +139,20 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipa
 		Owner:     req.Owner,
 	}
 
+	if req.ServerSideEncryption != "" {
+		if req.ServerSideEncryption != sse.Algorithm {
+			return nil, errors.Wrapf(fs.ErrUnsupportedOperation,
+				"unsupported server-side encryption algorithm %q", req.ServerSideEncryption)
+		}
+
+		_, info, err := s.beginEncryption(0)
+		if err != nil {
+			return nil, err
+		}
+
+		meta.Encryption = info
+	}
+
 	s.multipart.mu.Lock()
 	defer s.multipart.mu.Unlock()
 
@@ -151,7 +171,7 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipa
 
 func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
 	s.multipart.mu.RLock()
-	_, err := s.multipart.loadMetadata(req.UploadID)
+	meta, err := s.multipart.loadMetadata(req.UploadID)
 	s.multipart.mu.RUnlock()
 
 	if err != nil {
@@ -166,15 +186,31 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 		return nil, errors.Wrap(err, "create part file")
 	}
 
+	// The part's ETag is the MD5 of its plaintext, so the digest is taken
+	// before the seal, exactly as it is for a single PUT.
 	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-	writer := io.MultiWriter(f, hash)
 
-	size, err := io.Copy(writer, req.Reader)
+	partWriter, err := s.sealPart(f, meta, req.PartNumber)
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(partPath)
+
+		return nil, err
+	}
+
+	size, err := io.Copy(io.MultiWriter(partWriter, hash), req.Reader)
 	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(partPath)
 
 		return nil, errors.Wrap(err, "write part")
+	}
+
+	if err := partWriter.Close(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(partPath)
+
+		return nil, err
 	}
 
 	if err := f.Close(); err != nil {
@@ -380,6 +416,20 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 
 	layout := make([]fs.ObjectPart, 0, len(parts))
 
+	var totalSize int64
+
+	// The completed object is sealed as one uniform chunk stream under its own
+	// fresh key, rather than by concatenating the parts as they were sealed.
+	// Parts are staged at whatever sizes the client chose, so concatenating
+	// their chunk streams would leave chunk boundaries wherever the parts
+	// happened to end, and the plaintext-offset arithmetic a range GET depends
+	// on assumes they are uniform.
+	objectWriter, err := s.encryptTo(finalFile, completionAlgorithm(meta), 0)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+
 	uploadPath := s.multipart.uploadPath(req.UploadID)
 	for _, part := range parts {
 		partPath := filepath.Join(uploadPath, strconv.Itoa(part.PartNumber))
@@ -390,14 +440,25 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 			return nil, errors.Wrapf(err, "open part %d", part.PartNumber)
 		}
 
+		partReader, err := s.openStagedPart(partFile, meta, part.PartNumber)
+		if err != nil {
+			_ = partFile.Close()
+
+			cleanup()
+
+			return nil, errors.Wrapf(err, "read part %d", part.PartNumber)
+		}
+
 		partHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-		written, err := io.Copy(io.MultiWriter(finalFile, partHash, contentHash), partFile)
+		written, err := io.Copy(io.MultiWriter(objectWriter, partHash, contentHash), partReader)
 		_ = partFile.Close()
 
 		if err != nil {
 			cleanup()
 			return nil, errors.Wrapf(err, "copy part %d", part.PartNumber)
 		}
+
+		totalSize += written
 
 		layout = append(layout, fs.ObjectPart{
 			PartNumber: part.PartNumber,
@@ -406,6 +467,11 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		})
 
 		_, _ = hash.Write(partHash.Sum(nil))
+	}
+
+	if err := objectWriter.Close(); err != nil {
+		cleanup()
+		return nil, err
 	}
 
 	if err := s.syncFile(finalFile); err != nil {
@@ -459,6 +525,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	sc := newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)
 	sc.Parts = layout
 	sc.UploadID = req.UploadID
+	sc.Encryption = objectWriter.finish(totalSize)
 
 	if err := s.writeSidecar(meta.Bucket, sc); err != nil {
 		return nil, err
@@ -467,10 +534,11 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	committed = true
 
 	return &fs.CompleteMultipartUploadResponse{
-		Location: "/" + meta.Bucket + "/" + meta.Key,
-		Bucket:   meta.Bucket,
-		Key:      meta.Key,
-		ETag:     etag,
+		Location:             "/" + meta.Bucket + "/" + meta.Key,
+		Bucket:               meta.Bucket,
+		Key:                  meta.Key,
+		ETag:                 etag,
+		ServerSideEncryption: completionAlgorithm(meta),
 	}, nil
 }
 

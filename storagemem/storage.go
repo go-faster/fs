@@ -215,6 +215,10 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+		return nil, err
+	}
+
 	b, exists := s.buckets[req.Bucket]
 	if !exists {
 		return nil, fs.ErrBucketNotFound
@@ -454,6 +458,10 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 
 	if _, exists := s.buckets[req.Bucket]; !exists {
 		return nil, fs.ErrBucketNotFound
+	}
+
+	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+		return nil, err
 	}
 
 	uploadID := uuid.New().String()
@@ -800,4 +808,20 @@ func (s *Storage) SetBucketObjectOwnership(_ context.Context, bucketName, owners
 	b.objectOwnership = ownership
 
 	return nil
+}
+
+// refuseEncryption reports that this backend cannot encrypt at rest.
+//
+// A backend that ignored the field would store the body in the clear and
+// answer as though the request had been honored, which is the one failure this
+// feature exists to prevent — and it would be invisible, since an object
+// stored in the clear reads back perfectly. Refusing is the only honest
+// answer until the backend can encrypt.
+func refuseEncryption(algorithm string) error {
+	if algorithm == "" {
+		return nil
+	}
+
+	return errors.Wrapf(fs.ErrUnsupportedOperation,
+		"server-side encryption (%s) is not supported by this storage backend", algorithm)
 }

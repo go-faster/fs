@@ -96,6 +96,7 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
+	writeSSE(w, resp.ServerSideEncryption)
 	w.WriteHeader(http.StatusOK)
 	_ = xml.NewEncoder(w).Encode(result)
 }

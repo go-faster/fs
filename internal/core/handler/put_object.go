@@ -99,6 +99,8 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		IfNoneMatch: r.Header.Get("If-None-Match"),
 		IfMatch:     r.Header.Get("If-Match"),
 		ContentMD5:  contentMD5,
+
+		ServerSideEncryption: h.requestedEncryption(r, bucket),
 	}
 
 	resp, err := h.service.PutObject(ctx, req)
@@ -108,6 +110,7 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("ETag", quoteETag(resp.ETag))
+	writeSSE(w, resp.ServerSideEncryption)
 	w.WriteHeader(http.StatusOK)
 }
 

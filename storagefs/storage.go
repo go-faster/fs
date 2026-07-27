@@ -13,6 +13,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/sse"
 )
 
 var _ fs.Storage = (*Storage)(nil)
@@ -56,6 +57,10 @@ type Storage struct {
 
 	// sync is the durability policy applied to writes.
 	sync SyncPolicy
+
+	// keyring holds the master key object bodies are encrypted under. Nil
+	// leaves the store unencrypted.
+	keyring *sse.Keyring
 
 	// verifyReads makes GetObject verify the object checksum before serving.
 	verifyReads bool

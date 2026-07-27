@@ -357,6 +357,41 @@ func (s Service) SetBucketObjectOwnership(ctx context.Context, bucket, ownership
 	return store.SetBucketObjectOwnership(ctx, bucket, ownership)
 }
 
+// BucketEncryption implements fs.BucketEncrypter.
+func (s Service) BucketEncryption(ctx context.Context, bucket string) (string, error) {
+	store, err := s.encrypter(bucket)
+	if err != nil {
+		return "", err
+	}
+
+	return store.BucketEncryption(ctx, bucket)
+}
+
+// SetBucketEncryption implements fs.BucketEncrypter.
+func (s Service) SetBucketEncryption(ctx context.Context, bucket, algorithm string) error {
+	store, err := s.encrypter(bucket)
+	if err != nil {
+		return err
+	}
+
+	return store.SetBucketEncryption(ctx, bucket, algorithm)
+}
+
+// encrypter validates the bucket name and resolves the backend's default
+// encryption capability.
+func (s Service) encrypter(bucket string) (fs.BucketEncrypter, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketEncrypter)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot encrypt objects")
+	}
+
+	return store, nil
+}
+
 // settingsStore validates the bucket name and resolves the backend's
 // per-bucket settings capability.
 func (s Service) settingsStore(bucket string) (fs.BucketSettingsStore, error) {

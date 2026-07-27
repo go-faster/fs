@@ -5,7 +5,7 @@
 Every pull request runs the **whole** upstream
 [ceph/s3-tests](https://github.com/ceph/s3-tests) suite — the objective,
 client-driven measure of S3 compatibility — and fails if any test outside the
-known-failures list fails, or if any of the **419** tests inside it passes.
+known-failures list fails, or if any of the **428** tests inside it passes.
 The list can therefore only shrink; a newly passing test shows up on the pull
 request that made it pass, rather than waiting to be noticed.
 
@@ -15,18 +15,18 @@ What follows is that list, grouped. Everything else in the suite passes.
 
 | Feature area | Tests not passing |
 |--------------|------------------:|
-| Multipart upload | 27 |
+| Multipart upload | 30 |
 | Object tagging | 16 |
 | Object metadata | 2 |
-| Server-side copy | 79 |
+| Server-side copy | 84 |
 | Conditional requests | 15 |
-| Encryption passthrough | 40 |
+| Encryption passthrough | 41 |
 | HTTP protocol | 2 |
 | Bucket listing | 14 |
 | Bucket lifecycle | 117 |
 | Object CRUD | 80 |
 | Other | 27 |
-| **Total** | **419** |
+| **Total** | **428** |
 
 ## SDK & client coverage
 

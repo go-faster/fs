@@ -52,9 +52,27 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
-	if _, err := io.Copy(io.MultiWriter(tmp, hash), req.Reader); err != nil {
+	// The ETag stays the MD5 of the *plaintext*, which is what AWS reports for
+	// an SSE-S3 object and what keeps every existing ETag, conditional-write
+	// and multipart formula working unchanged. So the digest is taken from the
+	// body as it arrives, before any encryption.
+	enc, err := s.encryptTo(tmp, req.ServerSideEncryption, 0)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+
+	size, err := io.Copy(io.MultiWriter(enc, hash), req.Reader)
+	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("failed to write object: %w", err)
+	}
+
+	// Seals the trailing partial chunk; without it the last chunk is never
+	// written at all.
+	if err := enc.Close(); err != nil {
+		cleanup()
+		return nil, err
 	}
 
 	// Flush object data to stable storage before it becomes visible (per policy).
@@ -106,13 +124,19 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, err
 	}
 
-	if err := s.writeSidecar(req.Bucket, newSidecar(req.Key, etag, etag, req.Metadata, req.Tags, req.ACL, req.Owner)); err != nil {
+	sc := newSidecar(req.Key, etag, etag, req.Metadata, req.Tags, req.ACL, req.Owner)
+	sc.Encryption = enc.finish(size)
+
+	if err := s.writeSidecar(req.Bucket, sc); err != nil {
 		return nil, err
 	}
 
 	committed = true
 
-	return &fs.PutObjectResponse{ETag: etag}, nil
+	return &fs.PutObjectResponse{
+		ETag:                 etag,
+		ServerSideEncryption: req.ServerSideEncryption,
+	}, nil
 }
 
 // currentObjectState reports the state conditional requests are evaluated

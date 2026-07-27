@@ -64,6 +64,21 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		resp.TagCount = len(sc.Tags)
 	}
 
+	// An encrypted body is served through a decrypting reader, and reports the
+	// plaintext size: the stored size carries a tag per chunk and is nobody
+	// else's business.
+	if sc != nil && sc.Encryption != nil {
+		reader, err := s.openEncrypted(f, sc.Encryption, 0)
+		if err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+
+		resp.Reader = reader
+		resp.Size = sc.Encryption.PlainSize
+		resp.ServerSideEncryption = sc.Encryption.Algorithm
+	}
+
 	if resp.ETag == "" {
 		etag, err := s.etagFor(objectPath, info)
 		if err != nil {

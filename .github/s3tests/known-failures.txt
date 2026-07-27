@@ -220,7 +220,6 @@ s3tests/functional/test_s3.py::test_create_bucket_bucket_owner_enforced
 s3tests/functional/test_s3.py::test_create_bucket_bucket_owner_preferred
 s3tests/functional/test_s3.py::test_create_bucket_object_writer
 s3tests/functional/test_s3.py::test_delete_bucket_encryption_kms
-s3tests/functional/test_s3.py::test_delete_bucket_encryption_s3
 s3tests/functional/test_s3.py::test_delete_marker_expiration
 s3tests/functional/test_s3.py::test_delete_marker_nonversioned
 s3tests/functional/test_s3.py::test_delete_marker_suspended
@@ -253,7 +252,6 @@ s3tests/functional/test_s3.py::test_encryption_sse_c_present
 s3tests/functional/test_s3.py::test_expected_bucket_owner
 s3tests/functional/test_s3.py::test_get_authpublic_acl_bucket_policy_status
 s3tests/functional/test_s3.py::test_get_bucket_encryption_kms
-s3tests/functional/test_s3.py::test_get_bucket_encryption_s3
 s3tests/functional/test_s3.py::test_get_bucket_policy_status
 s3tests/functional/test_s3.py::test_get_checksum_object_attributes
 s3tests/functional/test_s3.py::test_get_multipart_checksum_object_attributes
@@ -378,7 +376,6 @@ s3tests/functional/test_s3.py::test_post_object_escaped_field_values
 s3tests/functional/test_s3.py::test_post_object_upload_checksum
 s3tests/functional/test_s3.py::test_put_bucket_acl_grant_group_read
 s3tests/functional/test_s3.py::test_put_bucket_encryption_kms
-s3tests/functional/test_s3.py::test_put_bucket_encryption_s3
 s3tests/functional/test_s3.py::test_put_bucket_logging
 s3tests/functional/test_s3.py::test_put_bucket_logging_account_s
 s3tests/functional/test_s3.py::test_put_bucket_logging_errors
@@ -406,7 +403,6 @@ s3tests/functional/test_s3.py::test_sse_kms_default_upload_1kb
 s3tests/functional/test_s3.py::test_sse_kms_default_upload_1mb
 s3tests/functional/test_s3.py::test_sse_kms_default_upload_8mb
 s3tests/functional/test_s3.py::test_sse_kms_method_head
-s3tests/functional/test_s3.py::test_sse_kms_no_key
 s3tests/functional/test_s3.py::test_sse_kms_not_declared
 s3tests/functional/test_s3.py::test_sse_kms_read_declare
 s3tests/functional/test_s3.py::test_sse_s3_default_method_head
@@ -444,3 +440,33 @@ s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_removal
 s3tests/functional/test_s3.py::test_versioning_obj_suspend_versions
 s3tests/functional/test_s3.py::test_versioning_obj_suspended_copy
 s3tests/functional/test_s3.py::test_versioning_stack_delete_merkers
+
+# SSE-KMS: refused rather than ignored (#124, and #133 for the feature).
+#
+# These thirteen passed until server-side encryption was implemented, and
+# they passed for a bad reason: x-amz-server-side-encryption: aws:kms was
+# accepted and then ignored, so the object was written in the clear while
+# the client had been told its request was honored. Each test only checks
+# that the round-trip returns what it wrote, which a server storing
+# plaintext does perfectly well.
+#
+# An algorithm this server does not implement is now refused, so they fail
+# honestly. That is a smaller passing count and a server that no longer
+# claims an encryption it is not performing — SSE-KMS needs a key service
+# and is out of scope (#133).
+#
+# test_sse_kms_no_key came off the list in the same change: it asserts that
+# requesting KMS without a key fails, which is now true.
+s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1]
+s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1024]
+s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1048576]
+s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-8388608]
+s3tests/functional/test_s3.py::test_copy_part_enc[sse-kms-unencrypted-STANDARD-STANDARD-8388608]
+s3tests/functional/test_s3.py::test_sse_kms_multipart_invalid_chunks_1
+s3tests/functional/test_s3.py::test_sse_kms_multipart_invalid_chunks_2
+s3tests/functional/test_s3.py::test_sse_kms_multipart_upload
+s3tests/functional/test_s3.py::test_sse_kms_present
+s3tests/functional/test_s3.py::test_sse_kms_transfer_13b
+s3tests/functional/test_s3.py::test_sse_kms_transfer_1MB
+s3tests/functional/test_s3.py::test_sse_kms_transfer_1b
+s3tests/functional/test_s3.py::test_sse_kms_transfer_1kb

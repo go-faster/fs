@@ -162,11 +162,25 @@ type PutObjectRequest struct {
 	// ErrBadDigest before the object becomes visible — verifying afterwards
 	// would leave corrupt content readable in the window between.
 	ContentMD5 string
+
+	// ServerSideEncryption asks for the object to be encrypted at rest, and
+	// carries the algorithm ("AES256"). Empty stores the body as-is.
+	//
+	// The decision is made above the backend, because it is the bucket's
+	// default and the request's header that settle it, and a backend must not
+	// have to know about either. A backend that cannot encrypt refuses a
+	// non-empty value with ErrUnsupportedOperation rather than storing
+	// plaintext — silently ignoring it would report an object as encrypted
+	// when it is not.
+	ServerSideEncryption string
 }
 
 // PutObjectResponse reports the stored object's ETag.
 type PutObjectResponse struct {
 	ETag string
+	// ServerSideEncryption echoes the algorithm the object was encrypted
+	// with, empty when it was stored in the clear.
+	ServerSideEncryption string
 }
 
 // GetObjectResponse represents the response for GetObject operation.
@@ -180,6 +194,12 @@ type GetObjectResponse struct {
 	// as x-amz-tagging-count. Backends fill it from metadata they already read;
 	// zero means untagged (the header is then omitted).
 	TagCount int
+
+	// ServerSideEncryption names the algorithm the object is encrypted with at
+	// rest, echoed to the client as x-amz-server-side-encryption. Empty for an
+	// object stored in the clear. Size is always the plaintext size, so a
+	// client never learns the on-disk size.
+	ServerSideEncryption string
 }
 
 // MultipartUpload represents an in-progress multipart upload.
@@ -198,6 +218,11 @@ type CreateMultipartUploadRequest struct {
 	Metadata ObjectMetadata
 	Tags     []Tag
 	ACL      ACL
+	// ServerSideEncryption asks for the completed object to be encrypted at
+	// rest, and carries the algorithm ("AES256"). It is settled when the
+	// upload starts, not when it completes, because the parts are already on
+	// disk by then and would have been staged in the clear.
+	ServerSideEncryption string
 	// Owner is the principal starting the upload; it owns the completed object.
 	Owner Owner
 }
@@ -300,4 +325,7 @@ type CompleteMultipartUploadResponse struct {
 	Bucket   string
 	Key      string
 	ETag     string
+	// ServerSideEncryption echoes the algorithm the completed object was
+	// encrypted with, empty when it was stored in the clear.
+	ServerSideEncryption string
 }

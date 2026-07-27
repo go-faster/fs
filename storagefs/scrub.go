@@ -121,6 +121,19 @@ func (s *Storage) storedChecksum(bucket, key string) (string, bool) {
 		return "", false
 	}
 
+	// An encrypted object's stored bytes are ciphertext, so the plaintext
+	// checksum would report every one of them as corrupt. The ciphertext
+	// checksum is what the file on disk should hash to, and checking it needs
+	// no key — which is the point, since a scrub must run on a store whose
+	// master key is not loaded.
+	if sc.Encryption != nil {
+		if sc.Encryption.CipherChecksum == "" {
+			return "", false
+		}
+
+		return sc.Encryption.CipherChecksum, true
+	}
+
 	if sc.Checksum != "" {
 		return sc.Checksum, true
 	}
