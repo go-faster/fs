@@ -74,11 +74,15 @@ func TestPutObject_WindowsPathSeparators(t *testing.T) {
 		require.NoError(t, err, "Intermediate directory 'nested' should exist")
 		require.True(t, info.IsDir())
 
-		// Verify the filename itself doesn't contain forward slashes.
+		// Verify no path component smuggles a forward slash into a name.
 		actualFilename := filepath.Base(expectedPath)
 		require.False(t, strings.Contains(actualFilename, "/"),
 			"Filename should not contain forward slashes: %s", actualFilename)
-		require.Equal(t, "file.txt", actualFilename)
+
+		// The content leaf is the reserved name; the key's last component is
+		// the directory holding it.
+		require.Equal(t, "#obj", actualFilename)
+		require.Equal(t, "file.txt", filepath.Base(filepath.Dir(expectedPath)))
 	}
 
 	// Verify intermediate directories were created with proper structure.
