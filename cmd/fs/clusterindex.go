@@ -15,7 +15,7 @@ import (
 	"github.com/go-faster/fs/clusterstore"
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/diskstore"
-	"github.com/go-faster/fs/internal/cluster/objindex"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
@@ -47,7 +47,7 @@ func isObjectRecord(name string) bool {
 // index is derived: dropping an entry costs a rebuild, while failing the write
 // that produced it would cost the object.
 type objectIndexer struct {
-	index *objindex.Index
+	index metastore.Store
 	lg    *zap.Logger
 
 	// dropped counts records the index could not take. A non-zero count means
@@ -57,9 +57,17 @@ type objectIndexer struct {
 
 var _ diskstore.CommitObserver = (*objectIndexer)(nil)
 
-func newObjectIndexer(index *objindex.Index, lg *zap.Logger) *objectIndexer {
+func newObjectIndexer(index metastore.Store, lg *zap.Logger) *objectIndexer {
 	return &objectIndexer{index: index, lg: lg}
 }
+
+// observed is the context the observer records under.
+//
+// diskstore.CommitObserver carries none, and inheriting the write's would be
+// wrong even if it did: the record is already durable by the time this runs, so
+// a caller who has given up must not also take the index entry for what its
+// disks now hold. The store's own timeouts bound the call.
+func observed() context.Context { return context.Background() }
 
 // Wants implements diskstore.CommitObserver: only commit records carry object
 // identity, so only they are worth reading back. Payload fragments are named
@@ -75,7 +83,7 @@ func (o *objectIndexer) Committed(disk cluster.DiskID, name string, data []byte)
 		return
 	}
 
-	if err := o.index.Put(entry); err != nil {
+	if err := o.index.Put(observed(), entry); err != nil {
 		o.drop(name, err)
 	}
 }
@@ -89,7 +97,7 @@ func (o *objectIndexer) Deleted(_ cluster.DiskID, name string, data []byte) {
 		return
 	}
 
-	if err := o.index.Delete(sc.Bucket, sc.Key); err != nil {
+	if err := o.index.Delete(observed(), sc.Bucket, sc.Key); err != nil {
 		o.drop(name, err)
 	}
 }
@@ -105,17 +113,17 @@ func (o *objectIndexer) drop(name string, err error) {
 func (o *objectIndexer) Dropped() int64 { return o.dropped.Load() }
 
 // indexEntry turns a stored commit record into an index entry.
-func indexEntry(disk cluster.DiskID, data []byte) (objindex.Entry, error) {
+func indexEntry(disk cluster.DiskID, data []byte) (metastore.Entry, error) {
 	var sc clusterstore.Sidecar
 	if err := json.Unmarshal(data, &sc); err != nil {
-		return objindex.Entry{}, errors.Wrap(err, "decode commit record")
+		return metastore.Entry{}, errors.Wrap(err, "decode commit record")
 	}
 
 	if sc.Bucket == "" || sc.Key == "" {
-		return objindex.Entry{}, errors.New("commit record names no object")
+		return metastore.Entry{}, errors.New("commit record names no object")
 	}
 
-	return objindex.Entry{
+	return metastore.Entry{
 		Bucket:     sc.Bucket,
 		Key:        sc.Key,
 		Size:       sc.Size,
@@ -147,19 +155,19 @@ func readAllClose(rc io.ReadCloser) ([]byte, error) {
 // objects would simply be missing from the merge, and the caller reads the
 // sidecars instead. Reporting an empty page as if it were complete is how a
 // listing silently loses keys.
-func (rt *clusterRuntime) indexPages(_ context.Context, q transport.IndexQuery) (transport.IndexPage, error) {
+func (rt *clusterRuntime) indexPages(ctx context.Context, q transport.IndexQuery) (transport.IndexPage, error) {
 	if rt.index == nil {
 		return transport.IndexPage{}, nil
 	}
 
-	state, err := rt.index.State()
-	if err != nil || state != objindex.StateReady {
+	state, err := rt.index.State(ctx)
+	if err != nil || state != metastore.StateReady {
 		return transport.IndexPage{}, nil //nolint:nilerr // Not ready is an answer, not a failure.
 	}
 
 	page := transport.IndexPage{Ready: true}
 
-	err = rt.index.Scan(q.Bucket, q.Prefix, q.After, q.Limit, func(e objindex.Entry) error {
+	err = rt.index.Scan(ctx, q.Bucket, q.Prefix, q.After, q.Limit, func(e metastore.Entry) error {
 		page.Entries = append(page.Entries, transport.IndexEntry{
 			Key:        e.Key,
 			Size:       e.Size,
@@ -198,7 +206,7 @@ func (rt *clusterRuntime) buildObjectIndex(ctx context.Context) error {
 
 	started := time.Now()
 
-	if err := rt.index.Reset(); err != nil {
+	if err := rt.index.Reset(ctx); err != nil {
 		return err
 	}
 
@@ -227,7 +235,7 @@ func (rt *clusterRuntime) buildObjectIndex(ctx context.Context) error {
 				return nil //nolint:nilerr // Same.
 			}
 
-			if err := rt.index.Put(entry); err != nil {
+			if err := rt.index.Put(ctx, entry); err != nil {
 				return err
 			}
 
@@ -240,7 +248,7 @@ func (rt *clusterRuntime) buildObjectIndex(ctx context.Context) error {
 		}
 	}
 
-	if err := rt.index.MarkReady(); err != nil {
+	if err := rt.index.MarkReady(ctx); err != nil {
 		return err
 	}
 
@@ -264,14 +272,14 @@ func (rt *clusterRuntime) RunObjectIndex(ctx context.Context) {
 		return
 	}
 
-	state, err := rt.index.State()
+	state, err := rt.index.State(ctx)
 	if err != nil {
 		rt.lg.Warn("Object index state unreadable; rebuilding", zap.Error(err))
 
-		state = objindex.StateBuilding
+		state = metastore.StateBuilding
 	}
 
-	if state == objindex.StateReady {
+	if state == metastore.StateReady {
 		rt.lg.Debug("Object index adopted from a clean shutdown")
 
 		return
@@ -299,7 +307,7 @@ const verifyBatch = 512
 // That is what lets the scrub drop the set it used to keep of every object in
 // a pass: the set grew with the node, and this is bounded by the batch.
 type objectVerifier struct {
-	index *objindex.Index
+	index metastore.Store
 	lg    *zap.Logger
 
 	mu      sync.Mutex
@@ -308,7 +316,7 @@ type objectVerifier struct {
 
 var _ clusterstore.VerificationIndex = (*objectVerifier)(nil)
 
-func newObjectVerifier(index *objindex.Index, lg *zap.Logger) *objectVerifier {
+func newObjectVerifier(index metastore.Store, lg *zap.Logger) *objectVerifier {
 	return &objectVerifier{index: index, lg: lg, pending: make(map[string]time.Time)}
 }
 
@@ -329,7 +337,7 @@ func (v *objectVerifier) LastVerified(bucket, key string) (time.Time, bool) {
 		return at, true
 	}
 
-	entry, found, err := v.index.Get(bucket, key)
+	entry, found, err := v.index.Get(observed(), bucket, key)
 	if err != nil || !found || entry.VerifiedAt.IsZero() {
 		return time.Time{}, false
 	}
@@ -365,7 +373,7 @@ func (v *objectVerifier) Flush() error {
 		return nil
 	}
 
-	records := make([]objindex.Verification, 0, len(v.pending))
+	records := make([]metastore.Verification, 0, len(v.pending))
 
 	for k, at := range v.pending {
 		bucket, key, ok := strings.Cut(k, "\x00")
@@ -373,12 +381,12 @@ func (v *objectVerifier) Flush() error {
 			continue
 		}
 
-		records = append(records, objindex.Verification{Bucket: bucket, Key: key, At: at})
+		records = append(records, metastore.Verification{Bucket: bucket, Key: key, At: at})
 	}
 
 	v.pending = make(map[string]time.Time)
 
 	v.mu.Unlock()
 
-	return v.index.SetVerified(records)
+	return v.index.SetVerified(observed(), records)
 }

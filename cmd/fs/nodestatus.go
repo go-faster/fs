@@ -13,7 +13,7 @@ import (
 	"github.com/go-faster/fs/internal/adminhandler"
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/etcd"
-	"github.com/go-faster/fs/internal/cluster/objindex"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
@@ -122,12 +122,12 @@ func (rt *clusterRuntime) diskStatus(ctx context.Context) []transport.NodeDisk {
 // the index, and this runs on a peer's status request, which is contracted to
 // be cheap and bounded. A status path that walked the node's whole object set
 // would be the same mistake the index exists to remove.
-func (rt *clusterRuntime) scrubCoverage() objindex.Coverage {
+func (rt *clusterRuntime) scrubCoverage() metastore.Coverage {
 	if cov := rt.coverage.Load(); cov != nil {
 		return *cov
 	}
 
-	return objindex.Coverage{}
+	return metastore.Coverage{}
 }
 
 // coverageInterval is how often the node re-derives its verification coverage.
@@ -156,12 +156,12 @@ func (rt *clusterRuntime) RunCoverage(ctx context.Context) {
 	for {
 		wait := coverageInterval
 
-		state, err := rt.index.State()
+		state, err := rt.index.State(ctx)
 		switch {
-		case err != nil || state != objindex.StateReady:
+		case err != nil || state != metastore.StateReady:
 			wait = coverageRetryInterval
 		default:
-			if cov, err := rt.index.Coverage(); err == nil {
+			if cov, err := rt.index.Coverage(ctx); err == nil {
 				rt.coverage.Store(&cov)
 			} else if ctx.Err() == nil {
 				rt.lg.Warn("Computing scrub coverage failed", zap.Error(err))

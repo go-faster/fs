@@ -18,6 +18,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/diskstore"
 	"github.com/go-faster/fs/internal/cluster/etcd"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/objindex"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/cluster/transport"
@@ -61,10 +62,14 @@ type clusterRuntime struct {
 	// when the coordinator was built without it.
 	usage *usageReporter
 
-	// index is this node's local index of the objects its disks hold. Nothing
+	// index is this node's metadata store: the objects its disks hold. Nothing
 	// reads it yet; it is maintained so the listing, usage and scrub paths can
 	// stop walking once they are moved onto it.
-	index *objindex.Index
+	//
+	// It is held as the interface, not as the pebble implementation, so a
+	// cluster-scope store can take its place without a caller noticing. Which
+	// one is in place is asked of the store itself, via Scope.
+	index metastore.Store
 	// indexer feeds it from the disk store, and counts what it could not take.
 	indexer *objectIndexer
 
@@ -72,7 +77,7 @@ type clusterRuntime struct {
 	scrub scrubTotals
 	// coverage is the last computed verification coverage, recomputed in the
 	// background because deriving it scans the index.
-	coverage atomic.Pointer[objindex.Coverage]
+	coverage atomic.Pointer[metastore.Coverage]
 
 	// closeOnce guards teardown. Serve tears the node down when its context
 	// ends, and so does every construction error path, so close can be reached
