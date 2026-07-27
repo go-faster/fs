@@ -20,11 +20,12 @@ import (
 // run as long as it needs. So the http.Server fields are left unset and the
 // deadlines are re-armed here as the bytes flow.
 //
-// refreshRatio is how much of the timeout may elapse before a deadline is
-// re-armed. Re-arming on every Write would mean a syscall per chunk; waiting
-// longer would eat into the timeout. A quarter costs one syscall per quarter
-// of the timeout and makes the effective no-progress window [0.75T, T].
-const refreshRatio = 4
+// Every read and every write re-arms, rather than only those far enough apart
+// to be worth a timer update. Throttling the re-arm saves little and leaves a
+// window where the deadline lapses while the handler is between calls — the
+// transfer is then cut off for being slow after all, which is the bug this
+// file exists to remove. So the rule is exactly "no single read or write may
+// block longer than the timeout", with nothing to reason about beyond it.
 
 // withProgressDeadlines re-arms the connection's read and write deadlines for
 // as long as the request body and the response body keep moving, so that
@@ -59,7 +60,6 @@ type progressWriter struct {
 
 	rc      *http.ResponseController
 	timeout time.Duration
-	armed   time.Time
 }
 
 // Unwrap lets http.ResponseController and the handler's own ResponseWriter
@@ -67,10 +67,7 @@ type progressWriter struct {
 func (w *progressWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *progressWriter) Write(p []byte) (int, error) {
-	if now := time.Now(); now.Sub(w.armed) >= w.timeout/refreshRatio {
-		w.armed = now
-		_ = w.rc.SetWriteDeadline(now.Add(w.timeout))
-	}
+	_ = w.rc.SetWriteDeadline(time.Now().Add(w.timeout))
 
 	return w.ResponseWriter.Write(p) //nolint:wrapcheck // Pass the writer's error through unchanged.
 }
@@ -81,14 +78,10 @@ type progressReader struct {
 
 	rc      *http.ResponseController
 	timeout time.Duration
-	armed   time.Time
 }
 
 func (r *progressReader) Read(p []byte) (int, error) {
-	if now := time.Now(); now.Sub(r.armed) >= r.timeout/refreshRatio {
-		r.armed = now
-		_ = r.rc.SetReadDeadline(now.Add(r.timeout))
-	}
+	_ = r.rc.SetReadDeadline(time.Now().Add(r.timeout))
 
 	return r.ReadCloser.Read(p) //nolint:wrapcheck // Pass the body's error through unchanged.
 }

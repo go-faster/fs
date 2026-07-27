@@ -174,9 +174,13 @@ func TestServer_SlowClientCanUploadWholeObject(t *testing.T) {
 // reading entirely still has its connection closed, or a stuck peer would pin
 // a connection and its goroutine forever.
 func TestServer_StalledClientIsCutOff(t *testing.T) {
+	// Large enough that the server cannot hand the whole body to the kernel and
+	// walk away — it must still be writing when the client stops reading — and
+	// no larger, because this body is also uploaded first and the test runs
+	// under -race with coverage on shared CI hardware.
 	const (
 		timeout = 300 * time.Millisecond
-		size    = 64 << 20
+		size    = 16 << 20
 	)
 
 	base := startServer(t, timeout, timeout)
