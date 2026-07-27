@@ -262,6 +262,7 @@ func (h *handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 		token := q.Get("continuation-token")
 		resp.ContinuationToken = &token
 	}
+
 	resp.StartAfter = p.maybeEncode(q.Get("start-after"))
 
 	if page.truncated {

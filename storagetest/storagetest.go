@@ -1229,6 +1229,18 @@ func testBucketOwner(t *testing.T, storage fs.Storage) {
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
+// The key shapes a path-shaped keyspace cannot represent: one key that is a
+// prefix of another at a delimiter boundary, one that ends in the delimiter,
+// and one with an empty component.
+const (
+	keyFoo       = "foo"
+	keyFooBar    = "foo/bar"
+	keyFooBarBaz = "foo/bar/baz"
+	keyTrailing  = "asdf/"
+	keyDoubled   = "a//b"
+	keyMultipart = "multi"
+)
+
 // testOverlappingKeys covers the flatness of the S3 keyspace: a key that is a
 // prefix of another at a delimiter boundary, and a key that ends in one, are
 // ordinary names. A backend that maps a key onto a filesystem path has to work
@@ -1238,17 +1250,19 @@ func testOverlappingKeys(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
+	// Ordered parent-before-child, which is the order that breaks a
+	// path-shaped keyspace.
+	order := []string{keyFoo, keyFooBar, keyFooBarBaz, keyTrailing, keyDoubled}
+
 	keys := map[string][]byte{
-		"foo":         []byte("just foo"),
-		"foo/bar":     []byte("under foo"),
-		"foo/bar/baz": []byte("under foo/bar"),
-		"asdf/":       []byte("trailing delimiter"),
-		"a//b":        []byte("empty component"),
+		keyFoo:       []byte("just foo"),
+		keyFooBar:    []byte("under foo"),
+		keyFooBarBaz: []byte("under foo/bar"),
+		keyTrailing:  []byte("trailing delimiter"),
+		keyDoubled:   []byte("empty component"),
 	}
 
-	// Write in an order that puts each parent before its child, which is the
-	// order that breaks a path-shaped keyspace.
-	for _, key := range []string{"foo", "foo/bar", "foo/bar/baz", "asdf/", "a//b"} {
+	for _, key := range order {
 		_, err := putConditional(t, storage, key, keys[key], "", "")
 		require.NoErrorf(t, err, "put %q", key)
 	}
@@ -1266,12 +1280,12 @@ func testOverlappingKeys(t *testing.T, storage fs.Storage) {
 		listed = append(listed, o.Key)
 	}
 
-	require.ElementsMatch(t, []string{"foo", "foo/bar", "foo/bar/baz", "asdf/", "a//b"}, listed)
+	require.ElementsMatch(t, order, listed)
 
 	// Deleting the parent leaves the child alone.
-	require.NoError(t, storage.DeleteObject(ctx, testBucket, "foo/bar"))
-	require.Equal(t, keys["foo/bar/baz"], readObject(t, storage, "foo/bar/baz"))
-	require.Equal(t, keys["foo"], readObject(t, storage, "foo"))
+	require.NoError(t, storage.DeleteObject(ctx, testBucket, keyFooBar))
+	require.Equal(t, keys[keyFooBarBaz], readObject(t, storage, keyFooBarBaz))
+	require.Equal(t, keys[keyFoo], readObject(t, storage, keyFoo))
 }
 
 // testObjectAttributesPartLayout covers fs.ObjectAttributer: a completed
@@ -1307,7 +1321,7 @@ func testObjectAttributesPartLayout(t *testing.T, storage fs.Storage) {
 	// A multipart object keeps one entry per completed part, in order.
 	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
 		Bucket: testBucket,
-		Key:    "multi",
+		Key:    keyMultipart,
 	})
 	require.NoError(t, err)
 
@@ -1317,7 +1331,7 @@ func testObjectAttributesPartLayout(t *testing.T, storage fs.Storage) {
 	for i, size := range sizes {
 		part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
 			Bucket:     testBucket,
-			Key:        "multi",
+			Key:        keyMultipart,
 			UploadID:   upload.UploadID,
 			PartNumber: i + 1,
 			Reader:     bytes.NewReader(bytes.Repeat([]byte("x"), size)),
@@ -1330,13 +1344,13 @@ func testObjectAttributesPartLayout(t *testing.T, storage fs.Storage) {
 
 	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket:   testBucket,
-		Key:      "multi",
+		Key:      keyMultipart,
 		UploadID: upload.UploadID,
 		Parts:    completed,
 	})
 	require.NoError(t, err)
 
-	attrs, err = attributer.ObjectAttributes(ctx, testBucket, "multi")
+	attrs, err = attributer.ObjectAttributes(ctx, testBucket, keyMultipart)
 	require.NoError(t, err)
 	require.Len(t, attrs.Parts, 2)
 	require.Equal(t, 2, attrs.PartsCount())
@@ -1368,7 +1382,7 @@ func testConditionalDelete(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	put, err := putConditional(t, storage, "obj", []byte("body"), "", "")
+	_, err := putConditional(t, storage, "obj", []byte("body"), "", "")
 	require.NoError(t, err)
 
 	// Wrong ETag fails and leaves the object in place.
@@ -1392,7 +1406,7 @@ func testConditionalDelete(t *testing.T, storage fs.Storage) {
 	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 
 	// Recreate and delete with the matching ETag.
-	put, err = putConditional(t, storage, "obj", []byte("body"), "", "")
+	put, err := putConditional(t, storage, "obj", []byte("body"), "", "")
 	require.NoError(t, err)
 	require.NoError(t, deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: put.ETag}))
 }

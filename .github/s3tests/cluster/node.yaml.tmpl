@@ -9,6 +9,9 @@
 # elements report and several tests compare against.
 server:
   addr: "@S3_ADDR@"
+  # Match the suite's api_name, exactly as the single-node config does: the
+  # region a client sees must not depend on how many nodes are behind it.
+  region: default
   read_timeout: 60s
   write_timeout: 120s
   idle_timeout: 300s

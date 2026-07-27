@@ -103,7 +103,7 @@ func encodeHeaderValue(v string) string {
 			return v
 		}
 
-		out = append(out, byte(r))
+		out = append(out, byte(r)) //nolint:gosec // The loop above returns early for r > 0xFF.
 	}
 
 	return string(out)

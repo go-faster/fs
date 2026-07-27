@@ -32,6 +32,7 @@ func TestSidecarlessFileReadable(t *testing.T) {
 	// Simulate a pre-sidecar object by writing the content file directly, with
 	// no sidecar beside it.
 	content := []byte("legacy content")
+
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "legacy", "old.txt"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "legacy", "old.txt", objectFile), content, 0o600))
 

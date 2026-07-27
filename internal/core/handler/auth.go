@@ -228,7 +228,7 @@ func writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
 // Without this, an operator's "*" grant — the natural way to say "the buckets I
 // make" — silently means "every bucket anyone makes", and no tenant can keep
 // anything to itself. Buckets with no recorded owner (created before ownership,
-// or by a backend that does not record it) keep the old behaviour, so nothing
+// or by a backend that does not record it) keep the old behavior, so nothing
 // that works today stops working on upgrade.
 func ownerAllows(
 	r *http.Request, store fs.Storage, a Authenticator,
