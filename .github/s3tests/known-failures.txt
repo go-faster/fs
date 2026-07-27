@@ -75,16 +75,3 @@ s3tests/functional/test_s3.py::test_sse_kms_transfer_1kb
 # consulted on these two paths yet (#124 follow-up).
 s3tests/functional/test_s3.py::test_sse_s3_default_method_head
 s3tests/functional/test_s3.py::test_sse_s3_default_multipart_upload
-
-# --- Versioning: delete markers and version deletion (7) --------------
-#
-# This is steps 1-3 of #123: bucket state, version ids, versioned writes and
-# the read path. Deleting a version, and the delete markers that DELETE on a
-# versioned bucket creates, are step 4 and are not in this pass.
-s3tests/functional/test_s3.py::test_versioning_multi_object_delete
-s3tests/functional/test_s3.py::test_versioning_multi_object_delete_with_marker
-s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove
-s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove_head
-s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_all
-s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_special_names
-s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite
