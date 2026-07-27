@@ -24,6 +24,21 @@ func (s *Storage) statObject(bucket, key string) error {
 }
 
 func (s *Storage) GetObjectTagging(_ context.Context, bucket, key string) ([]fs.Tag, error) {
+	// On a versioned bucket the object is not at the plain path statObject
+	// checks — it is under .versions, and its tags are in the current
+	// version's sidecar, next to the bytes they describe. Without this, every
+	// tag read on a versioned bucket answers NoSuchKey for an object that is
+	// plainly there, and CopyObject fails with it, because a copy reads the
+	// source's tags before writing them to the destination.
+	switch current, deleted, err := s.currentVersion(bucket, key); {
+	case err != nil:
+		return nil, err
+	case deleted:
+		return nil, fs.ErrObjectNotFound
+	case current != nil:
+		return current.Tags, nil
+	}
+
 	if err := s.statObject(bucket, key); err != nil {
 		return nil, err
 	}
@@ -46,13 +61,28 @@ func (s *Storage) DeleteObjectTagging(_ context.Context, bucket, key string) err
 
 // updateTags rewrites the object's sidecar with the new tag set, creating the
 // sidecar (preserving nothing but the tags) for pre-sidecar objects.
+//
+// Tagging names no version, so it applies to the current one — S3's rule, and
+// the only one that keeps a write and the read that follows it in agreement.
+// Writing to the plain path instead would put the tags where no read on a
+// versioned bucket looks, losing them silently.
 func (s *Storage) updateTags(bucket, key string, tags []fs.Tag) error {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	switch current, deleted, err := s.currentVersion(bucket, key); {
+	case err != nil:
+		return err
+	case deleted:
+		return fs.ErrObjectNotFound
+	case current != nil:
+		current.Tags = tags
+		return s.writeVersionSidecar(bucket, key, current)
+	}
+
 	if err := s.statObject(bucket, key); err != nil {
 		return err
 	}
-
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
 
 	sc, err := s.readSidecar(bucket, key)
 	if err != nil {
