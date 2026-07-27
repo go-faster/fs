@@ -21,6 +21,7 @@ func Root() *cobra.Command {
 	cmd.AddCommand(Systemd())
 	cmd.AddCommand(Cluster())
 	cmd.AddCommand(Admin())
+	cmd.AddCommand(Encrypt())
 
 	return cmd
 }
