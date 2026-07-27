@@ -95,6 +95,13 @@ type AuthConfig struct {
 	// keys seed an empty namespace once and are authoritative in etcd thereafter.
 	Source string `yaml:"source,omitempty"`
 
+	// OwnerIsolation makes a bucket reachable only by the principal that
+	// created it, plus any credential whose grant names the bucket rather than
+	// matching it through a wildcard. Off by default: turning it on changes
+	// what an existing deployment's "*" grants mean, so it is the operator's
+	// call and not an upgrade's side effect. Ownership is recorded either way.
+	OwnerIsolation bool `yaml:"owner_isolation,omitempty"`
+
 	// Keys are the credentials the server accepts. A root credential can also be
 	// supplied via the FS_ROOT_ACCESS_KEY / FS_ROOT_SECRET_KEY environment
 	// variables (granted admin on all buckets).
@@ -182,6 +189,10 @@ type ServerConfig struct {
 
 	// HealthPath is the path for health check endpoint
 	HealthPath string `yaml:"health_path"`
+
+	// Region names the location reported for buckets (GetBucketLocation).
+	// Empty is the S3 default region, reported as an empty constraint.
+	Region string `yaml:"region,omitempty"`
 
 	// TLS, if both files are set, serves HTTPS with hot-reloadable certificates.
 	TLS TLSConfig `yaml:"tls,omitempty"`

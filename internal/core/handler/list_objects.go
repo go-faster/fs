@@ -63,6 +63,15 @@ func parseListQuery(r *http.Request) (*listQuery, error) {
 		return nil, err
 	}
 
+	// allow-unordered asks for the listing in whatever order is cheapest to
+	// produce. Ours is always ordered, so honoring it costs nothing — but S3
+	// rejects it together with a delimiter, because folding needs the order it
+	// says it does not need, and a client combining the two has misunderstood
+	// what it asked for.
+	if q.Has("allow-unordered") && q.Get("delimiter") != "" {
+		return nil, errors.New("allow-unordered cannot be combined with delimiter")
+	}
+
 	maxKeys := defaultMaxKeys
 
 	if v := q.Get("max-keys"); v != "" {
@@ -203,7 +212,9 @@ func (h *handler) ListObjectsV1(w http.ResponseWriter, r *http.Request) {
 	// decode_list_object leaves the top-level Prefix alone, so encoding it here
 	// would hand the client a %-escaped prefix it never unescapes.
 	resp.Prefix = p.prefix
-	resp.Marker = p.maybeEncode(marker)
+
+	encodedMarker := p.maybeEncode(marker)
+	resp.Marker = &encodedMarker
 
 	// V1 returns NextMarker only for delimiter listings; otherwise clients
 	// continue from the last Contents key.
@@ -244,7 +255,14 @@ func (h *handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 	// V2 does encode Prefix, and clients decode it.
 	resp.Prefix = p.maybeEncode(p.prefix)
 	resp.KeyCount = &page.count
-	resp.ContinuationToken = q.Get("continuation-token")
+
+	// Echo the token only when one was sent — including an empty one, which is
+	// a request the client made and expects reflected.
+	if q.Has("continuation-token") {
+		token := q.Get("continuation-token")
+		resp.ContinuationToken = &token
+	}
+
 	resp.StartAfter = p.maybeEncode(q.Get("start-after"))
 
 	if page.truncated {

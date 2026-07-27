@@ -50,8 +50,9 @@ func TestIntegrity_VerifyOnReadServes500(t *testing.T) {
 	_, err = client.PutObject(ctx, bucket, "bad.txt", bytes.NewReader(rotten), int64(len(rotten)), minio.PutObjectOptions{})
 	require.NoError(t, err)
 
-	// Flip a byte directly in the object file to simulate bit-rot.
-	path := filepath.Join(root, bucket, "bad.txt")
+	// Flip a byte directly in the object's content file to simulate bit-rot.
+	// A key names a directory on disk; "#obj" inside it holds the bytes.
+	path := filepath.Join(root, bucket, "bad.txt", "#obj")
 
 	data, err := os.ReadFile(path) //nolint:gosec // test path.
 	require.NoError(t, err)

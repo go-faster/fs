@@ -4,6 +4,8 @@
 # that file's credentials change.
 server:
   addr: ":8077"
+  # Match the suite's api_name so GetBucketLocation reports what it expects.
+  region: default
 storage:
   root: ./.s3data-ci
   type: filesystem

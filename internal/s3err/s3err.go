@@ -45,6 +45,8 @@ var (
 	EntityTooLarge          = APIError{"EntityTooLarge", http.StatusBadRequest, "Your proposed upload exceeds the maximum allowed object size."}
 	InvalidRange            = APIError{"InvalidRange", http.StatusRequestedRangeNotSatisfiable, "The requested range is not satisfiable."}
 	InvalidTag              = APIError{"InvalidTag", http.StatusBadRequest, "The tag provided was not a valid tag."}
+	InvalidDigest           = APIError{"InvalidDigest", http.StatusBadRequest, "The Content-MD5 you specified is not valid."}
+	BadDigest               = APIError{"BadDigest", http.StatusBadRequest, "The Content-MD5 you specified did not match what we received."}
 	PreconditionFailed      = APIError{"PreconditionFailed", http.StatusPreconditionFailed, "At least one of the preconditions you specified did not hold."}
 	NotModified             = APIError{"NotModified", http.StatusNotModified, ""}
 	AccessDenied            = APIError{"AccessDenied", http.StatusForbidden, "Access Denied."}
@@ -57,6 +59,7 @@ var (
 	MethodNotAllowed        = APIError{"MethodNotAllowed", http.StatusMethodNotAllowed, "The specified method is not allowed against this resource."}
 	NotImplemented          = APIError{"NotImplemented", http.StatusNotImplemented, "A header or operation you provided implies functionality that is not implemented."}
 	MissingRequestBody      = APIError{"MissingRequestBodyError", http.StatusBadRequest, "Request body is empty."}
+	MissingOriginHeader     = APIError{"InvalidRequest", http.StatusBadRequest, "Insufficient information. Origin request header needed."}
 	InternalError           = APIError{"InternalError", http.StatusInternalServerError, "We encountered an internal error. Please try again."}
 )
 
@@ -81,6 +84,10 @@ func FromError(err error) APIError {
 		return NoSuchKey
 	case errors.Is(err, fs.ErrUploadNotFound):
 		return NoSuchUpload
+	case errors.Is(err, fs.ErrBucketOwnedBySomeoneElse):
+		// The name is taken by another principal: S3 reports the name as
+		// unavailable, not as something the caller already owns.
+		return BucketAlreadyExists
 	case errors.Is(err, fs.ErrBucketAlreadyExists):
 		return BucketAlreadyOwnedByYou
 	case errors.Is(err, fs.ErrBucketNotEmpty):
@@ -104,6 +111,10 @@ func FromError(err error) APIError {
 		return EntityTooSmall
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
+	case errors.Is(err, fs.ErrInvalidDigest):
+		return InvalidDigest
+	case errors.Is(err, fs.ErrBadDigest):
+		return BadDigest
 	case errors.Is(err, fs.ErrIntegrity):
 		// Server-side corruption: the object is damaged, so surface a 500
 		// rather than serve bad bytes.

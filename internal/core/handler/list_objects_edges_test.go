@@ -109,7 +109,8 @@ func TestListObjectsV1_Markers(t *testing.T) {
 		result := listBucket(t, h, bucket, "?marker=a")
 		require.Len(t, result.Contents, 2)
 		require.Equal(t, "b", result.Contents[0].Key)
-		require.Equal(t, "a", result.Marker)
+		require.NotNil(t, result.Marker)
+		require.Equal(t, "a", *result.Marker)
 	})
 
 	t.Run("NoNextMarkerWithoutDelimiter", func(t *testing.T) {

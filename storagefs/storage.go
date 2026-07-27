@@ -40,6 +40,13 @@ func New(root string, opts ...Option) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create staging directory: %w", err)
 	}
 
+	// A store written by an older binary keeps objects at the key's own path.
+	// Convert before serving: left alone, every one of them would read as a
+	// missing object.
+	if err := s.migrateLayout(); err != nil {
+		return nil, fmt.Errorf("migrate storage layout: %w", err)
+	}
+
 	return s, nil
 }
 

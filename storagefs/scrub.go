@@ -92,7 +92,7 @@ func (s *Storage) scrubObject(bucket, key string, opts ScrubOptions, report *Scr
 		return
 	}
 
-	actual, err := fileMD5(filepath.Join(s.root, bucket, toOSPath(key)))
+	actual, err := fileMD5(filepath.Join(s.root, bucket, objectRelPath(key)))
 	if err != nil {
 		// A read error on the object path is itself a corruption signal.
 		report.Corrupt = append(report.Corrupt, ObjectRef{bucket, key})
@@ -167,12 +167,12 @@ func fileMD5(path string) (string, error) {
 // quarantineObject moves a corrupt object and its sidecar under
 // <root>/.quarantine/<bucket>/, mirroring the key path, so it stops serving.
 func (s *Storage) quarantineObject(bucket, key string) error {
-	dst := filepath.Join(s.root, quarantineSubdir, bucket, toOSPath(key))
+	dst := filepath.Join(s.root, quarantineSubdir, bucket, objectRelPath(key))
 	if err := os.MkdirAll(filepath.Dir(dst), defaultDirPermissions); err != nil {
 		return errors.Wrap(err, "create quarantine dir")
 	}
 
-	src := filepath.Join(s.root, bucket, toOSPath(key))
+	src := filepath.Join(s.root, bucket, objectRelPath(key))
 	if err := os.Rename(src, dst); err != nil {
 		return errors.Wrap(err, "quarantine object")
 	}

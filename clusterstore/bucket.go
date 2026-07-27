@@ -54,6 +54,9 @@ type BucketInfo struct {
 	Name    string    `json:"name"`
 	ACL     fs.ACL    `json:"acl,omitempty"`
 	Created time.Time `json:"created"`
+	// Owner is the principal that created the bucket; absent for buckets
+	// created before ownership was recorded.
+	Owner fs.Owner `json:"owner,omitzero"`
 	// Scheme overrides the cluster default replication scheme for this
 	// bucket's objects ("rf2.5", "rf3", "ec:k,m"); empty applies the default.
 	// Changing it affects new writes immediately; existing objects follow
@@ -100,6 +103,11 @@ func (c *Coordinator) bucketTargets(topo *cluster.Topology, bucket string) ([]pl
 // atomic across nodes until the etcd control plane lands; a racing duplicate
 // create converges to a single record.
 func (c *Coordinator) CreateBucket(ctx context.Context, bucket string, acl fs.ACL) error {
+	return c.CreateBucketOwned(ctx, bucket, acl, fs.Owner{})
+}
+
+// CreateBucketOwned creates a bucket recorded as belonging to owner.
+func (c *Coordinator) CreateBucketOwned(ctx context.Context, bucket string, acl fs.ACL, owner fs.Owner) error {
 	topo := c.topo.Topology()
 
 	switch _, err := c.fetchBucket(ctx, topo, bucket); {
@@ -114,6 +122,7 @@ func (c *Coordinator) CreateBucket(ctx context.Context, bucket string, acl fs.AC
 		Name:    bucket,
 		ACL:     acl,
 		Created: time.Now().UTC(),
+		Owner:   owner,
 	})
 }
 

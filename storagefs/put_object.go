@@ -20,10 +20,22 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, fs.ErrBucketNotFound
 	}
 
-	objectPath := filepath.Join(bucketPath, toOSPath(req.Key))
+	objectPath := filepath.Join(bucketPath, objectRelPath(req.Key))
 	if err := os.MkdirAll(filepath.Dir(objectPath), defaultDirPermissions); err != nil {
 		return nil, errors.Wrap(err, "create object directory")
 	}
+
+	// A key is a directory here, so it has to exist before the content can be
+	// put inside it — but a write that is then refused (a failed precondition,
+	// a digest mismatch) must not leave that directory behind as debris no
+	// listing reports and no delete removes.
+	committed := false
+
+	defer func() {
+		if !committed {
+			pruneEmptyDirs(filepath.Dir(objectPath), bucketPath)
+		}
+	}()
 
 	// Stream to a staging temp file while hashing, then rename into place so a
 	// partially written object is never visible in the bucket; the sidecar is
@@ -58,21 +70,29 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	etag := hex.EncodeToString(hash.Sum(nil))
 
+	// The body is on disk but not yet visible: this is the last moment at which
+	// a digest mismatch can be refused without anyone having been able to read
+	// the object.
+	if req.ContentMD5 != "" && req.ContentMD5 != etag {
+		_ = os.Remove(tmp.Name())
+		return nil, fs.ErrBadDigest
+	}
+
 	// Finalize under putMu so the conditional-write check and the rename are
 	// atomic against other writers to this key (the body is already on disk).
 	s.putMu.Lock()
 	defer s.putMu.Unlock()
 
-	if req.IfNoneMatch != "" || req.IfMatch != "" {
-		exists, currentETag, err := s.currentObjectState(req.Bucket, req.Key, objectPath)
+	if cond := req.Conditions(); !cond.IsZero() {
+		state, err := s.currentObjectState(req.Bucket, req.Key, objectPath)
 		if err != nil {
 			_ = os.Remove(tmp.Name())
 			return nil, err
 		}
 
-		if req.PreconditionFailed(exists, currentETag) {
+		if err := cond.CheckWrite(state); err != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fs.ErrPreconditionFailed
+			return nil, err
 		}
 	}
 
@@ -90,25 +110,34 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, err
 	}
 
+	committed = true
+
 	return &fs.PutObjectResponse{ETag: etag}, nil
 }
 
-// currentObjectState reports whether the object at path exists and its ETag,
-// preferring the sidecar's stored ETag and falling back to recompute-on-read.
-func (s *Storage) currentObjectState(bucket, key, path string) (exists bool, etag string, err error) {
+// currentObjectState reports the state conditional requests are evaluated
+// against: whether the object at path exists, and its ETag, size and
+// modification time. The ETag prefers the sidecar's stored value and falls back
+// to recompute-on-read.
+func (s *Storage) currentObjectState(bucket, key, path string) (fs.ObjectState, error) {
 	info, statErr := os.Stat(path)
 	if os.IsNotExist(statErr) {
-		return false, "", nil
+		return fs.ObjectState{}, nil
 	}
 
 	if statErr != nil {
-		return false, "", errors.Wrap(statErr, "stat object")
+		return fs.ObjectState{}, errors.Wrap(statErr, "stat object")
 	}
 
-	etag, err = s.objectETag(bucket, key, path, info)
+	etag, err := s.objectETag(bucket, key, path, info)
 	if err != nil {
-		return false, "", err
+		return fs.ObjectState{}, err
 	}
 
-	return true, etag, nil
+	return fs.ObjectState{
+		Exists:       true,
+		ETag:         etag,
+		Size:         info.Size(),
+		LastModified: info.ModTime(),
+	}, nil
 }

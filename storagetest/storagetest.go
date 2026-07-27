@@ -114,6 +114,11 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Conditional/IfMatch":                   testConditionalIfMatch,
 	"Conditional/ConcurrentSingleWinner":    testConditionalConcurrentSingleWinner,
 	"Conditional/ConcurrentCASSingleWinner": testConditionalConcurrentCASSingleWinner,
+	"Conditional/Delete":                    testConditionalDelete,
+	"Conditional/CompleteMultipart":         testConditionalCompleteMultipart,
+	"Attributes/PartLayout":                 testObjectAttributesPartLayout,
+	"Keyspace/OverlappingKeys":              testOverlappingKeys,
+	"Ownership/BucketOwner":                 testBucketOwner,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1167,9 +1172,14 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 
 	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
-	// If-Match: * against a missing object fails.
+	// If-Match against a missing object is a miss, not a failed precondition:
+	// S3 answers a conditional write to a key that is not there with 404
+	// NoSuchKey.
 	_, err := putConditional(t, storage, "obj", []byte("x"), "", "*")
-	require.ErrorIs(t, err, fs.ErrPreconditionFailed)
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	_, err = putConditional(t, storage, "obj", []byte("x"), "", `"deadbeef"`)
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 
 	put, err := putConditional(t, storage, "obj", []byte("v1"), "*", "")
 	require.NoError(t, err)
@@ -1183,6 +1193,268 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testBucketOwner covers fs.BucketOwnership: a bucket remembers who created
+// it, and says so consistently.
+func testBucketOwner(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	ownership, ok := storage.(fs.BucketOwnership)
+	if !ok {
+		t.Skip("backend does not implement fs.BucketOwnership")
+	}
+
+	owner := fs.Owner{ID: "user-1", DisplayName: "User One"}
+	require.NoError(t, ownership.CreateBucketOwned(ctx, testBucket, owner))
+
+	got, err := ownership.BucketOwner(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, owner, got)
+
+	// Creating it again is still a conflict at this layer; deciding whether the
+	// caller owns it is the S3 layer's job.
+	require.ErrorIs(t, ownership.CreateBucketOwned(ctx, testBucket, owner), fs.ErrBucketAlreadyExists)
+
+	// A bucket created without an identity is unowned, not owned by nobody in
+	// particular — the distinction the S3 layer relies on to leave older data
+	// reachable.
+	require.NoError(t, storage.CreateBucket(ctx, testBucket+"-plain"))
+
+	got, err = ownership.BucketOwner(ctx, testBucket+"-plain")
+	require.NoError(t, err)
+	require.True(t, got.IsZero())
+
+	_, err = ownership.BucketOwner(ctx, testBucket+"-absent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+}
+
+// The key shapes a path-shaped keyspace cannot represent: one key that is a
+// prefix of another at a delimiter boundary, one that ends in the delimiter,
+// and one with an empty component.
+const (
+	keyFoo       = "foo"
+	keyFooBar    = "foo/bar"
+	keyFooBarBaz = "foo/bar/baz"
+	keyTrailing  = "asdf/"
+	keyDoubled   = "a//b"
+	keyMultipart = "multi"
+)
+
+// testOverlappingKeys covers the flatness of the S3 keyspace: a key that is a
+// prefix of another at a delimiter boundary, and a key that ends in one, are
+// ordinary names. A backend that maps a key onto a filesystem path has to work
+// for this, because the second write finds a file where it wants a directory.
+func testOverlappingKeys(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	// Ordered parent-before-child, which is the order that breaks a
+	// path-shaped keyspace.
+	order := []string{keyFoo, keyFooBar, keyFooBarBaz, keyTrailing, keyDoubled}
+
+	keys := map[string][]byte{
+		keyFoo:       []byte("just foo"),
+		keyFooBar:    []byte("under foo"),
+		keyFooBarBaz: []byte("under foo/bar"),
+		keyTrailing:  []byte("trailing delimiter"),
+		keyDoubled:   []byte("empty component"),
+	}
+
+	for _, key := range order {
+		_, err := putConditional(t, storage, key, keys[key], "", "")
+		require.NoErrorf(t, err, "put %q", key)
+	}
+
+	for key, want := range keys {
+		require.Equalf(t, want, readObject(t, storage, key), "read %q", key)
+	}
+
+	// Every key is listed exactly once, under the name it was written with.
+	page, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket})
+	require.NoError(t, err)
+
+	listed := make([]string, 0, len(page.Objects))
+	for _, o := range page.Objects {
+		listed = append(listed, o.Key)
+	}
+
+	require.ElementsMatch(t, order, listed)
+
+	// Deleting the parent leaves the child alone.
+	require.NoError(t, storage.DeleteObject(ctx, testBucket, keyFooBar))
+	require.Equal(t, keys[keyFooBarBaz], readObject(t, storage, keyFooBarBaz))
+	require.Equal(t, keys[keyFoo], readObject(t, storage, keyFoo))
+}
+
+// testObjectAttributesPartLayout covers fs.ObjectAttributer: a completed
+// multipart object keeps its part boundaries after the upload state is gone,
+// and a single PUT reports none.
+func testObjectAttributesPartLayout(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	attributer, ok := storage.(fs.ObjectAttributer)
+	if !ok {
+		t.Skip("backend does not implement fs.ObjectAttributer")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	// A single PUT has no layout: part 1 is the whole object.
+	_, err := putConditional(t, storage, "single", []byte("body"), "", "")
+	require.NoError(t, err)
+
+	attrs, err := attributer.ObjectAttributes(ctx, testBucket, "single")
+	require.NoError(t, err)
+	require.Empty(t, attrs.Parts)
+	require.Equal(t, int64(4), attrs.Size)
+
+	offset, length, ok := attrs.PartRange(1)
+	require.True(t, ok)
+	require.Equal(t, int64(0), offset)
+	require.Equal(t, int64(4), length)
+
+	_, _, ok = attrs.PartRange(2)
+	require.False(t, ok)
+
+	// A multipart object keeps one entry per completed part, in order.
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+		Bucket: testBucket,
+		Key:    keyMultipart,
+	})
+	require.NoError(t, err)
+
+	sizes := []int{7, 3}
+	completed := make([]fs.CompletedPart, 0, len(sizes))
+
+	for i, size := range sizes {
+		part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
+			Bucket:     testBucket,
+			Key:        keyMultipart,
+			UploadID:   upload.UploadID,
+			PartNumber: i + 1,
+			Reader:     bytes.NewReader(bytes.Repeat([]byte("x"), size)),
+			Size:       int64(size),
+		})
+		require.NoError(t, err)
+
+		completed = append(completed, fs.CompletedPart{PartNumber: i + 1, ETag: part.ETag})
+	}
+
+	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket:   testBucket,
+		Key:      keyMultipart,
+		UploadID: upload.UploadID,
+		Parts:    completed,
+	})
+	require.NoError(t, err)
+
+	attrs, err = attributer.ObjectAttributes(ctx, testBucket, keyMultipart)
+	require.NoError(t, err)
+	require.Len(t, attrs.Parts, 2)
+	require.Equal(t, 2, attrs.PartsCount())
+	require.Equal(t, int64(10), attrs.Size)
+	require.Equal(t, int64(7), attrs.Parts[0].Size)
+	require.Equal(t, int64(3), attrs.Parts[1].Size)
+
+	// The ranges tile the object exactly.
+	offset, length, ok = attrs.PartRange(2)
+	require.True(t, ok)
+	require.Equal(t, int64(7), offset)
+	require.Equal(t, int64(3), length)
+
+	// A missing object reports the usual error, not an empty layout.
+	_, err = attributer.ObjectAttributes(ctx, testBucket, "absent")
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+}
+
+// testConditionalDelete covers fs.ConditionalDeleter: a guarded delete removes
+// the object only while it still matches, and a guard against a key that is
+// already gone is not an error — deletion is idempotent.
+func testConditionalDelete(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	deleter, ok := storage.(fs.ConditionalDeleter)
+	if !ok {
+		t.Skip("backend does not implement fs.ConditionalDeleter")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	_, err := putConditional(t, storage, "obj", []byte("body"), "", "")
+	require.NoError(t, err)
+
+	// Wrong ETag fails and leaves the object in place.
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: `"deadbeef"`})
+	require.ErrorIs(t, err, fs.ErrPreconditionFailed)
+	require.Equal(t, []byte("body"), readObject(t, storage, "obj"))
+
+	// Wrong size fails too.
+	badSize := int64(9999)
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{Size: &badSize})
+	require.ErrorIs(t, err, fs.ErrPreconditionFailed)
+
+	// Matching size passes the guard.
+	size := int64(len("body"))
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{Size: &size})
+	require.NoError(t, err)
+
+	// The key is gone: a guard has nothing left to protect, so it is not a
+	// failed precondition but a plain miss the caller reports as success.
+	err = deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: `"deadbeef"`})
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
+
+	// Recreate and delete with the matching ETag.
+	put, err := putConditional(t, storage, "obj", []byte("body"), "", "")
+	require.NoError(t, err)
+	require.NoError(t, deleter.DeleteObjectIf(ctx, testBucket, "obj", fs.Conditions{IfMatch: put.ETag}))
+}
+
+// testConditionalCompleteMultipart covers conditions on multipart completion:
+// the same guards a conditional PUT gets, evaluated at the moment the assembled
+// object lands.
+func testConditionalCompleteMultipart(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	complete := func(key string, cond fs.Conditions) error {
+		upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+			Bucket: testBucket,
+			Key:    key,
+		})
+		require.NoError(t, err)
+
+		body := []byte("part-body")
+
+		part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
+			Bucket:     testBucket,
+			Key:        key,
+			UploadID:   upload.UploadID,
+			PartNumber: 1,
+			Reader:     bytes.NewReader(body),
+			Size:       int64(len(body)),
+		})
+		require.NoError(t, err)
+
+		_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+			Bucket:     testBucket,
+			Key:        key,
+			UploadID:   upload.UploadID,
+			Parts:      []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+			Conditions: cond,
+		})
+
+		return err
+	}
+
+	// If-None-Match: * completes onto an absent key, and refuses the second.
+	require.NoError(t, complete("mp", fs.Conditions{IfNoneMatch: "*"}))
+	require.ErrorIs(t, complete("mp", fs.Conditions{IfNoneMatch: "*"}), fs.ErrPreconditionFailed)
+
+	// If-Match against a key that is not there is a miss, as it is for PUT.
+	require.ErrorIs(t, complete("absent", fs.Conditions{IfMatch: "*"}), fs.ErrObjectNotFound)
 }
 
 // testConditionalConcurrentSingleWinner is the race regression: N goroutines

@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"crypto/md5" //nolint:gosec // MD5 is what the Content-MD5 header carries.
+	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/s3err"
@@ -68,6 +73,12 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	contentMD5, err := parseContentMD5(r.Header)
+	if err != nil {
+		renderError(ctx, w, r, err)
+		return
+	}
+
 	// Handle AWS chunked encoding.
 	reader := getBodyReader(r)
 	size := getDecodedContentLength(r)
@@ -87,6 +98,7 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		Owner:       callerOwner(ctx),
 		IfNoneMatch: r.Header.Get("If-None-Match"),
 		IfMatch:     r.Header.Get("If-Match"),
+		ContentMD5:  contentMD5,
 	}
 
 	resp, err := h.service.PutObject(ctx, req)
@@ -97,4 +109,25 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("ETag", quoteETag(resp.ETag))
 	w.WriteHeader(http.StatusOK)
+}
+
+// parseContentMD5 decodes the Content-MD5 header into a hex digest for the
+// storage layer to verify against the bytes it receives.
+//
+// An unusable value is rejected rather than ignored. A client sending
+// Content-MD5 is asking the server to check its upload; dropping the check
+// because the header was malformed would answer "verified" to a request that
+// was never verified.
+func parseContentMD5(header http.Header) (string, error) {
+	values, ok := header["Content-Md5"]
+	if !ok || len(values) == 0 {
+		return "", nil
+	}
+
+	sum, err := base64.StdEncoding.DecodeString(values[0])
+	if err != nil || len(sum) != md5.Size {
+		return "", errors.Wrap(fs.ErrInvalidDigest, "Content-MD5")
+	}
+
+	return hex.EncodeToString(sum), nil
 }

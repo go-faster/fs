@@ -13,10 +13,10 @@ type LocationConstraintResult struct {
 	Value   string   `xml:",chardata"`
 }
 
-// GetBucketLocation implements GET /{bucket}?location, always reporting the
-// default region. S3 SDKs (e.g. minio-go) call this to cache a bucket's region
+// GetBucketLocation implements GET /{bucket}?location, reporting the server's
+// configured region (empty for the default one). S3 SDKs (e.g. minio-go) call this to cache a bucket's region
 // before other operations, so it stays cheap and unconditional rather than
 // verifying the bucket exists.
 func (h *handler) GetBucketLocation(w http.ResponseWriter, r *http.Request) {
-	writeXML(r.Context(), w, r, LocationConstraintResult{})
+	writeXML(r.Context(), w, r, LocationConstraintResult{Value: h.region})
 }

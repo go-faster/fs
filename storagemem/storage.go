@@ -37,6 +37,12 @@ type object struct {
 	tags         []fs.Tag
 	acl          fs.ACL
 	owner        fs.Owner
+	// parts is the layout a multipart object was assembled from, retained
+	// after completion; nil for a single PUT.
+	parts []fs.ObjectPart
+	// uploadID names the completion that produced the object, so a retried
+	// completion can be recognized; empty for a single PUT.
+	uploadID string
 }
 
 type bucket struct {
@@ -44,6 +50,25 @@ type bucket struct {
 	creationDate time.Time
 	objects      map[string]*object
 	acl          fs.ACL
+	// owner is the principal that created the bucket; zero when created
+	// without an identity.
+	owner fs.Owner
+}
+
+// objectState is the state conditional requests are evaluated against. The
+// caller must hold the store's lock.
+func (b *bucket) objectState(key string) fs.ObjectState {
+	obj, ok := b.objects[key]
+	if !ok {
+		return fs.ObjectState{}
+	}
+
+	return fs.ObjectState{
+		Exists:       true,
+		ETag:         obj.etag,
+		Size:         int64(len(obj.data)),
+		LastModified: obj.lastModified,
+	}
 }
 
 type uploadPart struct {
@@ -88,6 +113,11 @@ func (s *Storage) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
 }
 
 func (s *Storage) CreateBucket(ctx context.Context, bucketName string) error {
+	return s.CreateBucketOwned(ctx, bucketName, fs.Owner{})
+}
+
+// CreateBucketOwned implements fs.BucketOwnership.
+func (s *Storage) CreateBucketOwned(_ context.Context, bucketName string, owner fs.Owner) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -99,9 +129,23 @@ func (s *Storage) CreateBucket(ctx context.Context, bucketName string) error {
 		name:         bucketName,
 		creationDate: time.Now(),
 		objects:      make(map[string]*object),
+		owner:        owner,
 	}
 
 	return nil
+}
+
+// BucketOwner implements fs.BucketOwnership.
+func (s *Storage) BucketOwner(_ context.Context, bucketName string) (fs.Owner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.Owner{}, fs.ErrBucketNotFound
+	}
+
+	return b.owner, nil
 }
 
 func (s *Storage) BucketExists(_ context.Context, bucketName string) (bool, error) {
@@ -173,15 +217,8 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	// Evaluate any conditional-write header atomically with the store: the
 	// whole method holds s.mu, so no concurrent writer can slip a write in
 	// between this check and the assignment below.
-	existing, present := b.objects[req.Key]
-
-	var currentETag string
-	if present {
-		currentETag = existing.etag
-	}
-
-	if req.PreconditionFailed(present, currentETag) {
-		return nil, fs.ErrPreconditionFailed
+	if err := req.Conditions().CheckWrite(b.objectState(req.Key)); err != nil {
+		return nil, err
 	}
 
 	// Read all data from the reader
@@ -193,6 +230,10 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	// Calculate ETag (MD5 hash).
 	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	etag := fmt.Sprintf("%x", hash)
+
+	if req.ContentMD5 != "" && req.ContentMD5 != etag {
+		return nil, fs.ErrBadDigest
+	}
 
 	b.objects[req.Key] = &object{
 		data:         data,
@@ -361,6 +402,7 @@ func (s *Storage) GetObject(ctx context.Context, bucketName, key string) (*fs.Ge
 		LastModified: obj.lastModified,
 		ETag:         obj.etag,
 		Metadata:     obj.metadata,
+		TagCount:     len(obj.tags),
 	}, nil
 }
 
@@ -373,12 +415,22 @@ type readSeekNopCloser struct {
 func (readSeekNopCloser) Close() error { return nil }
 
 func (s *Storage) DeleteObject(ctx context.Context, bucketName, key string) error {
+	return s.DeleteObjectIf(ctx, bucketName, key, fs.Conditions{})
+}
+
+// DeleteObjectIf implements fs.ConditionalDeleter. The whole method holds s.mu,
+// so the condition is evaluated atomically with the delete.
+func (s *Storage) DeleteObjectIf(_ context.Context, bucketName, key string, cond fs.Conditions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	b, exists := s.buckets[bucketName]
 	if !exists {
 		return fs.ErrBucketNotFound
+	}
+
+	if err := cond.CheckDelete(b.objectState(key)); err != nil {
+		return err
 	}
 
 	if _, exists := b.objects[key]; !exists {
@@ -570,7 +622,30 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		}
 	}
 
+	// Conditional completion is evaluated under s.mu, atomically with the
+	// store, exactly as a conditional PutObject is.
+	if err := req.Conditions.CheckWrite(b.objectState(upload.key)); err != nil {
+		return nil, err
+	}
+
 	etag := multipartETag(parts, upload.parts)
+
+	// Retain the part layout: it is what lets the completed object still be
+	// described and read a part at a time.
+	layout := make([]fs.ObjectPart, 0, len(parts))
+
+	for _, part := range parts {
+		p, ok := upload.parts[part.PartNumber]
+		if !ok {
+			continue
+		}
+
+		layout = append(layout, fs.ObjectPart{
+			PartNumber: part.PartNumber,
+			Size:       int64(len(p.data)),
+			ETag:       p.etag,
+		})
+	}
 
 	b.objects[upload.key] = &object{
 		data:         data,
@@ -580,6 +655,8 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		tags:         upload.tags,
 		acl:          upload.acl,
 		owner:        upload.owner,
+		parts:        layout,
+		uploadID:     req.UploadID,
 	}
 
 	delete(s.uploads, req.UploadID)
@@ -603,4 +680,23 @@ func (s *Storage) AbortMultipartUpload(ctx context.Context, bucket, key, uploadI
 	delete(s.uploads, uploadID)
 
 	return nil
+}
+
+// ObjectAttributes implements fs.ObjectAttributer.
+func (s *Storage) ObjectAttributes(_ context.Context, bucketName, key string) (*fs.ObjectAttributes, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &fs.ObjectAttributes{
+		ETag:         obj.etag,
+		Size:         int64(len(obj.data)),
+		LastModified: obj.lastModified,
+		Parts:        append([]fs.ObjectPart(nil), obj.parts...),
+		UploadID:     obj.uploadID,
+	}, nil
 }

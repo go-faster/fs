@@ -229,6 +229,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 	var (
 		totalSize int64
 		partKeys  []string
+		layout    []fs.ObjectPart
 		etagHash  = md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	)
 
@@ -242,6 +243,14 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 
 		partKeys = append(partKeys, sc.Key)
 
+		// Retain the boundary: after the upload state is deleted this is the
+		// only record of where one part ends and the next begins.
+		layout = append(layout, fs.ObjectPart{
+			PartNumber: part.PartNumber,
+			Size:       sc.Size,
+			ETag:       sc.ETag,
+		})
+
 		if sum, err := hex.DecodeString(sc.Checksum); err == nil {
 			_, _ = etagHash.Write(sum)
 		}
@@ -251,6 +260,20 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 
 	l := s.locks.of(req.Bucket, key)
 	l.Lock()
+
+	// A conditional completion is evaluated under the object's lock, so it is
+	// atomic against other writers exactly as a conditional PutObject is.
+	if cond := req.Conditions; !cond.IsZero() {
+		state, stateErr := s.objectState(ctx, req.Bucket, key)
+		if stateErr == nil {
+			stateErr = cond.CheckWrite(state)
+		}
+
+		if stateErr != nil {
+			l.Unlock()
+			return nil, stateErr
+		}
+	}
 
 	sc, err := s.coord.Put(ctx, &PutRequest{
 		Bucket: req.Bucket,
@@ -267,6 +290,8 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		ACL:      rec.ACL,
 		Owner:    rec.Owner,
 		ETag:     etag,
+		Parts:    layout,
+		UploadID: req.UploadID,
 	})
 
 	l.Unlock()

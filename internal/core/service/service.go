@@ -214,6 +214,104 @@ func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
 	return s.storage.DeleteObject(ctx, bucket, key)
 }
 
+// completedUpload reports the result of an already-finished completion when
+// the object at the request's key was produced by the request's upload, making
+// CompleteMultipartUpload idempotent.
+//
+// It answers only for that exact upload id: an object written by a later PUT,
+// or completed from a different upload, is not this caller's result, and a
+// stale completion must still fail.
+func (s Service) completedUpload(
+	ctx context.Context, req *fs.CompleteMultipartUploadRequest,
+) (*fs.CompleteMultipartUploadResponse, bool) {
+	attributer, ok := s.storage.(fs.ObjectAttributer)
+	if !ok {
+		return nil, false
+	}
+
+	attrs, err := attributer.ObjectAttributes(ctx, req.Bucket, req.Key)
+	if err != nil || attrs.UploadID == "" || attrs.UploadID != req.UploadID {
+		return nil, false
+	}
+
+	return &fs.CompleteMultipartUploadResponse{
+		Location: "/" + req.Bucket + "/" + req.Key,
+		Bucket:   req.Bucket,
+		Key:      req.Key,
+		ETag:     attrs.ETag,
+	}, true
+}
+
+// CreateBucketOwned implements fs.BucketOwnership, falling back to an unowned
+// create when the backend does not record owners.
+func (s Service) CreateBucketOwned(ctx context.Context, bucket string, owner fs.Owner) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if owned, ok := s.storage.(fs.BucketOwnership); ok {
+		return owned.CreateBucketOwned(ctx, bucket, owner)
+	}
+
+	return s.storage.CreateBucket(ctx, bucket)
+}
+
+// BucketOwner implements fs.BucketOwnership. A backend that does not record
+// owners reports every bucket as unowned, which the S3 layer reads as
+// "grants alone decide" — how this server behaved before ownership existed.
+func (s Service) BucketOwner(ctx context.Context, bucket string) (fs.Owner, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return fs.Owner{}, errors.Wrap(err, "validate bucket name")
+	}
+
+	owned, ok := s.storage.(fs.BucketOwnership)
+	if !ok {
+		return fs.Owner{}, nil
+	}
+
+	return owned.BucketOwner(ctx, bucket)
+}
+
+// ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
+// when it can describe an object without opening it, and reporting
+// ErrUnsupportedOperation when it cannot.
+func (s Service) ObjectAttributes(ctx context.Context, bucket, key string) (*fs.ObjectAttributes, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	attributer, ok := s.storage.(fs.ObjectAttributer)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot describe objects")
+	}
+
+	return attributer.ObjectAttributes(ctx, bucket, key)
+}
+
+// DeleteObjectIf implements fs.ConditionalDeleter by forwarding to the backend
+// when it supports conditional deletes, and reporting ErrUnsupportedOperation
+// when it does not — never by falling back to a racy check-then-delete.
+func (s Service) DeleteObjectIf(ctx context.Context, bucket, key string, cond fs.Conditions) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return errors.Wrap(err, "validate object key")
+	}
+
+	deleter, ok := s.storage.(fs.ConditionalDeleter)
+	if !ok {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot delete conditionally")
+	}
+
+	return deleter.DeleteObjectIf(ctx, bucket, key, cond)
+}
+
 func (s Service) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
 	if err := validate.BucketName(bucket); err != nil {
 		return nil, errors.Wrap(err, "validate bucket name")
@@ -311,6 +409,18 @@ func (s Service) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMu
 
 	uploaded, err := s.storage.ListParts(ctx, req.Bucket, req.Key, req.UploadID)
 	if err != nil {
+		// The upload is gone. That is either a stale completion or — far more
+		// often — a retry of one that already succeeded and whose response the
+		// client never saw. SDKs retry completions, so answering NoSuchUpload
+		// for the second call turns a recovered network blip into a hard
+		// failure. If the object at this key came from exactly this upload, the
+		// work is already done: report it as done.
+		if errors.Is(err, fs.ErrUploadNotFound) {
+			if done, ok := s.completedUpload(ctx, req); ok {
+				return done, nil
+			}
+		}
+
 		return nil, errors.Wrap(err, "list parts")
 	}
 

@@ -51,8 +51,12 @@ func (s *Storage) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (
 			return errors.Wrap(err, "determine relative path")
 		}
 
-		// Convert to forward slashes for S3 compatibility.
-		key := filepath.ToSlash(relPath)
+		// Only the reserved content leaf is an object; every other entry is
+		// part of the key's directory chain.
+		key, ok := keyFromContentPath(relPath)
+		if !ok {
+			return nil
+		}
 
 		if prefix == "" || strings.HasPrefix(key, prefix) {
 			etag, owner, err := s.objectETagOwner(bucket, key, path, info)

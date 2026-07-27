@@ -25,7 +25,7 @@ type CopyObjectResult struct {
 // destination. Metadata follows x-amz-metadata-directive (COPY by default,
 // REPLACE takes it from the request headers), tags follow
 // x-amz-tagging-directive the same way. Conditional-copy headers
-// (x-amz-copy-source-if-*) are ignored.
+// (x-amz-copy-source-if-*) are evaluated against the source object.
 func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	path := strings.TrimPrefix(r.URL.Path, "/")
@@ -65,6 +65,13 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer func() { _ = src.Reader.Close() }()
+
+	if !copySourceConditionsHold(r.Header, src) {
+		renderAPIError(ctx, w, r, s3err.PreconditionFailed,
+			errors.New("x-amz-copy-source-if-* condition failed"))
+
+		return
+	}
 
 	metadata := src.Metadata
 	if metadataDirective == directiveReplace {
@@ -111,6 +118,52 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		LastModified: lastModified.UTC(),
 		ETag:         quoteETag(resp.ETag),
 	})
+}
+
+// copySourceConditionsHold evaluates the x-amz-copy-source-if-* headers
+// against the source object, returning false when the copy must be rejected
+// with 412.
+//
+// The pairing rules are S3's: an ETag condition takes precedence over the
+// timestamp condition it is paired with, so if-match wins over
+// if-unmodified-since and if-none-match wins over if-modified-since. A client
+// sending both is asking "copy if it is still the object I saw", and the ETag
+// answers that more precisely than a one-second timestamp can.
+func copySourceConditionsHold(header http.Header, src *fs.GetObjectResponse) bool {
+	var (
+		ifMatch     = strings.TrimSpace(header.Get("X-Amz-Copy-Source-If-Match"))
+		ifNoneMatch = strings.TrimSpace(header.Get("X-Amz-Copy-Source-If-None-Match"))
+		unmodified  = strings.TrimSpace(header.Get("X-Amz-Copy-Source-If-Unmodified-Since"))
+		modified    = strings.TrimSpace(header.Get("X-Amz-Copy-Source-If-Modified-Since"))
+	)
+
+	state := fs.ObjectState{Exists: true, ETag: src.ETag, Size: src.Size, LastModified: src.LastModified}
+
+	switch {
+	case ifMatch != "":
+		if err := (fs.Conditions{IfMatch: ifMatch}).CheckWrite(state); err != nil {
+			return false
+		}
+	case unmodified != "":
+		if t, err := http.ParseTime(unmodified); err == nil &&
+			src.LastModified.Truncate(time.Second).After(t) {
+			return false
+		}
+	}
+
+	switch {
+	case ifNoneMatch != "":
+		if err := (fs.Conditions{IfNoneMatch: ifNoneMatch}).CheckWrite(state); err != nil {
+			return false
+		}
+	case modified != "":
+		if t, err := http.ParseTime(modified); err == nil &&
+			!src.LastModified.Truncate(time.Second).After(t) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // Copy directives for metadata and tagging.

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/xml"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-faster/fs"
@@ -47,6 +48,12 @@ func (h *handler) GetObjectTagging(w http.ResponseWriter, r *http.Request) {
 	for i, tag := range tags {
 		resp.TagSet.Tags[i] = TagXML(tag)
 	}
+
+	// Report the set by key. A tag set is a set, so the order it comes back in
+	// is not the order it went in, and clients compare the whole document.
+	sort.Slice(resp.TagSet.Tags, func(i, j int) bool {
+		return resp.TagSet.Tags[i].Key < resp.TagSet.Tags[j].Key
+	})
 
 	writeXML(ctx, w, r, resp)
 }

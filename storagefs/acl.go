@@ -20,6 +20,9 @@ const bucketMetaFile = "bucket.json"
 type bucketMeta struct {
 	Version int    `json:"version"`
 	ACL     fs.ACL `json:"acl,omitempty"`
+	// Owner is the principal that created the bucket; absent for buckets
+	// created before ownership was recorded.
+	Owner fs.Owner `json:"owner,omitzero"`
 }
 
 func (s *Storage) bucketMetaPath(bucket string) string {

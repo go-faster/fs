@@ -280,15 +280,17 @@ Command-line flags override YAML configuration values.`,
 				}
 
 				serverCfg := server.Config{
-					Storage:      storage,
-					Addr:         cfg.Server.Addr,
-					ReadTimeout:  cfg.Server.ReadTimeout,
-					WriteTimeout: cfg.Server.WriteTimeout,
-					IdleTimeout:  cfg.Server.IdleTimeout,
-					HealthPath:   cfg.Server.HealthPath,
-					Buckets:      cfg.Storage.Buckets,
-					Auth:         authStore,
-					WrapHandler:  wrap,
+					Storage:        storage,
+					Addr:           cfg.Server.Addr,
+					ReadTimeout:    cfg.Server.ReadTimeout,
+					WriteTimeout:   cfg.Server.WriteTimeout,
+					IdleTimeout:    cfg.Server.IdleTimeout,
+					HealthPath:     cfg.Server.HealthPath,
+					Region:         cfg.Server.Region,
+					OwnerIsolation: cfg.Auth.OwnerIsolation,
+					Buckets:        cfg.Storage.Buckets,
+					Auth:           authStore,
+					WrapHandler:    wrap,
 					// Readiness probes storage reachability (health is liveness only).
 					Ready: func(ctx context.Context) error {
 						_, err := storage.ListBuckets(ctx)

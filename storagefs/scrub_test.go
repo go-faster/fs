@@ -17,7 +17,7 @@ import (
 func corrupt(t *testing.T, root, bucket, key string) {
 	t.Helper()
 
-	path := filepath.Join(root, bucket, toOSPath(key))
+	path := filepath.Join(root, bucket, objectRelPath(key))
 
 	data, err := os.ReadFile(path) //nolint:gosec // test path.
 	require.NoError(t, err)
@@ -151,8 +151,10 @@ func TestScrub_Unverifiable(t *testing.T) {
 	ctx := t.Context()
 	require.NoError(t, s.CreateBucket(ctx, "b"))
 
-	// A pre-checksum object: file present, no sidecar.
-	require.NoError(t, os.WriteFile(filepath.Join(root, "b", "legacy.txt"), []byte("no sidecar"), 0o600))
+	// A pre-checksum object: content present, no sidecar.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "b", "legacy.txt"), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "b", "legacy.txt", objectFile), []byte("no sidecar"), 0o600))
 
 	report, err := s.Scrub(ctx, ScrubOptions{})
 	require.NoError(t, err)

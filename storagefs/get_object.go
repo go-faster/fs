@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
-	objectPath := filepath.Join(s.root, bucket, toOSPath(key))
+	objectPath := filepath.Join(s.root, bucket, objectRelPath(key))
 
 	// Check if bucket exists
 	bucketPath := filepath.Join(s.root, bucket)
@@ -61,6 +61,7 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 	if sc != nil {
 		resp.ETag = sc.ETag
 		resp.Metadata = sc.metadata()
+		resp.TagCount = len(sc.Tags)
 	}
 
 	if resp.ETag == "" {

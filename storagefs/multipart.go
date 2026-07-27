@@ -341,13 +341,22 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	})
 
 	// Create the final object path.
-	objectPath := filepath.Join(s.root, meta.Bucket, toOSPath(meta.Key))
+	objectPath := filepath.Join(s.root, meta.Bucket, objectRelPath(meta.Key))
 
-	// Ensure parent directory exists.
+	// Ensure the key's directory exists. As in PutObject, a completion that is
+	// then refused must not leave it behind.
 	objectDir := filepath.Dir(objectPath)
 	if err := os.MkdirAll(objectDir, 0750); err != nil {
 		return nil, errors.Wrap(err, "create object directory")
 	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			pruneEmptyDirs(objectDir, filepath.Join(s.root, meta.Bucket))
+		}
+	}()
 
 	// Assemble into a staging temp file, then rename into place so a partially
 	// assembled object is never visible even if the process dies mid-complete.
@@ -369,6 +378,8 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	hash := md5.New()        //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	contentHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
+	layout := make([]fs.ObjectPart, 0, len(parts))
+
 	uploadPath := s.multipart.uploadPath(req.UploadID)
 	for _, part := range parts {
 		partPath := filepath.Join(uploadPath, strconv.Itoa(part.PartNumber))
@@ -380,13 +391,19 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		}
 
 		partHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-		_, err = io.Copy(io.MultiWriter(finalFile, partHash, contentHash), partFile)
+		written, err := io.Copy(io.MultiWriter(finalFile, partHash, contentHash), partFile)
 		_ = partFile.Close()
 
 		if err != nil {
 			cleanup()
 			return nil, errors.Wrapf(err, "copy part %d", part.PartNumber)
 		}
+
+		layout = append(layout, fs.ObjectPart{
+			PartNumber: part.PartNumber,
+			Size:       written,
+			ETag:       hex.EncodeToString(partHash.Sum(nil)),
+		})
 
 		_, _ = hash.Write(partHash.Sum(nil))
 	}
@@ -399,6 +416,24 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	if err := finalFile.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return nil, errors.Wrap(err, "close final file")
+	}
+
+	// Finalize under putMu so a conditional completion is evaluated atomically
+	// against other writers to this key, exactly as a conditional PutObject is.
+	s.putMu.Lock()
+	defer s.putMu.Unlock()
+
+	if cond := req.Conditions; !cond.IsZero() {
+		state, err := s.currentObjectState(meta.Bucket, meta.Key, objectPath)
+		if err != nil {
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
+
+		if err := cond.CheckWrite(state); err != nil {
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
 	}
 
 	if err := os.Rename(tmpName, objectPath); err != nil {
@@ -419,10 +454,17 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	checksum := hex.EncodeToString(contentHash.Sum(nil))
 
 	// Persist the multipart ETag, content checksum and the metadata captured at
-	// initiation.
-	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)); err != nil {
+	// initiation, plus the part layout: the upload directory is gone by now, so
+	// this is the only remaining record of where the part boundaries are.
+	sc := newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)
+	sc.Parts = layout
+	sc.UploadID = req.UploadID
+
+	if err := s.writeSidecar(meta.Bucket, sc); err != nil {
 		return nil, err
 	}
+
+	committed = true
 
 	return &fs.CompleteMultipartUploadResponse{
 		Location: "/" + meta.Bucket + "/" + meta.Key,

@@ -11,6 +11,10 @@ import (
 	"github.com/go-faster/fs/internal/s3err"
 )
 
+// maxDeleteObjects is the number of keys S3 accepts in one DeleteObjects
+// request.
+const maxDeleteObjects = 1000
+
 // DeleteObjectsRequest represents the XML request body for deleting multiple objects.
 type DeleteObjectsRequest struct {
 	XMLName xml.Name         `xml:"Delete"`
@@ -18,10 +22,33 @@ type DeleteObjectsRequest struct {
 	Quiet   bool             `xml:"Quiet"`
 }
 
-// ObjectToDelete represents an object to be deleted.
+// ObjectToDelete represents an object to be deleted. ETag, Size and
+// LastModifiedTime are the per-object conditional-delete guards: when present,
+// the key is deleted only while it still matches them.
 type ObjectToDelete struct {
-	Key       string `xml:"Key"`
-	VersionId string `xml:"VersionId,omitempty"`
+	Key              string `xml:"Key"`
+	VersionId        string `xml:"VersionId,omitempty"`
+	ETag             string `xml:"ETag,omitempty"`
+	Size             *int64 `xml:"Size,omitempty"`
+	LastModifiedTime string `xml:"LastModifiedTime,omitempty"`
+}
+
+// conditions renders the object's guards as storage conditions. A malformed
+// timestamp is reported rather than dropped, so an unenforceable guard fails
+// the entry instead of silently deleting unconditionally.
+func (o ObjectToDelete) conditions() (fs.Conditions, error) {
+	cond := fs.Conditions{IfMatch: o.ETag, Size: o.Size}
+
+	if o.LastModifiedTime != "" {
+		t, err := http.ParseTime(o.LastModifiedTime)
+		if err != nil {
+			return fs.Conditions{}, errors.Wrap(errMalformedCondition, "LastModifiedTime")
+		}
+
+		cond.LastModified = &t
+	}
+
+	return cond, nil
 }
 
 // DeleteObjectsResult represents the response for deleting multiple objects.
@@ -74,6 +101,15 @@ func (h *handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 		return
 	}
 
+	// S3 caps a batch delete at 1000 keys. Silently deleting more would leave a
+	// client believing a request it should have had to split was accepted whole.
+	if len(req.Objects) > maxDeleteObjects {
+		renderAPIError(ctx, w, r, s3err.MalformedXML,
+			errors.Errorf("%d keys exceeds the %d-key limit", len(req.Objects), maxDeleteObjects))
+
+		return
+	}
+
 	result := DeleteObjectsResult{
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
@@ -82,7 +118,11 @@ func (h *handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 	// (the operation is idempotent); any other failure is reported per-object
 	// with its S3 error code.
 	for _, obj := range req.Objects {
-		err := h.service.DeleteObject(ctx, bucket, obj.Key)
+		cond, err := obj.conditions()
+		if err == nil {
+			err = h.deleteWithConditions(r, bucket, obj.Key, cond)
+		}
+
 		if err != nil && !errors.Is(err, fs.ErrObjectNotFound) {
 			api := s3err.FromError(err)
 			result.Errors = append(result.Errors, DeleteError{

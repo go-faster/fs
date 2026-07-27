@@ -15,20 +15,43 @@ import (
 
 type handler struct {
 	service fs.Storage
+	// region is the location constraint reported for every bucket. Empty means
+	// the S3 default (us-east-1), which is reported as an empty constraint.
+	region string
 }
 
 // Option configures the handler built by New.
 type Option func(*options)
 
 type options struct {
-	authenticator Authenticator
-	cors          CORSResolver
+	authenticator  Authenticator
+	cors           CORSResolver
+	region         string
+	ownerIsolation bool
 }
 
 // WithAuthenticator enables SigV4 authentication and grant-based authorization
 // using a. Without it (the library default) the handler serves anonymously.
 func WithAuthenticator(a Authenticator) Option {
 	return func(o *options) { o.authenticator = a }
+}
+
+// WithRegion sets the location constraint reported by GetBucketLocation and
+// accepted in a CreateBucketConfiguration. Empty (the default) reports the
+// S3 default region as an empty constraint.
+func WithRegion(region string) Option {
+	return func(o *options) { o.region = region }
+}
+
+// WithOwnerIsolation makes bucket ownership decide access: a bucket belongs to
+// whoever created it, and another principal reaches it only through a grant
+// that names the bucket rather than a wildcard covering it.
+//
+// It is off by default because turning it on changes what an existing
+// deployment's "*" grants mean, which is a decision for the operator and not a
+// side effect of an upgrade. Ownership is recorded either way.
+func WithOwnerIsolation(enabled bool) Option {
+	return func(o *options) { o.ownerIsolation = enabled }
 }
 
 // WithCORS enables per-bucket CORS: OPTIONS preflight handling and CORS
@@ -50,21 +73,40 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 		opt(&o)
 	}
 
-	h := handler{service: s}
+	h := handler{service: s, region: o.region}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", h.route)
 
 	var inner http.Handler = mux
 	if o.authenticator != nil {
-		inner = authMiddleware(o.authenticator, s, inner)
+		inner = authMiddleware(o.authenticator, s, o.ownerIsolation, inner)
 	}
 
 	if o.cors != nil {
 		inner = corsMiddleware(o.cors, inner)
 	}
 
-	return withRequestID(inner)
+	return withRequestID(optionsGuard(inner))
+}
+
+// optionsGuard rejects an OPTIONS request that carries no Origin.
+//
+// OPTIONS reaches S3 only as a CORS preflight, and a preflight without an
+// Origin is not one: the server has nothing to decide about. S3 says so with
+// 400 rather than letting it fall through to auth, which would answer 403 —
+// the wrong answer, since no credentials could have made this request valid.
+// It sits outside auth for the same reason a preflight does: OPTIONS is never
+// signed.
+func optionsGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions && r.Header.Get("Origin") == "" {
+			s3err.WriteAPI(w, r, s3err.MissingOriginHeader)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withRequestID stamps every response with a unique x-amz-request-id (echoed
@@ -178,6 +220,15 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 			h.GetObjectTagging(w, r)
 		case q.Has("acl"):
 			h.GetObjectACL(w, r)
+		case q.Has("attributes"):
+			h.GetObjectAttributes(w, r)
+		case q.Has("torrent"):
+			// ?torrent is a legacy S3 extension this server does not generate.
+			// S3 answers a request for a torrent it does not have with
+			// NoSuchKey, which is a typed answer a client can act on; serving
+			// the object bytes instead — what ignoring the subresource does —
+			// hands back something that is not a torrent at all.
+			s3err.WriteAPI(w, r, s3err.NoSuchKey)
 		default:
 			h.GetObject(w, r)
 		}

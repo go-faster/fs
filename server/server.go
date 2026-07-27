@@ -54,6 +54,22 @@ func WithAuth(store *auth.Store) HandlerOption {
 	}
 }
 
+// WithOwnerIsolation makes bucket ownership decide access; see
+// handler.WithOwnerIsolation. Off by default.
+func WithOwnerIsolation(enabled bool) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithOwnerIsolation(enabled))
+	}
+}
+
+// WithRegion sets the region name reported by GetBucketLocation. Empty (the
+// default) reports the S3 default region as an empty location constraint.
+func WithRegion(region string) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithRegion(region))
+	}
+}
+
 // WithCORS enables per-bucket CORS (OPTIONS preflight + response headers).
 func WithCORS(cfg cors.Config) HandlerOption {
 	return func(o *handlerOptions) {
@@ -114,6 +130,16 @@ type Config struct {
 
 	// CORS, if non-empty, enables per-bucket CORS (preflight + headers).
 	CORS cors.Config
+
+	// OwnerIsolation makes a bucket reachable only by the principal that
+	// created it, plus anyone holding a grant that names it. Off by default:
+	// enabling it changes what existing "*" grants mean.
+	OwnerIsolation bool
+
+	// Region names the location this deployment reports for its buckets
+	// (GetBucketLocation, and the constraint accepted at create). Empty is the
+	// S3 default region, reported as an empty constraint.
+	Region string
 
 	// TLS, if set, serves HTTPS with hot-reloadable certificates.
 	TLS *TLSConfig
@@ -243,6 +269,14 @@ func (s *Server) buildHandler() http.Handler {
 
 	if len(s.cfg.CORS.Buckets) > 0 || len(s.cfg.CORS.Default) > 0 {
 		opts = append(opts, WithCORS(s.cfg.CORS))
+	}
+
+	if s.cfg.Region != "" {
+		opts = append(opts, WithRegion(s.cfg.Region))
+	}
+
+	if s.cfg.OwnerIsolation {
+		opts = append(opts, WithOwnerIsolation(true))
 	}
 
 	mux := http.NewServeMux()

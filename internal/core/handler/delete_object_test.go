@@ -39,6 +39,9 @@ func TestHandler_DeleteObject(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestHandler_DeleteObject_NotFound pins the idempotence of DeleteObject:
+// removing a key that is not there succeeds with 204, the way S3 answers it.
+// A 404 here would break every client that deletes without checking first.
 func TestHandler_DeleteObject_NotFound(t *testing.T) {
 	t.Parallel()
 
@@ -56,6 +59,28 @@ func TestHandler_DeleteObject_NotFound(t *testing.T) {
 	ctx := t.Context()
 	client := newTestClient(t, svc)
 	err := client.RemoveObject(ctx, "test-bucket", "nonexistent.txt", minio.RemoveObjectOptions{})
+	require.NoError(t, err)
+}
+
+// TestHandler_DeleteObject_BucketMissing checks that swallowing a missing
+// object does not also swallow a missing bucket.
+func TestHandler_DeleteObject_BucketMissing(t *testing.T) {
+	t.Parallel()
+
+	svc := &mock.StorageMock{
+		DeleteObjectFunc: func(ctx context.Context, bucket, key string) error {
+			return fs.ErrBucketNotFound
+		},
+		ListObjectsFunc: func(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
+			return &fs.ListObjectsResponse{Objects: []fs.Object{}}, nil
+		},
+		ListBucketsFunc: func(ctx context.Context) ([]fs.Bucket, error) {
+			return []fs.Bucket{}, nil
+		},
+	}
+	ctx := t.Context()
+	client := newTestClient(t, svc)
+	err := client.RemoveObject(ctx, "test-bucket", "obj.txt", minio.RemoveObjectOptions{})
 	require.Error(t, err)
 }
 

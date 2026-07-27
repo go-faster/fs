@@ -70,7 +70,7 @@ func TestStorage_WindowsPathCompatibility(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify object exists on disk with correct OS path.
-			expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(tt.key))
+			expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(tt.key), "#obj")
 			info, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			require.False(t, info.IsDir())
@@ -202,7 +202,7 @@ func TestStorage_MultipartUpload_WindowsPathCompatibility(t *testing.T) {
 	require.NotEmpty(t, resp.ETag)
 
 	// Verify object exists with correct OS path.
-	expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(nestedKey))
+	expectedPath := filepath.Join(root, "test-bucket", filepath.FromSlash(nestedKey), "#obj")
 	info, err := os.Stat(expectedPath)
 	require.NoError(t, err)
 	require.False(t, info.IsDir())

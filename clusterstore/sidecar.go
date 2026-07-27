@@ -58,12 +58,20 @@ type Sidecar struct {
 	CacheControl       string            `json:"cache_control,omitempty"`
 	ContentDisposition string            `json:"content_disposition,omitempty"`
 	ContentEncoding    string            `json:"content_encoding,omitempty"`
+	Expires            string            `json:"expires,omitempty"`
 	UserMetadata       map[string]string `json:"user_metadata,omitempty"`
 	Tags               []fs.Tag          `json:"tags,omitempty"`
 	ACL                fs.ACL            `json:"acl,omitempty"`
 	// Owner is the principal that wrote the object; absent in sidecars written
 	// before owners were modeled.
 	Owner fs.Owner `json:"owner,omitzero"`
+	// Parts is the part layout a multipart object was assembled from. Absent
+	// for single PUTs and for multipart objects written before the layout was
+	// recorded, both of which read as a single part.
+	Parts []fs.ObjectPart `json:"parts,omitempty"`
+	// UploadID names the multipart upload that produced the object, so a
+	// retried completion can be told from a stale one. Empty for a single PUT.
+	UploadID string `json:"upload_id,omitempty"`
 }
 
 // ObjectMetadata converts the sidecar's header fields to the domain type.
@@ -73,6 +81,7 @@ func (sc *Sidecar) ObjectMetadata() fs.ObjectMetadata {
 		CacheControl:       sc.CacheControl,
 		ContentDisposition: sc.ContentDisposition,
 		ContentEncoding:    sc.ContentEncoding,
+		Expires:            sc.Expires,
 		UserMetadata:       sc.UserMetadata,
 	}
 }

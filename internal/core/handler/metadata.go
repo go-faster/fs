@@ -22,6 +22,7 @@ func extractObjectMetadata(header http.Header) fs.ObjectMetadata {
 		CacheControl:       header.Get("Cache-Control"),
 		ContentDisposition: header.Get("Content-Disposition"),
 		ContentEncoding:    cleanContentEncoding(header.Get("Content-Encoding")),
+		Expires:            header.Get("Expires"),
 	}
 
 	for name, values := range header {
@@ -38,7 +39,7 @@ func extractObjectMetadata(header http.Header) fs.ObjectMetadata {
 			meta.UserMetadata = make(map[string]string)
 		}
 
-		meta.UserMetadata[key] = values[0]
+		meta.UserMetadata[key] = decodeHeaderValue(values[0])
 	}
 
 	return meta
@@ -62,7 +63,62 @@ func cleanContentEncoding(value string) string {
 		kept = append(kept, tok)
 	}
 
-	return strings.Join(kept, ",")
+	// ", " and not ",": the client gets back the list it sent, and a client
+	// that compares the header verbatim (they do) sees no difference.
+	return strings.Join(kept, ", ")
+}
+
+// decodeHeaderValue interprets a raw header value as UTF-8 text.
+//
+// Go hands header bytes over untouched, so a value carrying multi-byte UTF-8
+// arrives as a Go string of those same bytes. Keeping it that way is right:
+// the text is already what the client meant. What matters is that
+// writeObjectMetadata puts it back on the wire the way HTTP header values are
+// read, which is one byte per character — see encodeHeaderValue.
+func decodeHeaderValue(v string) string {
+	return v
+}
+
+// encodeHeaderValue renders a metadata value for the wire.
+//
+// HTTP header values are bytes, and every client decodes them one byte per
+// character (ISO-8859-1) — that is what the RFC says and what urllib3, .NET
+// and the AWS SDKs do. Echoing stored UTF-8 bytes back therefore shows the
+// client mojibake: it sent "é" and reads back "Ã©". Latin-1-encoding the
+// value undoes that for every character that fits, which is the whole of
+// Latin-1 and so the whole of what a byte-oriented client could have sent.
+//
+// Text outside Latin-1 has no such encoding; it goes out as UTF-8 bytes,
+// unchanged from what was stored, because mangling it further would help
+// nobody.
+func encodeHeaderValue(v string) string {
+	if isASCII(v) {
+		return v
+	}
+
+	out := make([]byte, 0, len(v))
+
+	for _, r := range v {
+		if r > 0xFF {
+			return v
+		}
+
+		out = append(out, byte(r)) //nolint:gosec // The loop above returns early for r > 0xFF.
+	}
+
+	return string(out)
+}
+
+// isASCII reports whether s is plain ASCII, the common case that needs no
+// re-encoding at all.
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+
+	return true
 }
 
 // writeObjectMetadata emits the stored metadata as response headers.
@@ -83,6 +139,10 @@ func writeObjectMetadata(h http.Header, meta fs.ObjectMetadata) {
 		h.Set("Content-Encoding", meta.ContentEncoding)
 	}
 
+	if meta.Expires != "" {
+		h.Set("Expires", meta.Expires)
+	}
+
 	// Deterministic emission order for tests and logs.
 	keys := make([]string, 0, len(meta.UserMetadata))
 	for k := range meta.UserMetadata {
@@ -95,7 +155,7 @@ func writeObjectMetadata(h http.Header, meta fs.ObjectMetadata) {
 		// Assign directly to keep the all-lowercase header name AWS emits
 		// (h.Set would canonicalize x-amz-meta-color to X-Amz-Meta-Color, and
 		// SDKs surface the key casing verbatim).
-		h[strings.ToLower(userMetadataPrefix)+k] = []string{meta.UserMetadata[k]}
+		h[strings.ToLower(userMetadataPrefix)+k] = []string{encodeHeaderValue(meta.UserMetadata[k])}
 	}
 }
 

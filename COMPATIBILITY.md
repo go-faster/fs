@@ -10,7 +10,7 @@ misbehaving.
 
 Compatibility is not self-asserted. Every change is gated in CI against the
 upstream [ceph/s3-tests](https://github.com/ceph/s3-tests) conformance suite —
-currently **245 tests**, run against an authenticated server — and exercised
+currently **322 tests**, run against an authenticated server — and exercised
 end-to-end through real SDK clients (`aws-sdk-go-v2`, `minio-go`) and the
 command-line clients `aws-cli`, `mc`, `s3cmd` and `rclone`. The machine-generated
 breakdown lives in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
@@ -22,13 +22,13 @@ single-region and ignores `LocationConstraint`.
 
 | Area | Operations & behavior |
 |------|-----------------------|
-| **Buckets** | Create, Delete, Head, List (`ListBuckets`), GetBucketLocation. Canned `x-amz-acl` on create. |
-| **Objects** | Put, Get, Head, Delete, DeleteObjects (batch, idempotent). Content served with byte-range (`206`) and conditional (`If-Match` / `If-None-Match` / `If-Modified-Since` / `If-Unmodified-Since` / `If-Range`) support. Conditional PUT (`If-Match` / `If-None-Match`, incl. atomic put-if-absent). |
+| **Buckets** | Create (idempotent for the owner, `BucketAlreadyExists` for anyone else), Delete, Head, List (`ListBuckets`, paginated), GetBucketLocation (reports the configured region). Canned `x-amz-acl` on create. Buckets record their owner; optional owner isolation (`auth.owner_isolation`) makes a bucket reachable only by its creator plus grants that name it. |
+| **Objects** | Put, Get, Head, Delete, DeleteObjects (batch, idempotent, capped at 1000 keys). Content served with byte-range (`206`), single-part reads (`?partNumber=N`) and conditional (`If-Match` / `If-None-Match` / `If-Modified-Since` / `If-Unmodified-Since` / `If-Range`) support. Conditional writes **and deletes** (`If-Match` / `If-None-Match` on PUT, DELETE, DeleteObjects and multipart completion, plus `x-amz-if-match-size` and `x-amz-if-match-last-modified-time`), incl. atomic put-if-absent. `Content-MD5` verified before the object is visible. `GET ?attributes` (GetObjectAttributes) with the part layout. |
 | **Listing** | ListObjects **V1 and V2** with `prefix`, `delimiter`, pagination (`marker` / `continuation-token` / `start-after`), `max-keys` (clamped to 1000), `encoding-type=url`, `KeyCount`, and correct CommonPrefixes / delimiter ordering. |
-| **Multipart** | Create, UploadPart, UploadPartCopy (with ranges), Complete, Abort, ListParts, ListMultipartUploads. Part validation (1–10000, strictly ascending, 5 MiB minimum except the last) with the exact S3 error codes. |
-| **Copy** | CopyObject (server-side), with `x-amz-metadata-directive` and `x-amz-tagging-directive` (COPY / REPLACE). |
-| **Metadata** | `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, and `x-amz-meta-*` user metadata — stored and round-tripped. ETag returned on PUT. |
-| **Tagging** | GetObjectTagging / PutObjectTagging / DeleteObjectTagging and the `x-amz-tagging` header, with the S3 limits (≤10 tags, key ≤128, value ≤256). |
+| **Multipart** | Create, UploadPart, UploadPartCopy (with ranges), Complete (idempotent on retry), Abort, ListParts, ListMultipartUploads. Part validation (1–10000, strictly ascending, 5 MiB minimum except the last) with the exact S3 error codes. The completed part layout is retained, so a multipart object can still be described and read a part at a time. |
+| **Copy** | CopyObject (server-side), with `x-amz-metadata-directive`, `x-amz-tagging-directive` (COPY / REPLACE) and the `x-amz-copy-source-if-*` conditionals. |
+| **Metadata** | `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Expires` and `x-amz-meta-*` user metadata — stored and round-tripped, non-ASCII included. `response-content-type` & friends override them per request. ETag returned on PUT. |
+| **Tagging** | GetObjectTagging / PutObjectTagging / DeleteObjectTagging and the `x-amz-tagging` header, with the S3 limits (≤10 tags, key ≤128, value ≤256) and the `x-amz-tagging-count` header on reads. |
 | **Access control** | Canned ACLs (`private` / `public-read` / `public-read-write`) on buckets and objects, enforced for anonymous requests. Object `?acl` (GetObjectACL / PutObjectACL) reads and writes that level, rendered as the grants it implies. Objects record the owner that wrote them, reported in ACL and listing `<Owner>` elements. |
 | **Security** | AWS Signature V4 — header auth, presigned URLs (≤7-day expiry), and streaming (`aws-chunked`) uploads with per-chunk signature verification. Native TLS with hot-reloadable certificates. Per-bucket CORS with OPTIONS preflight. |
 

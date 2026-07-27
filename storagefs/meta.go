@@ -33,6 +33,7 @@ type sidecar struct {
 	CacheControl       string            `json:"cache_control,omitempty"`
 	ContentDisposition string            `json:"content_disposition,omitempty"`
 	ContentEncoding    string            `json:"content_encoding,omitempty"`
+	Expires            string            `json:"expires,omitempty"`
 	UserMetadata       map[string]string `json:"user_metadata,omitempty"`
 	Tags               []fs.Tag          `json:"tags,omitempty"`
 	ACL                fs.ACL            `json:"acl,omitempty"`
@@ -44,6 +45,14 @@ type sidecar struct {
 	// and verify-on-read for bit-rot detection. Distinct from ETag, which for a
 	// multipart object is the "-N" composite, not a content hash.
 	Checksum string `json:"checksum,omitempty"`
+	// Parts is the part layout a multipart object was assembled from, retained
+	// after completion so the object can still be described and read a part at
+	// a time. Absent for single PUTs and for multipart objects written before
+	// the layout was recorded, both of which read as a single part.
+	Parts []fs.ObjectPart `json:"parts,omitempty"`
+	// UploadID names the multipart upload that produced the object, so a
+	// retried completion can be told from a stale one. Empty for a single PUT.
+	UploadID string `json:"upload_id,omitempty"`
 }
 
 // metadata converts the sidecar's header fields to the domain type.
@@ -53,6 +62,7 @@ func (sc *sidecar) metadata() fs.ObjectMetadata {
 		CacheControl:       sc.CacheControl,
 		ContentDisposition: sc.ContentDisposition,
 		ContentEncoding:    sc.ContentEncoding,
+		Expires:            sc.Expires,
 		UserMetadata:       sc.UserMetadata,
 	}
 }
@@ -69,6 +79,7 @@ func newSidecar(key, etag, checksum string, meta fs.ObjectMetadata, tags []fs.Ta
 		CacheControl:       meta.CacheControl,
 		ContentDisposition: meta.ContentDisposition,
 		ContentEncoding:    meta.ContentEncoding,
+		Expires:            meta.Expires,
 		UserMetadata:       meta.UserMetadata,
 		Tags:               tags,
 		ACL:                acl,

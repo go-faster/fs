@@ -112,11 +112,15 @@ func TestCrashConsistency(t *testing.T) {
 			require.NoError(t, cmd.Start())
 
 			// Wait until the writer has committed at least one object.
+			//
+			// "Committed" means a content leaf exists, not that the bucket
+			// directory has entries: a key is a directory here, created before
+			// the content lands in it, so an entry can appear while the write
+			// that will fill it is still in flight.
 			bucketDir := filepath.Join(dir, crashBucket)
 
 			require.Eventually(t, func() bool {
-				entries, _ := os.ReadDir(bucketDir)
-				return len(entries) > 0
+				return committedObjects(bucketDir) > 0
 			}, 15*time.Second, 2*time.Millisecond, "writer never committed an object")
 
 			time.Sleep(jitter * time.Millisecond)
@@ -208,4 +212,23 @@ func readAckedKeys(t *testing.T, dir string) []string {
 	}
 
 	return keys
+}
+
+// committedObjects counts the object content leaves under a bucket directory.
+func committedObjects(bucketDir string) int {
+	var n int
+
+	_ = filepath.Walk(bucketDir, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // A half-built tree is exactly what this polls through.
+		}
+
+		if !info.IsDir() && info.Name() == objectFile {
+			n++
+		}
+
+		return nil
+	})
+
+	return n
 }

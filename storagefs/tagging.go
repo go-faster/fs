@@ -15,7 +15,7 @@ func (s *Storage) statObject(bucket, key string) error {
 		return fs.ErrBucketNotFound
 	}
 
-	info, err := os.Stat(filepath.Join(bucketPath, toOSPath(key)))
+	info, err := os.Stat(filepath.Join(bucketPath, objectRelPath(key)))
 	if os.IsNotExist(err) || (err == nil && info.IsDir()) {
 		return fs.ErrObjectNotFound
 	}

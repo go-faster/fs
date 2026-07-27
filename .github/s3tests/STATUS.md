@@ -19,13 +19,20 @@ run against an authenticated single-node server on `storagefs`.
 
 | Outcome | Tests |
 |---------|------:|
-| Passing | 253 |
-| Failing | 491 |
+| Passing | 305 |
+| Failing | 439 |
 | Skipped | 94 |
 | **Collected** | **838** |
 
-Passing (253) exceeds gated (245) on purpose. A test is promoted only once it
-passes **deterministically across two runs**, and some passes are accidental —
+`test_headers.py` is gated too: 48 collected, 25 passing. Of its 23 failures,
+13 are SigV2 (excluded as a retired algorithm), 6 are unpassable by any server
+(botocore re-signs the request they try to break, so they fail on RGW as well),
+2 are answered by Go's `net/http` before a handler runs (`Expect: 200` -> 417),
+and the rest need the bucket ACL grammar.
+
+Passing here (305) exceeds this file's share of the gate (297) on purpose. A
+test is promoted only once it passes **deterministically across two runs**, and
+some passes are accidental —
 they pass because the operation is unimplemented and the test only asserts that
 *an* error is raised. Those are called out below and are never allow-listed.
 
@@ -75,25 +82,9 @@ half-working operation.
 unimplemented and they only assert that an error is raised. They are not
 allow-listed; promoting them would claim conformance the server does not have.
 
-## Failing: real gaps (~60)
+## Failing: real gaps (~20)
 
 Not scope decisions — behavior the server should have, grouped by root cause.
-
-### Flat keys over a hierarchical filesystem
-
-`storagefs` maps a key to a path, so a bucket cannot hold both `foo/bar` and
-`foo/bar/xyzzy`: the second `PutObject` fails with `InternalError` because
-`foo/bar` is a file, not a directory. S3 keys are flat and both must coexist.
-
-The same mapping cannot store a key that *ends* in the delimiter (`asdf/`),
-which would be a directory rather than an object.
-
-Affects `test_bucket_list_delimiter_basic`, `test_bucket_listv2_delimiter_basic`,
-`test_bucket_list_delimiter_not_skip_special`,
-`test_bucket_list_delimiter_prefix_ends_with_delimiter` (and its v2 twin), and
-any fixture nesting a key under another key. Needs a key-encoding scheme in the
-filesystem backend. The cluster backend is unaffected — its keyspace is already
-flat.
 
 ### Full ACL grammar
 
@@ -108,59 +99,31 @@ outside our three (`authenticated-read`, `bucket-owner-read`,
 This is the documented boundary rather than a bug, but it is where the
 remaining `?acl` failures live.
 
-### GetObjectAttributes
+### Checksums
 
-`GET ?attributes` is unrouted, so it falls through to `GetObject` and 500s:
-`test_get_object_attributes`, `test_get_multipart_object_attributes`,
-`test_get_single_multipart_object_attributes`,
-`test_get_paginated_multipart_object_attributes`. Implementable from data the
-server already has — ETag, `ObjectSize`, `StorageClass`, `ObjectParts`.
-
-### Conditional deletes and writes
-
-`If-Match` / `If-None-Match` are enforced on GET and PUT but not on
-`DeleteObject`, `DeleteObjects` or multipart completion:
-`test_delete_object_if_match*`, `test_delete_objects_if_match*`,
-`test_multipart_put_object_if_match`, `test_copy_object_ifmatch_failed`,
-`test_copy_object_ifnonematch_good`. The `x-amz-if-match-size` and
-`x-amz-if-match-last-modified-time` extensions are also unimplemented.
-
-### partNumber on GET
-
-Reading a single part back with `?partNumber=N` is not supported, so
-`test_multipart_get_part`, `test_multipart_single_get_part` and
-`test_non_multipart_get_part` fail, along with the `PartsCount` header.
-
-### Presigned-URL expiry validation
-
-`X-Amz-Expires` out of range (zero, negative, above the 7-day maximum) is
-rejected as `403` where S3 returns `400`, and a valid non-expired presign is
-rejected outright: `test_object_raw_get_x_amz_expires_*`,
-`test_object_raw_put_authenticated_expired`.
+`x-amz-checksum-*` (CRC32, CRC32C, CRC64NVME, SHA1, SHA256) is not
+implemented: the algorithm is accepted and ignored, so the digest is neither
+verified nor reported. 11 tests. Note for whoever picks this up: a first
+attempt that verified the digest turned these from fast failures into client
+*hangs*, and the server was answering both the request and its retry with 400
+in milliseconds — the stall is on the client side after the second response,
+and worth understanding before landing the feature.
 
 ### Assorted wire details
 
 | Test | Gap |
 |------|-----|
-| `test_object_raw_response_headers` | `response-content-type` & friends (query-parameter header overrides) not honored |
-| `test_object_set_get_unicode_metadata` | `x-amz-meta-*` round-trips UTF-8 bytes as Latin-1 |
-| `test_object_write_expires` | `Expires` header not stored or returned |
-| `test_get_obj_head_tagging` | `x-amz-tagging-count` header missing on GET/HEAD |
-| `test_put_obj_with_tags` | `x-amz-tagging` header parsed incorrectly |
-| `test_object_content_encoding_aws_chunked` | `Content-Encoding` list loses its separating space |
-| `test_multi_object_delete_key_limit`, `test_multi_objectv2_delete_key_limit` | `DeleteObjects` accepts more than 1000 keys |
-| `test_bucket_list_unordered`, `test_bucket_listv2_unordered` | `allow-unordered` not rejected as unsupported |
-| `test_bucket_get_location` | `GetBucketLocation` returns an empty constraint; the suite expects the configured region name |
-| `test_bucket_list_marker_empty`, `test_bucket_listv2_continuationtoken_empty` | empty marker / continuation-token edges |
-| `test_list_buckets_paginated` | `ListBuckets` pagination (`max-buckets`) |
 | `test_bucket_concurrent_set_canned_acl` | bucket-level canned ACL under concurrency |
+| `test_object_copy_not_owned_bucket` | needs `auth.owner_isolation`, which the suite's own fixtures cannot support: all six of its credentials hold `*: admin`, and its cleanup deletes other users' buckets with the main client |
+| `test_set_bucket_tagging` | the bucket `?tagging` subresource |
 
 ### Known divergences we do not intend to fix
 
 | Test | Why |
 |------|-----|
-| `test_bucket_recreate_new_acl`, `test_bucket_recreate_overwrite_acl`, `test_bucket_recreate_not_overriding` | The suite expects `BucketAlreadyExists`; we return `BucketAlreadyOwnedByYou`, which is what AWS returns when the caller already owns the bucket |
-| `test_object_read_unreadable` | Expects a key containing the C1 control `U+008A` to be rejected as an unparseable URI. AWS accepts arbitrary UTF-8 in keys, so we serve the natural 404 rather than adopt the RGW-specific rejection |
+| `test_bucket_recreate_new_acl`, `test_bucket_recreate_overwrite_acl` | Need the bucket ACL grammar; the re-create half now behaves as S3 does |
+| `test_object_read_unreadable` | Expects `%C2%AE%C2%8A-` — a key that is perfectly valid UTF-8 — to be rejected as an unparseable URI. Passing it would mean refusing a legal S3 key; it fails on RGW too |
+| `test_multipart_resend_first_finishes_last` | Reuses an upload id after completing it. RGW keeps the upload usable; AWS does not |
 | `test_list_buckets_anonymous` | Expects anonymous `ListBuckets` to return an empty list; we return `AccessDenied`, which is what AWS does. Service-level operations are never anonymous here |
 | `test_bucket_head_extended`, `test_head_bucket_usage` | Require the RGW-only `x-rgw-object-count` / `x-rgw-bytes-used` headers |
-| `test_get_object_torrent` | `?torrent` is an RGW/legacy extension |
+

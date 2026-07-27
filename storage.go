@@ -167,3 +167,46 @@ type Storage interface {
 	CompleteMultipartUpload(ctx context.Context, req *CompleteMultipartUploadRequest) (*CompleteMultipartUploadResponse, error)
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }
+
+// ConditionalDeleter is the optional capability of deleting an object only if
+// it still matches a condition. Backends implement it by evaluating cond under
+// the same lock that serializes writes to the key, so the check and the delete
+// are atomic; a backend that cannot do that must not implement it, and the S3
+// layer rejects conditional deletes against it rather than racing.
+//
+// DeleteObjectIf returns ErrObjectNotFound when the object is absent (deletion
+// is idempotent: the caller reports that as success) and ErrPreconditionFailed
+// when the object is present but cond does not hold.
+type ConditionalDeleter interface {
+	DeleteObjectIf(ctx context.Context, bucket, key string, cond Conditions) error
+}
+
+// BucketOwnership is the optional capability of recording which principal
+// created a bucket.
+//
+// Ownership is what makes a bucket belong to someone: it decides who may reach
+// it when no explicit grant says otherwise, and it is what tells a re-create by
+// its owner (idempotent, as in S3's default region) from one by a stranger
+// (BucketAlreadyExists). A backend that does not implement it has unowned
+// buckets, and the S3 layer falls back to grants alone — which is how this
+// server behaved before ownership existed.
+type BucketOwnership interface {
+	// CreateBucketOwned creates a bucket owned by owner, reporting
+	// ErrBucketAlreadyExists exactly as CreateBucket does.
+	CreateBucketOwned(ctx context.Context, bucket string, owner Owner) error
+	// BucketOwner returns the recorded owner, zero when the bucket predates
+	// ownership or was created without an identity; ErrBucketNotFound when the
+	// bucket is absent.
+	BucketOwner(ctx context.Context, bucket string) (Owner, error)
+}
+
+// ObjectAttributer is the optional capability of describing an object without
+// opening it, including the part layout a completed multipart object was
+// assembled from. It backs GetObjectAttributes and reading a single part with
+// ?partNumber=N; a backend that does not retain the layout can still implement
+// it by reporting Parts as nil, which reads as "written by a single PUT".
+//
+// It returns ErrBucketNotFound / ErrObjectNotFound the way GetObject does.
+type ObjectAttributer interface {
+	ObjectAttributes(ctx context.Context, bucket, key string) (*ObjectAttributes, error)
+}
