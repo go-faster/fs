@@ -169,3 +169,56 @@ func TestEncryptionValidate(t *testing.T) {
 	// Retired keys without a current one is a misconfiguration, not a rotation.
 	require.Error(t, EncryptionConfig{PreviousKeyFiles: []string{path}}.Validate())
 }
+
+// TestMasterKeyPathIsRelativeToConfig: a config and the key it names travel
+// together, so the pair must work from any working directory. This broke a
+// consumer that checked the repository out as a subdirectory and ran from its
+// own root — the server failed to start, and failed late.
+func TestMasterKeyPathIsRelativeToConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	raw, err := sse.NewKey()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "master.key"), []byte(hex.EncodeToString(raw)), 0o600))
+
+	cfgPath := filepath.Join(dir, "server.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(
+		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n  type: \"filesystem\"\n"+
+			"observability:\n  service_name: \"go-faster/fs\"\n"+
+			"encryption:\n  master_key_file: \"master.key\"\n"), 0o600))
+
+	// Load from a working directory that is not the config's.
+	cfg, err := LoadConfig(cfgPath)
+	require.NoError(t, err)
+
+	kr, err := cfg.Encryption.Keyring()
+	require.NoError(t, err, "the key beside the config was not found")
+	require.Equal(t, sse.MasterKeyID(raw), kr.CurrentID())
+}
+
+// TestMasterKeyAbsolutePathUnchanged: an absolute path means what it says.
+func TestMasterKeyAbsolutePathUnchanged(t *testing.T) {
+	dir := t.TempDir()
+
+	raw, err := sse.NewKey()
+	require.NoError(t, err)
+
+	keyPath := filepath.Join(dir, "abs.key")
+	require.NoError(t, os.WriteFile(keyPath, []byte(hex.EncodeToString(raw)), 0o600))
+
+	cfgPath := filepath.Join(t.TempDir(), "server.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(
+		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n  type: \"filesystem\"\n"+
+			"observability:\n  service_name: \"go-faster/fs\"\n"+
+			// Single-quoted: YAML does not read backslash escapes there, and on
+			// Windows an absolute path is full of them.
+			"encryption:\n  master_key_file: '"+keyPath+"'\n"), 0o600))
+
+	cfg, err := LoadConfig(cfgPath)
+	require.NoError(t, err)
+	require.Equal(t, keyPath, cfg.Encryption.MasterKeyFile)
+
+	kr, err := cfg.Encryption.Keyring()
+	require.NoError(t, err)
+	require.Equal(t, sse.MasterKeyID(raw), kr.CurrentID())
+}

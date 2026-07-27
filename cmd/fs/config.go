@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -545,6 +546,8 @@ func LoadConfig(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, errors.Wrap(err, "parse config")
 	}
+
+	cfg.Encryption.resolvePaths(filepath.Dir(path))
 
 	return cfg, nil
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-faster/errors"
@@ -37,6 +38,30 @@ type EncryptionConfig struct {
 	// encryption configuration. Empty leaves encryption per request and per
 	// bucket.
 	DefaultAlgorithm string `yaml:"default_algorithm,omitempty"`
+}
+
+// resolvePaths makes relative key paths relative to the config file rather
+// than to the working directory.
+//
+// A key path is written next to the config that names it, so the pair has to
+// travel together: a config consumed from another directory — a test harness
+// checking this repository out as a subdirectory, an operator running the
+// binary from elsewhere — would otherwise fail to start, and fail late, at the
+// point where it tries to read a key. Absolute paths are left alone.
+func (c *EncryptionConfig) resolvePaths(dir string) {
+	if dir == "" || dir == "." {
+		return
+	}
+
+	if c.MasterKeyFile != "" && !filepath.IsAbs(c.MasterKeyFile) {
+		c.MasterKeyFile = filepath.Join(dir, c.MasterKeyFile)
+	}
+
+	for i, p := range c.PreviousKeyFiles {
+		if p != "" && !filepath.IsAbs(p) {
+			c.PreviousKeyFiles[i] = filepath.Join(dir, p)
+		}
+	}
 }
 
 // masterKeyEnv overrides EncryptionConfig.MasterKeyFile. It exists because a

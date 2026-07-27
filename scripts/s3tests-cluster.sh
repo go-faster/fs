@@ -128,6 +128,7 @@ write_config() {
     -e "s|@DISK@|$dir/disk0|g" \
     -e "s|@ETCD@|$(etcd_endpoint)|g" \
     -e "s|@ETCD_PREFIX@|$ETCD_PREFIX|g" \
+    -e "s|@MASTER_KEY@|$REPO/.github/s3tests/master.key|g" \
     "$REPO/.github/s3tests/cluster/node.yaml.tmpl" > "$dir/config.yaml"
 }
 
