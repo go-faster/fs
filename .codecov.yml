@@ -20,7 +20,7 @@ coverage:
   status:
     # Informational. A coverage delta is worth seeing on a pull request and is
     # not worth failing one over — this repository gates on tests, lint,
-    # conformance and the s3-tests allow-list, all of which say something
+    # conformance and the s3-tests known-failures list, all of which say something
     # sharper about a change than a percentage does.
     project: false
     patch: false

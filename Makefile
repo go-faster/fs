@@ -44,7 +44,7 @@ generate:
 	go generate ./...
 .PHONY: generate
 
-# Regenerate docs/CONFORMANCE.md from the s3-tests allow-list.
+# Regenerate docs/CONFORMANCE.md from the s3-tests known-failures list.
 compat:
 	go run ./scripts/gencompat
 .PHONY: compat

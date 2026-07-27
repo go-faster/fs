@@ -3,15 +3,18 @@ name: s3tests
 # Runs the ceph/s3-tests conformance suite (https://github.com/ceph/s3-tests)
 # against a freshly built server.
 #
-# Two modes:
-#   * On pull requests and pushes to main we run only the allow-listed tests
-#     (.github/s3tests/allow.txt) and GATE on them staying green. This is the
-#     curated set of behaviour the server is expected to implement correctly.
-#   * On a weekly schedule (and manual dispatch) we additionally run the FULL
-#     suite for information only, uploading the JUnit report so newly passing
-#     tests can be promoted into the allow-list. That run never fails the job.
+# The WHOLE suite runs on every pull request — it takes about 80 seconds — and
+# the gate is a deny-list: .github/s3tests/known-failures.txt names the tests
+# expected to fail, and the job fails if anything outside it fails *or* if
+# anything inside it passes.
 #
-# See .github/s3tests/README.md for how to grow the allow-list.
+# Running the full suite and gating on a deny-list is what makes the list able
+# to shrink on its own. An allow-list only grows: a newly passing test stays
+# invisible until someone runs the suite by hand, and a newly failing test
+# outside the list is never noticed. Both now show up on the pull request that
+# caused them.
+#
+# See .github/s3tests/README.md.
 
 on:
   push:
@@ -25,7 +28,8 @@ permissions:
   contents: read
 
 env:
-  # Pinned for reproducibility; bump deliberately and re-baseline the allow-list.
+  # Pinned for reproducibility; bump deliberately and re-baseline the
+  # known-failures list (see scripts/s3tests).
   S3TESTS_REF: 5522d1c351f75bc00ae0f64f742f3f095f5939d9
   S3_PORT: '8077'
 
@@ -46,7 +50,7 @@ jobs:
         run: |
           go run ./scripts/gencompat
           if ! git diff --exit-code docs/CONFORMANCE.md; then
-            echo "::error::docs/CONFORMANCE.md is stale — run 'make compat' after editing the allow-list."
+            echo "::error::docs/CONFORMANCE.md is stale — run 'make compat' after editing known-failures.txt."
             exit 1
           fi
 
@@ -89,29 +93,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run allow-listed tests (gating)
+      - name: Run the suite
         env:
           S3TEST_CONF: ${{ github.workspace }}/.github/s3tests/s3tests.conf
           AWS_MAX_ATTEMPTS: '2'
         working-directory: s3-tests
         run: |
-          mapfile -t tests < <(sed 's/#.*//' "${GITHUB_WORKSPACE}/.github/s3tests/allow.txt" \
-            | sed '/^[[:space:]]*$/d')
-          echo "Running ${#tests[@]} allow-listed tests"
-          python -m pytest -p no:cacheprovider -q --no-header \
-            --junit-xml="${GITHUB_WORKSPACE}/s3tests-allow.xml" "${tests[@]}"
+          # The suite is expected to have failures — the gate is the next step,
+          # which decides which of them are allowed.
+          python -m pytest -p no:cacheprovider -q --no-header --tb=line \
+            --junit-xml="${GITHUB_WORKSPACE}/s3tests.xml" \
+            s3tests/functional/test_s3.py || true
 
-      - name: Run full suite (informational)
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        continue-on-error: true
-        env:
-          S3TEST_CONF: ${{ github.workspace }}/.github/s3tests/s3tests.conf
-          AWS_MAX_ATTEMPTS: '2'
-        working-directory: s3-tests
+          python -m pytest -p no:cacheprovider -q --no-header --tb=line \
+            --junit-xml="${GITHUB_WORKSPACE}/s3tests-headers.xml" \
+            s3tests/functional/test_headers.py || true
+
+      - name: Gate on the known-failures list
         run: |
-          python -m pytest -p no:cacheprovider -q --no-header --tb=no \
-            --junit-xml="${GITHUB_WORKSPACE}/s3tests-full.xml" \
-            s3tests/functional/test_s3.py s3tests/functional/test_headers.py || true
+          go run ./scripts/s3tests check \
+            --ratchet .github/s3tests/known-failures.txt \
+            --report s3tests.xml \
+            --report s3tests-headers.xml
 
       - name: Upload reports
         if: always()
@@ -119,7 +122,7 @@ jobs:
         with:
           name: s3tests-reports
           path: |
-            s3tests-*.xml
+            s3tests*.xml
             fs-server.log
           if-no-files-found: ignore
 

@@ -10,10 +10,11 @@ name: s3tests-cluster
 # (storagetest.Run) covers the fs.Storage contract; it cannot see HTTP status
 # codes, headers, SigV4 or real boto3 clients, which is what this adds.
 #
-# It gates on .github/s3tests/allow.txt minus
-# .github/s3tests/cluster/known-failures.txt — tests that pass single-node but
-# not yet in cluster mode. That file is a bug list, not a scope statement: it
-# should only ever shrink. See .github/s3tests/README.md.
+# It runs the same whole suite the single-node job runs and gates on the union
+# of .github/s3tests/known-failures.txt and
+# .github/s3tests/cluster/known-failures.txt — the second naming tests that pass
+# single-node but not yet in cluster mode. That file is a bug list, not a scope
+# statement: it should only ever shrink. See .github/s3tests/README.md.
 
 on:
   push:
@@ -83,58 +84,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run allow-listed tests (gating)
+      - name: Run the suite against the cluster
         env:
           S3TEST_CONF: ${{ github.workspace }}/.github/s3tests/cluster/s3tests.conf
           AWS_MAX_ATTEMPTS: '2'
         working-directory: s3-tests
         run: |
-          # Strip comments (whole-line and trailing) and surrounding whitespace,
-          # then sort under LC_ALL=C: comm requires both inputs in the same
-          # collation order and bails on locale-sorted input. Real temp files,
-          # not process substitution — comm is unreliable reading two pipes.
-          strip() {
-            sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' "$1" \
-              | sed '/^$/d' | LC_ALL=C sort -u > "$2"
-          }
+          python -m pytest -p no:cacheprovider -q --no-header --tb=line \
+            --junit-xml="${GITHUB_WORKSPACE}/s3tests-cluster.xml" \
+            s3tests/functional/test_s3.py || true
 
-          strip "${GITHUB_WORKSPACE}/.github/s3tests/allow.txt" /tmp/allow.lst
-          strip "${GITHUB_WORKSPACE}/.github/s3tests/cluster/known-failures.txt" /tmp/known.lst
+          python -m pytest -p no:cacheprovider -q --no-header --tb=line \
+            --junit-xml="${GITHUB_WORKSPACE}/s3tests-cluster-headers.xml" \
+            s3tests/functional/test_headers.py || true
 
-          # A known-failure absent from allow.txt means the two files have
-          # drifted; fail loudly rather than silently gating on less.
-          orphans=$(LC_ALL=C comm -13 /tmp/allow.lst /tmp/known.lst)
-          if [ -n "$orphans" ]; then
-            echo "::error::known-failures.txt lists tests absent from allow.txt:"
-            echo "$orphans"
-            exit 1
-          fi
-
-          mapfile -t tests < <(LC_ALL=C comm -23 /tmp/allow.lst /tmp/known.lst)
-          excluded=$(wc -l < /tmp/known.lst)
-          echo "Running ${#tests[@]} allow-listed tests (${excluded} excluded as known cluster failures)"
-
-          python -m pytest -p no:cacheprovider -q --no-header \
-            --junit-xml="${GITHUB_WORKSPACE}/s3tests-cluster-allow.xml" "${tests[@]}"
-
-      - name: Run known failures (informational)
-        # Surfaces any that have started passing, so known-failures.txt can
-        # shrink. Never fails the job.
-        if: always()
-        continue-on-error: true
-        env:
-          S3TEST_CONF: ${{ github.workspace }}/.github/s3tests/cluster/s3tests.conf
-          AWS_MAX_ATTEMPTS: '2'
-        working-directory: s3-tests
+      - name: Gate on both known-failures lists
         run: |
-          mapfile -t known < <(sed 's/#.*//' \
-            "${GITHUB_WORKSPACE}/.github/s3tests/cluster/known-failures.txt" \
-            | sed '/^[[:space:]]*$/d')
-
-          [ "${#known[@]}" -eq 0 ] && { echo "no known failures left"; exit 0; }
-
-          python -m pytest -p no:cacheprovider -q --no-header --tb=no \
-            --junit-xml="${GITHUB_WORKSPACE}/s3tests-cluster-known.xml" "${known[@]}" || true
+          # A client must not be able to tell how many nodes are behind the
+          # endpoint, so the cluster is held to the single-node list — but it
+          # does not *own* it: a test that fails on one node and passes on
+          # three is not a cluster bug. The cluster file is the one this job
+          # ratchets down, and every line in it is a bug.
+          go run ./scripts/s3tests check \
+            --known .github/s3tests/known-failures.txt \
+            --ratchet .github/s3tests/cluster/known-failures.txt \
+            --report s3tests-cluster.xml \
+            --report s3tests-cluster-headers.xml
 
       - name: Collect node logs
         if: always()
@@ -146,7 +121,7 @@ jobs:
         with:
           name: s3tests-cluster-reports
           path: |
-            s3tests-cluster-*.xml
+            s3tests-cluster*.xml
             cluster-nodes.log
           if-no-files-found: ignore
 

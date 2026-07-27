@@ -31,5 +31,7 @@ dist
 /internal/adminhandler/frontend/dist/*
 !/internal/adminhandler/frontend/dist/.gitkeep
 /fs
+# Built by `go build ./scripts/s3tests`, which is easy to run from the repo root.
+/s3tests
 
 helm/*.tgz
