@@ -214,6 +214,34 @@ func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
 	return s.storage.DeleteObject(ctx, bucket, key)
 }
 
+// completedUpload reports the result of an already-finished completion when
+// the object at the request's key was produced by the request's upload, making
+// CompleteMultipartUpload idempotent.
+//
+// It answers only for that exact upload id: an object written by a later PUT,
+// or completed from a different upload, is not this caller's result, and a
+// stale completion must still fail.
+func (s Service) completedUpload(
+	ctx context.Context, req *fs.CompleteMultipartUploadRequest,
+) (*fs.CompleteMultipartUploadResponse, bool) {
+	attributer, ok := s.storage.(fs.ObjectAttributer)
+	if !ok {
+		return nil, false
+	}
+
+	attrs, err := attributer.ObjectAttributes(ctx, req.Bucket, req.Key)
+	if err != nil || attrs.UploadID == "" || attrs.UploadID != req.UploadID {
+		return nil, false
+	}
+
+	return &fs.CompleteMultipartUploadResponse{
+		Location: "/" + req.Bucket + "/" + req.Key,
+		Bucket:   req.Bucket,
+		Key:      req.Key,
+		ETag:     attrs.ETag,
+	}, true
+}
+
 // ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
 // when it can describe an object without opening it, and reporting
 // ErrUnsupportedOperation when it cannot.
@@ -351,6 +379,18 @@ func (s Service) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteMu
 
 	uploaded, err := s.storage.ListParts(ctx, req.Bucket, req.Key, req.UploadID)
 	if err != nil {
+		// The upload is gone. That is either a stale completion or — far more
+		// often — a retry of one that already succeeded and whose response the
+		// client never saw. SDKs retry completions, so answering NoSuchUpload
+		// for the second call turns a recovered network blip into a hard
+		// failure. If the object at this key came from exactly this upload, the
+		// work is already done: report it as done.
+		if errors.Is(err, fs.ErrUploadNotFound) {
+			if done, ok := s.completedUpload(ctx, req); ok {
+				return done, nil
+			}
+		}
+
 		return nil, errors.Wrap(err, "list parts")
 	}
 

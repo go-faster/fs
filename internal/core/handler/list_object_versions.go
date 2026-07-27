@@ -134,6 +134,11 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 
 	if truncated {
 		resp.NextKeyMarker = maybeEncode(nextKeyMarker)
+		// Both markers or neither: a paginating client feeds NextVersionIdMarker
+		// straight back as VersionIdMarker, and an omitted one arrives as a null
+		// it refuses to send. Every version here is the same synthetic "null",
+		// so that is what the marker says.
+		resp.NextVersionIDMarker = unversionedVersionID
 	}
 
 	writeXML(ctx, w, r, resp)

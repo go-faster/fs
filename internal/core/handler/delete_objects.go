@@ -11,6 +11,10 @@ import (
 	"github.com/go-faster/fs/internal/s3err"
 )
 
+// maxDeleteObjects is the number of keys S3 accepts in one DeleteObjects
+// request.
+const maxDeleteObjects = 1000
+
 // DeleteObjectsRequest represents the XML request body for deleting multiple objects.
 type DeleteObjectsRequest struct {
 	XMLName xml.Name         `xml:"Delete"`
@@ -94,6 +98,15 @@ func (h *handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 	var req DeleteObjectsRequest
 	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil {
 		renderError(ctx, w, r, err)
+		return
+	}
+
+	// S3 caps a batch delete at 1000 keys. Silently deleting more would leave a
+	// client believing a request it should have had to split was accepted whole.
+	if len(req.Objects) > maxDeleteObjects {
+		renderAPIError(ctx, w, r, s3err.MalformedXML,
+			errors.Errorf("%d keys exceeds the %d-key limit", len(req.Objects), maxDeleteObjects))
+
 		return
 	}
 

@@ -61,6 +61,7 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 	if sc != nil {
 		resp.ETag = sc.ETag
 		resp.Metadata = sc.metadata()
+		resp.TagCount = len(sc.Tags)
 	}
 
 	if resp.ETag == "" {

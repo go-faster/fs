@@ -262,6 +262,7 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		LastModified: sc.Modified,
 		ETag:         sc.ETag,
 		Metadata:     sc.ObjectMetadata(),
+		TagCount:     len(sc.Tags),
 	}, nil
 }
 
@@ -439,5 +440,6 @@ func (s *Storage) ObjectAttributes(ctx context.Context, bucket, key string) (*fs
 		Size:         sc.Size,
 		LastModified: sc.Modified,
 		Parts:        append([]fs.ObjectPart(nil), sc.Parts...),
+		UploadID:     sc.UploadID,
 	}, nil
 }

@@ -291,6 +291,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		Owner:    rec.Owner,
 		ETag:     etag,
 		Parts:    layout,
+		UploadID: req.UploadID,
 	})
 
 	l.Unlock()

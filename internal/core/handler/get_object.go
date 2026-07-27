@@ -3,6 +3,8 @@ package handler
 import (
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/go-faster/errors"
@@ -63,6 +65,17 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 	}
 
 	w.Header().Set("Accept-Ranges", "bytes")
+
+	// S3 reports how many tags an object carries so a client can tell "no tags"
+	// from "tags I have not fetched" without a second request.
+	if resp.TagCount > 0 {
+		w.Header().Set("x-amz-tagging-count", strconv.Itoa(resp.TagCount))
+	}
+
+	// response-* query parameters override the stored representation headers,
+	// which is how a presigned URL controls what the browser does with the
+	// object it points at.
+	applyResponseOverrides(w.Header(), r.URL.Query())
 
 	// A range against a zero-length object is unsatisfiable in S3. ServeContent
 	// deliberately ignores it instead ("some clients add a Range header to
@@ -230,4 +243,28 @@ func (s *streamSeeker) Read(p []byte) (int, error) {
 	s.off += int64(n)
 
 	return n, err //nolint:wrapcheck // Passing the reader's error (incl. io.EOF) through unchanged.
+}
+
+// responseOverrides maps the response-* query parameters onto the headers they
+// replace.
+var responseOverrides = map[string]string{
+	"response-content-type":        "Content-Type",
+	"response-content-language":    "Content-Language",
+	"response-expires":             "Expires",
+	"response-cache-control":       "Cache-Control",
+	"response-content-disposition": "Content-Disposition",
+	"response-content-encoding":    "Content-Encoding",
+}
+
+// applyResponseOverrides replaces representation headers with the values the
+// request asked for. An empty value is still an override — a caller asking for
+// an empty Content-Disposition means it.
+func applyResponseOverrides(h http.Header, q url.Values) {
+	for param, header := range responseOverrides {
+		if !q.Has(param) {
+			continue
+		}
+
+		h.Set(header, q.Get(param))
+	}
 }

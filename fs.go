@@ -46,6 +46,10 @@ type ObjectMetadata struct {
 	CacheControl       string
 	ContentDisposition string
 	ContentEncoding    string
+	// Expires is the raw Expires header value, stored and returned verbatim.
+	// S3 keeps whatever the client sent rather than reformatting it, and a
+	// client that round-trips the header expects its own bytes back.
+	Expires string
 	// UserMetadata holds x-amz-meta-* pairs, keyed by the lowercase name
 	// without the prefix (e.g. "color" for x-amz-meta-color).
 	UserMetadata map[string]string
@@ -54,7 +58,7 @@ type ObjectMetadata struct {
 // IsZero reports whether no metadata field is set.
 func (m ObjectMetadata) IsZero() bool {
 	return m.ContentType == "" && m.CacheControl == "" && m.ContentDisposition == "" &&
-		m.ContentEncoding == "" && len(m.UserMetadata) == 0
+		m.ContentEncoding == "" && m.Expires == "" && len(m.UserMetadata) == 0
 }
 
 // Tag is a single object tag.
@@ -98,6 +102,10 @@ type GetObjectResponse struct {
 	LastModified time.Time
 	ETag         string
 	Metadata     ObjectMetadata
+	// TagCount is how many tags the object carries, reported on GET and HEAD
+	// as x-amz-tagging-count. Backends fill it from metadata they already read;
+	// zero means untagged (the header is then omitted).
+	TagCount int
 }
 
 // MultipartUpload represents an in-progress multipart upload.
@@ -144,6 +152,11 @@ type ObjectAttributes struct {
 	ETag         string
 	Size         int64
 	LastModified time.Time
+	// UploadID names the multipart upload this object was completed from, when
+	// it was. It is what lets a retried CompleteMultipartUpload be recognized
+	// as a retry rather than answered with NoSuchUpload; empty for a single
+	// PUT.
+	UploadID string
 	// Parts is the completed part layout in ascending part-number order, or
 	// nil when the object was written by a single PUT.
 	Parts []ObjectPart

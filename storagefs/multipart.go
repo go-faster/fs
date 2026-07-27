@@ -449,6 +449,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	// this is the only remaining record of where the part boundaries are.
 	sc := newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)
 	sc.Parts = layout
+	sc.UploadID = req.UploadID
 
 	if err := s.writeSidecar(meta.Bucket, sc); err != nil {
 		return nil, err

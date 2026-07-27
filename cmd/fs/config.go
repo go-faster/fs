@@ -183,6 +183,10 @@ type ServerConfig struct {
 	// HealthPath is the path for health check endpoint
 	HealthPath string `yaml:"health_path"`
 
+	// Region names the location reported for buckets (GetBucketLocation).
+	// Empty is the S3 default region, reported as an empty constraint.
+	Region string `yaml:"region,omitempty"`
+
 	// TLS, if both files are set, serves HTTPS with hot-reloadable certificates.
 	TLS TLSConfig `yaml:"tls,omitempty"`
 }

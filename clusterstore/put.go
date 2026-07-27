@@ -42,6 +42,9 @@ type PutRequest struct {
 	// the sidecar so the object can still be described and read a part at a
 	// time; nil for a single PUT.
 	Parts []fs.ObjectPart
+	// UploadID names the completion that produced the object; empty for a
+	// single PUT.
+	UploadID string
 }
 
 // Put writes an object at its bucket's scheme, acknowledging only once the
@@ -149,11 +152,13 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		CacheControl:       req.Metadata.CacheControl,
 		ContentDisposition: req.Metadata.ContentDisposition,
 		ContentEncoding:    req.Metadata.ContentEncoding,
+		Expires:            req.Metadata.Expires,
 		UserMetadata:       req.Metadata.UserMetadata,
 		Tags:               req.Tags,
 		ACL:                req.ACL,
 		Owner:              req.Owner,
 		Parts:              req.Parts,
+		UploadID:           req.UploadID,
 	}
 
 	// Commit: replace the sidecar on every quorum target. This is what makes

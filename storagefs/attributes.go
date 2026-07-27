@@ -48,6 +48,7 @@ func (s *Storage) ObjectAttributes(_ context.Context, bucket, key string) (*fs.O
 
 	if sc, err := s.readSidecar(bucket, key); err == nil && sc != nil {
 		attrs.Parts = sc.Parts
+		attrs.UploadID = sc.UploadID
 	}
 
 	return attrs, nil

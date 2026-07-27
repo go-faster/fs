@@ -211,8 +211,10 @@ func TestVerifyPresigned_TooLongExpiry(t *testing.T) {
 
 	preq.Host = u.Host
 
+	// An expiry beyond the 7-day maximum is refused as expired, not as
+	// malformed: the URL parses and is signed, it just grants nothing.
 	_, err = newVerifier(now).Verify(preq)
-	require.ErrorIs(t, err, ErrMalformedSignature)
+	require.ErrorIs(t, err, ErrRequestExpired)
 }
 
 func TestVerify_MissingSignature(t *testing.T) {

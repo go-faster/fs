@@ -208,8 +208,15 @@ func (v *Verifier) verifyPresigned(r *http.Request) (*Result, error) {
 	}
 
 	expires, err := strconv.Atoi(q.Get("X-Amz-Expires"))
-	if err != nil || expires <= 0 || time.Duration(expires)*time.Second > maxPresignExpiry {
+	if err != nil {
 		return nil, errors.Wrap(ErrMalformedSignature, "X-Amz-Expires")
+	}
+
+	// A lifetime outside the permitted range is not a malformed request — the
+	// URL parses, it is signed, and it simply grants nothing. S3 answers it the
+	// way it answers a URL whose window has closed: 403, not 400.
+	if expires <= 0 || time.Duration(expires)*time.Second > maxPresignExpiry {
+		return nil, errors.Wrap(ErrRequestExpired, "X-Amz-Expires out of range")
 	}
 
 	if v.clock().After(amzTime.Add(time.Duration(expires) * time.Second)) {

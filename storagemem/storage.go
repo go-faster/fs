@@ -40,6 +40,9 @@ type object struct {
 	// parts is the layout a multipart object was assembled from, retained
 	// after completion; nil for a single PUT.
 	parts []fs.ObjectPart
+	// uploadID names the completion that produced the object, so a retried
+	// completion can be recognized; empty for a single PUT.
+	uploadID string
 }
 
 type bucket struct {
@@ -373,6 +376,7 @@ func (s *Storage) GetObject(ctx context.Context, bucketName, key string) (*fs.Ge
 		LastModified: obj.lastModified,
 		ETag:         obj.etag,
 		Metadata:     obj.metadata,
+		TagCount:     len(obj.tags),
 	}, nil
 }
 
@@ -626,6 +630,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		acl:          upload.acl,
 		owner:        upload.owner,
 		parts:        layout,
+		uploadID:     req.UploadID,
 	}
 
 	delete(s.uploads, req.UploadID)
@@ -666,5 +671,6 @@ func (s *Storage) ObjectAttributes(_ context.Context, bucketName, key string) (*
 		Size:         int64(len(obj.data)),
 		LastModified: obj.lastModified,
 		Parts:        append([]fs.ObjectPart(nil), obj.parts...),
+		UploadID:     obj.uploadID,
 	}, nil
 }
