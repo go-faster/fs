@@ -13,7 +13,7 @@
 # (#98 ranged GET, #99 conditional GET, #100 zero-byte Content-Length,
 # #101 chunked PutObject), all fixed.
 
-# --- Object versioning on clusterstore (12) -----------------------------------
+# --- Object versioning on clusterstore (19) -----------------------------------
 #
 # clusterstore records a bucket's versioning state but does not keep object
 # versions: it implements the bucket half of fs.Versioner and neither
@@ -37,6 +37,13 @@ s3tests/functional/test_s3.py::test_versioning_copy_obj_version
 s3tests/functional/test_s3.py::test_versioning_obj_list_marker
 s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite_suspended
 s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_removal
+s3tests/functional/test_s3.py::test_versioning_multi_object_delete
+s3tests/functional/test_s3.py::test_versioning_multi_object_delete_with_marker
+s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove
+s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove_head
+s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_all
+s3tests/functional/test_s3.py::test_versioning_obj_create_versions_remove_special_names
+s3tests/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite
 
 # --- Bucket default encryption on clusterstore (4) ---------------------------
 #
