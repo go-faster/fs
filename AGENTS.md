@@ -18,6 +18,42 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for the layered design, package
 responsibilities, request lifecycle, and extension points. The summary below
 is the working checklist; ARCHITECTURE.md is the reference.
 
+## Pre-production: break things freely
+
+There is no released version and no deployment to be compatible with. Until
+v1.0 you may change anything, and you should prefer the correct design over the
+compatible one:
+
+- **On-disk formats.** Change them. Bump the version stamp and let the next
+  start discard and rebuild — that is what the stamps are for. Do not write a
+  migrator, a dual-read path, or a compatibility shim.
+- **Go API.** `fs.Storage`, `server.Config`, the domain types and the public
+  packages may all take breaking changes. Additive-only is a v1.0 rule, not a
+  rule for now.
+- **Config, flags, metric and admin-API shapes.** Rename or remove them.
+- **Wire behavior that is wrong.** Fix it to match AWS rather than preserving
+  our own past mistake.
+
+Prefer one clean change over a compatible one plus a cleanup that never comes.
+A PR that adds a shim to avoid a rebuild is usually the wrong PR.
+
+What this does **not** license:
+
+- **Silent misreads.** A format change must fail loudly or rebuild — never
+  interpret old bytes as new ones. Breaking is fine; corrupting is not.
+- **Skipping the gates.** `make test`, the linter and the s3-tests
+  known-failures list apply exactly as before. Never *add* a line to that list
+  to get CI green.
+- **Stale docs.** "Keeping documentation current" below still binds, and binds
+  harder here: if you break something a doc describes, fix the doc in the same
+  change.
+- **Unannounced operator pain.** A change that forces a rebuild or a config
+  edit is fine, but say so in the PR — a rolling upgrade walks every node
+  through it.
+
+This section expires at v1.0, when on-disk formats become versioned with
+automated resumable migration and the public API becomes additive-only.
+
 ## Layout
 
 - `fs.go`, `storage.go`, `errors.go` — root package: domain types
