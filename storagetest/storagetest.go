@@ -77,6 +77,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"PutObject/BucketNotFound":              testPutObjectBucketNotFound,
 	"PutObject/EncryptionNeverIgnored":      testEncryptionNeverIgnored,
 	"PutObject/EncryptionUnknownAlgorithm":  testEncryptionUnknownAlgorithmRefused,
+	"Multipart/EncryptionNeverIgnored":      testMultipartEncryptionNeverIgnored,
 	"GetObject":                             testGetObject,
 	"GetObject/BucketNotFound":              testGetObjectBucketNotFound,
 	"GetObject/ObjectNotFound":              testGetObjectObjectNotFound,
@@ -1828,6 +1829,10 @@ func testACLObjectSetNotFound(t *testing.T, storage fs.Storage) {
 	require.ErrorIs(t, storage.SetObjectACL(ctx, "missing", testObjectKey, fs.ACLPublicRead), fs.ErrBucketNotFound)
 }
 
+// encryptedMultipartKey is the object the multipart encryption contract
+// writes.
+const encryptedMultipartKey = "big"
+
 // testEncryptionNeverIgnored holds every backend to the same rule: a write
 // asking for server-side encryption is either encrypted or refused, never
 // stored in the clear and reported as done.
@@ -1838,12 +1843,12 @@ func testACLObjectSetNotFound(t *testing.T, storage fs.Storage) {
 // downstream notices that the encryption a client asked for did not happen.
 func testEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
 	ctx := t.Context()
-	require.NoError(t, storage.CreateBucket(ctx, "bucket"))
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
 	body := []byte("should never be stored in the clear")
 
 	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
-		Reader: bytes.NewReader(body), Bucket: "bucket", Key: "obj", Size: int64(len(body)),
+		Reader: bytes.NewReader(body), Bucket: testBucket, Key: "obj", Size: int64(len(body)),
 		ServerSideEncryption: "AES256",
 	})
 	if err != nil {
@@ -1851,7 +1856,7 @@ func testEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
 		// been written.
 		require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
 
-		_, err = storage.GetObject(ctx, "bucket", "obj")
+		_, err = storage.GetObject(ctx, testBucket, "obj")
 		require.ErrorIs(t, err, fs.ErrObjectNotFound,
 			"a refused encrypted write must not leave an object behind")
 
@@ -1860,7 +1865,7 @@ func testEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
 
 	// Accepted: the backend must report the object as encrypted, and must
 	// still return the plaintext.
-	resp, err := storage.GetObject(ctx, "bucket", "obj")
+	resp, err := storage.GetObject(ctx, testBucket, "obj")
 	require.NoError(t, err)
 
 	defer func() { _ = resp.Reader.Close() }()
@@ -1877,11 +1882,60 @@ func testEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
 // must never be accepted, whatever the backend does about AES256.
 func testEncryptionUnknownAlgorithmRefused(t *testing.T, storage fs.Storage) {
 	ctx := t.Context()
-	require.NoError(t, storage.CreateBucket(ctx, "bucket"))
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
 
 	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
-		Reader: bytes.NewReader([]byte("x")), Bucket: "bucket", Key: "obj", Size: 1,
+		Reader: bytes.NewReader([]byte("x")), Bucket: testBucket, Key: "obj", Size: 1,
 		ServerSideEncryption: "aws:kms",
 	})
 	require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
+}
+
+// testMultipartEncryptionNeverIgnored is the same contract as
+// testEncryptionNeverIgnored, on the path a large object actually takes.
+//
+// Multipart is where ignoring the field is easiest: the algorithm is named
+// when the upload starts and the bytes are written by later calls that never
+// see it, so a backend can drop it without anything looking wrong until
+// someone reads the disk.
+func testMultipartEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	up, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+		Bucket: testBucket, Key: encryptedMultipartKey, ServerSideEncryption: "AES256",
+	})
+	if err != nil {
+		require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
+		return
+	}
+
+	body := bytes.Repeat([]byte("multipart payload;"), 500)
+
+	part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
+		Bucket: testBucket, Key: encryptedMultipartKey, UploadID: up.UploadID,
+		PartNumber: 1, Reader: bytes.NewReader(body), Size: int64(len(body)),
+	})
+	require.NoError(t, err)
+
+	resp, err := storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket: testBucket, Key: encryptedMultipartKey, UploadID: up.UploadID,
+		Parts: []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.ServerSideEncryption,
+		"the upload was accepted as encrypted but the completion does not report an algorithm")
+
+	got, err := storage.GetObject(ctx, testBucket, encryptedMultipartKey)
+	require.NoError(t, err)
+
+	defer func() { _ = got.Reader.Close() }()
+
+	require.NotEmpty(t, got.ServerSideEncryption,
+		"the completed object does not report the encryption it was written with")
+
+	data, err := io.ReadAll(got.Reader)
+	require.NoError(t, err)
+	require.Equal(t, body, data)
+	require.Equal(t, int64(len(body)), got.Size)
 }

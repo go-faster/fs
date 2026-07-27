@@ -284,6 +284,14 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	rt.usage = newUsageReporter(client, etcdCfg, lg)
 
+	keyring, err := cfg.Encryption.Keyring()
+	if err != nil {
+		_ = listener.Close()
+		_ = rt.close()
+
+		return nil, errors.Wrap(err, "server-side encryption")
+	}
+
 	coord, err := clusterstore.New(clusterstore.Config{
 		Topology: source,
 		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, nil).WithLocalIndex(rt.indexPages),
@@ -292,7 +300,8 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 			lg.Warn("Async replication remainder failed (repair will complete it)",
 				zap.String("bucket", bucket), zap.String("key", key), zap.Error(err))
 		},
-		Usage: rt.usage,
+		Usage:   rt.usage,
+		Keyring: keyring,
 	})
 	if err != nil {
 		_ = listener.Close()

@@ -474,3 +474,151 @@ func TestMultipartPartsStagedEncrypted(t *testing.T) {
 	require.False(t, bytes.Contains(staged, []byte("staged secret")),
 		"an in-progress part is readable plaintext on disk")
 }
+
+// TestRotateKeysRewrapsWithoutTouchingBodies is the drill an operator runs:
+// after a rotation every object is on the new key, and not one body was
+// rewritten.
+func TestRotateKeysRewrapsWithoutTouchingBodies(t *testing.T) {
+	oldKey := newMasterKey(t)
+	s, root := encryptedStore(t, oldKey)
+
+	bodies := map[string][]byte{
+		"a": bytes.Repeat([]byte("first;"), 3000),
+		"b": bytes.Repeat([]byte("second;"), 100),
+		"c": {},
+	}
+	for k, v := range bodies {
+		putEncrypted(t, s, k, v)
+	}
+
+	// One object deliberately left in the clear: a rotation must not touch it.
+	plain := []byte("never encrypted")
+	_, err := s.PutObject(t.Context(), &fs.PutObjectRequest{
+		Reader: bytes.NewReader(plain), Bucket: "b", Key: "plain", Size: int64(len(plain)),
+	})
+	require.NoError(t, err)
+
+	before := map[string][]byte{}
+
+	for k := range bodies {
+		stored, err := os.ReadFile(bodyPath(root, k))
+		require.NoError(t, err)
+
+		before[k] = stored
+	}
+
+	newKey := newMasterKey(t)
+
+	rotated, err := sse.NewKeyring(newKey, oldKey)
+	require.NoError(t, err)
+
+	after, err := New(root, WithEncryption(rotated))
+	require.NoError(t, err)
+
+	report, err := after.RotateKeys(t.Context())
+	require.NoError(t, err)
+	require.True(t, report.Done(), "rotation reported failures: %v", report.Failed)
+	require.Equal(t, 3, report.Rewrapped)
+	require.Equal(t, 1, report.Unencrypted)
+	require.Equal(t, 4, report.Scanned)
+
+	for k, want := range bodies {
+		// The body on disk is byte-for-byte what it was: rotation is a
+		// sidecar-only walk.
+		stored, err := os.ReadFile(bodyPath(root, k))
+		require.NoError(t, err)
+		require.Equal(t, before[k], stored, "rotation rewrote the body of %q", k)
+
+		sc, err := after.readSidecar("b", k)
+		require.NoError(t, err)
+		require.Equal(t, newKey.ID, sc.Encryption.Key.KeyID)
+
+		got, _ := readAll(t, after, k)
+		require.Equal(t, want, got)
+	}
+
+	// Now the retired key can go, and everything still reads.
+	only, err := sse.NewKeyring(newKey)
+	require.NoError(t, err)
+
+	final, err := New(root, WithEncryption(only))
+	require.NoError(t, err)
+
+	for k, want := range bodies {
+		got, _ := readAll(t, final, k)
+		require.Equal(t, want, got)
+	}
+
+	// A second pass has nothing left to do, which is how an operator knows the
+	// retired key is safe to remove.
+	again, err := final.RotateKeys(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, again.Rewrapped)
+	require.Equal(t, 3, again.AlreadyCurrent)
+	require.True(t, again.Done())
+}
+
+// TestRotateKeysReportsUnreachableObjects: dropping the retired key before the
+// rotation finishes must be reported per object, not silently skipped — that
+// report is what stops an operator deleting a key they still need.
+func TestRotateKeysReportsUnreachableObjects(t *testing.T) {
+	oldKey := newMasterKey(t)
+	s, root := encryptedStore(t, oldKey)
+
+	putEncrypted(t, s, "stranded", []byte("written under the old key"))
+
+	// A keyring with the new key only: the old wrap cannot be opened.
+	only, err := sse.NewKeyring(newMasterKey(t))
+	require.NoError(t, err)
+
+	after, err := New(root, WithEncryption(only))
+	require.NoError(t, err)
+
+	report, err := after.RotateKeys(t.Context())
+	require.NoError(t, err)
+	require.False(t, report.Done())
+	require.Len(t, report.Failed, 1)
+	require.Equal(t, "stranded", report.Failed[0].Key)
+}
+
+// TestRotateKeysWithoutKeyring: there is nothing to rotate onto, and saying so
+// beats reporting a clean pass over a store it never examined.
+func TestRotateKeysWithoutKeyring(t *testing.T) {
+	s, err := New(t.TempDir())
+	require.NoError(t, err)
+
+	_, err = s.RotateKeys(t.Context())
+	require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
+}
+
+// TestEncryptedObjectSurvivesCrash covers the crash-consistency half of the
+// acceptance: a write interrupted before its sidecar lands must leave either
+// nothing or a readable object, never a body no key can open.
+func TestEncryptedObjectSurvivesCrash(t *testing.T) {
+	mk := newMasterKey(t)
+	s, root := encryptedStore(t, mk)
+
+	body := bytes.Repeat([]byte("durable;"), 5000)
+	putEncrypted(t, s, "committed", body)
+
+	// Reopen the store as a restart would, with the same keys.
+	kr, err := sse.NewKeyring(mk)
+	require.NoError(t, err)
+
+	reopened, err := New(root, WithEncryption(kr))
+	require.NoError(t, err)
+
+	got, resp := readAll(t, reopened, "committed")
+	require.Equal(t, body, got)
+	require.Equal(t, sse.Algorithm, resp.ServerSideEncryption)
+
+	// A staged body with no sidecar is what a crash mid-write leaves. It must
+	// not become a visible object, and must not disturb the scrub.
+	staging := filepath.Join(root, ".tmp")
+	require.NoError(t, os.WriteFile(filepath.Join(staging, "obj-orphan"), []byte("half-written"), 0o600))
+
+	report, err := reopened.Scrub(t.Context(), ScrubOptions{})
+	require.NoError(t, err)
+	require.Empty(t, report.Corrupt)
+	require.Equal(t, 1, report.OK, "the orphaned staging file was counted as an object")
+}
