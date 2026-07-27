@@ -45,6 +45,8 @@ var (
 	EntityTooLarge          = APIError{"EntityTooLarge", http.StatusBadRequest, "Your proposed upload exceeds the maximum allowed object size."}
 	InvalidRange            = APIError{"InvalidRange", http.StatusRequestedRangeNotSatisfiable, "The requested range is not satisfiable."}
 	InvalidTag              = APIError{"InvalidTag", http.StatusBadRequest, "The tag provided was not a valid tag."}
+	InvalidDigest           = APIError{"InvalidDigest", http.StatusBadRequest, "The Content-MD5 you specified is not valid."}
+	BadDigest               = APIError{"BadDigest", http.StatusBadRequest, "The Content-MD5 you specified did not match what we received."}
 	PreconditionFailed      = APIError{"PreconditionFailed", http.StatusPreconditionFailed, "At least one of the preconditions you specified did not hold."}
 	NotModified             = APIError{"NotModified", http.StatusNotModified, ""}
 	AccessDenied            = APIError{"AccessDenied", http.StatusForbidden, "Access Denied."}
@@ -105,6 +107,10 @@ func FromError(err error) APIError {
 		return EntityTooSmall
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
+	case errors.Is(err, fs.ErrInvalidDigest):
+		return InvalidDigest
+	case errors.Is(err, fs.ErrBadDigest):
+		return BadDigest
 	case errors.Is(err, fs.ErrIntegrity):
 		// Server-side corruption: the object is damaged, so surface a 500
 		// rather than serve bad bytes.

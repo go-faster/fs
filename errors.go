@@ -11,6 +11,12 @@ var (
 	ErrInvalidBucketName    = errors.New("invalid bucket name")
 	ErrUnsupportedOperation = errors.New("unsupported operation")
 	ErrPreconditionFailed   = errors.New("precondition failed")
+	// ErrInvalidDigest reports a Content-MD5 the server could not parse: not
+	// base64, or not 16 bytes once decoded.
+	ErrInvalidDigest = errors.New("invalid content digest")
+	// ErrBadDigest reports a Content-MD5 that parsed but does not match the
+	// bytes received. The object is not stored.
+	ErrBadDigest = errors.New("content digest mismatch")
 
 	// ErrInvalidKey reports an object key the server cannot address: not valid
 	// UTF-8, over the 1024-byte limit, or carrying path elements that would

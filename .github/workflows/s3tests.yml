@@ -111,7 +111,7 @@ jobs:
         run: |
           python -m pytest -p no:cacheprovider -q --no-header --tb=no \
             --junit-xml="${GITHUB_WORKSPACE}/s3tests-full.xml" \
-            s3tests/functional/test_s3.py || true
+            s3tests/functional/test_s3.py s3tests/functional/test_headers.py || true
 
       - name: Upload reports
         if: always()

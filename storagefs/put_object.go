@@ -58,6 +58,14 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	etag := hex.EncodeToString(hash.Sum(nil))
 
+	// The body is on disk but not yet visible: this is the last moment at which
+	// a digest mismatch can be refused without anyone having been able to read
+	// the object.
+	if req.ContentMD5 != "" && req.ContentMD5 != etag {
+		_ = os.Remove(tmp.Name())
+		return nil, fs.ErrBadDigest
+	}
+
 	// Finalize under putMu so the conditional-write check and the rename are
 	// atomic against other writers to this key (the body is already on disk).
 	s.putMu.Lock()

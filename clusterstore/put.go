@@ -45,6 +45,9 @@ type PutRequest struct {
 	// UploadID names the completion that produced the object; empty for a
 	// single PUT.
 	UploadID string
+	// ContentMD5 is the hex digest the client claims the body has. The write
+	// is refused before it is committed when the fragments say otherwise.
+	ContentMD5 string
 }
 
 // Put writes an object at its bucket's scheme, acknowledging only once the
@@ -126,6 +129,14 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 	}
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
+
+	// The fragments are durable but no sidecar names them yet, so nothing can
+	// read this generation: refusing here leaves no visible object behind.
+	if req.ContentMD5 != "" && req.ContentMD5 != checksum {
+		c.discardGeneration(ctx, plan, peers, req.Bucket, req.Key, gen)
+		return nil, fs.ErrBadDigest
+	}
+
 	etag := req.ETag
 
 	if etag == "" {

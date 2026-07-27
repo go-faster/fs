@@ -209,6 +209,10 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	etag := fmt.Sprintf("%x", hash)
 
+	if req.ContentMD5 != "" && req.ContentMD5 != etag {
+		return nil, fs.ErrBadDigest
+	}
+
 	b.objects[req.Key] = &object{
 		data:         data,
 		lastModified: time.Now(),

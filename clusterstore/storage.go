@@ -229,14 +229,15 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	}
 
 	sc, err := s.coord.Put(ctx, &PutRequest{
-		Bucket:   req.Bucket,
-		Key:      req.Key,
-		Size:     req.Size,
-		Body:     req.Reader,
-		Metadata: req.Metadata,
-		Tags:     append([]fs.Tag(nil), req.Tags...),
-		ACL:      req.ACL,
-		Owner:    req.Owner,
+		Bucket:     req.Bucket,
+		Key:        req.Key,
+		Size:       req.Size,
+		Body:       req.Reader,
+		Metadata:   req.Metadata,
+		Tags:       append([]fs.Tag(nil), req.Tags...),
+		ACL:        req.ACL,
+		Owner:      req.Owner,
+		ContentMD5: req.ContentMD5,
 	})
 	if err != nil {
 		return nil, err

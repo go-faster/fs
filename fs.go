@@ -88,6 +88,13 @@ type PutObjectRequest struct {
 	// condition.
 	IfNoneMatch string
 	IfMatch     string
+
+	// ContentMD5 is the hex-encoded MD5 the client claims the body has
+	// (decoded from the base64 Content-MD5 header). When set, the backend must
+	// compare it against what it actually received and refuse the write with
+	// ErrBadDigest before the object becomes visible — verifying afterwards
+	// would leave corrupt content readable in the window between.
+	ContentMD5 string
 }
 
 // PutObjectResponse reports the stored object's ETag.
