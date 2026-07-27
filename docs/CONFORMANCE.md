@@ -5,7 +5,7 @@
 Every pull request runs the **whole** suite —
 [go-faster/s3t](https://github.com/go-faster/s3t), a Go port of
 [ceph/s3-tests](https://github.com/ceph/s3-tests) — and fails if any test outside the
-known-failures list fails, or if any of the **44** tests inside it passes.
+known-failures list fails, or if any of the **49** tests inside it passes.
 The list can therefore only shrink; a newly passing test shows up on the pull
 request that made it pass, rather than waiting to be noticed.
 
@@ -18,8 +18,8 @@ What follows is that list, grouped. Everything else in the suite passes.
 | Full ACL grammar | 27 |
 | SSE-KMS | 13 |
 | Bucket default encryption applied to writes | 2 |
-| Client-visible checksums | 2 |
-| **Total** | **44** |
+| Client-visible checksums | 7 |
+| **Total** | **49** |
 
 ## SDK & client coverage
 
