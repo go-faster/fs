@@ -3,6 +3,7 @@ package fs
 
 import (
 	"io"
+	"sort"
 	"strings"
 	"time"
 )
@@ -60,6 +61,46 @@ type ObjectMetadata struct {
 func (m ObjectMetadata) IsZero() bool {
 	return m.ContentType == "" && m.CacheControl == "" && m.ContentDisposition == "" &&
 		m.ContentEncoding == "" && m.Expires == "" && len(m.UserMetadata) == 0
+}
+
+// ObjectVersion is one entry of a version listing: a stored version, or a
+// delete marker recording that the key was deleted at that point.
+type ObjectVersion struct {
+	Key       string
+	VersionID string
+	// IsLatest reports that this is the key's current version.
+	IsLatest bool
+	// DeleteMarker reports that this entry records a deletion, not content.
+	DeleteMarker bool
+	Size         int64
+	ETag         string
+	LastModified time.Time
+	Owner        Owner
+}
+
+// ListObjectVersionsRequest describes one page of a version listing. It mirrors
+// ListObjectsRequest, with the version-aware cursor S3 uses: a key marker and,
+// within that key, a version marker.
+type ListObjectVersionsRequest struct {
+	Bucket    string
+	Prefix    string
+	Delimiter string
+	// KeyMarker and VersionIDMarker are the exclusive lower bound: listing
+	// resumes after that version of that key.
+	KeyMarker       string
+	VersionIDMarker string
+	Limit           int
+}
+
+// ListObjectVersionsResponse is one page of a version listing, newest version
+// first within each key.
+type ListObjectVersionsResponse struct {
+	Versions       []ObjectVersion
+	CommonPrefixes []string
+	IsTruncated    bool
+	// NextKeyMarker and NextVersionIDMarker are where the next page resumes.
+	NextKeyMarker       string
+	NextVersionIDMarker string
 }
 
 // CORSRule allows cross-origin requests matching AllowedOrigins and
@@ -212,6 +253,9 @@ type PutObjectResponse struct {
 	// ServerSideEncryption echoes the algorithm the object was encrypted
 	// with, empty when it was stored in the clear.
 	ServerSideEncryption string
+	// VersionID names the version this write created, empty on a bucket that
+	// is not versioned.
+	VersionID string
 }
 
 // GetObjectResponse represents the response for GetObject operation.
@@ -221,6 +265,9 @@ type GetObjectResponse struct {
 	LastModified time.Time
 	ETag         string
 	Metadata     ObjectMetadata
+	// VersionID names the version served, empty on a bucket that is not
+	// versioned.
+	VersionID string
 	// TagCount is how many tags the object carries, reported on GET and HEAD
 	// as x-amz-tagging-count. Backends fill it from metadata they already read;
 	// zero means untagged (the header is then omitted).
@@ -359,4 +406,84 @@ type CompleteMultipartUploadResponse struct {
 	// ServerSideEncryption echoes the algorithm the completed object was
 	// encrypted with, empty when it was stored in the clear.
 	ServerSideEncryption string
+}
+
+// FoldVersionPage turns a bucket's gathered versions into one page: applies
+// the prefix and delimiter, orders keys ascending with each key's versions
+// newest-first, applies the key/version marker, and cuts at Limit.
+//
+// It lives here for the same reason FoldPage does: the rules are subtle enough
+// to get wrong in three places, and backends outside this repository implement
+// the same interface. The ordering is S3's — a version listing is a flat
+// sequence ordered by key, then by version age within the key.
+func (r *ListObjectVersionsRequest) FoldVersionPage(byKey map[string][]ObjectVersion) *ListObjectVersionsResponse {
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		if r.Prefix == "" || strings.HasPrefix(key, r.Prefix) {
+			keys = append(keys, key)
+		}
+	}
+
+	sort.Strings(keys)
+
+	out := &ListObjectVersionsResponse{}
+	seenPrefix := make(map[string]struct{})
+
+	limit := r.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	for _, key := range keys {
+		// Delimiter folding collapses a whole keyspace into one entry, exactly
+		// as it does for an object listing.
+		if r.Delimiter != "" {
+			rest := strings.TrimPrefix(key, r.Prefix)
+			if idx := strings.Index(rest, r.Delimiter); idx >= 0 {
+				folded := r.Prefix + rest[:idx+len(r.Delimiter)]
+				if _, ok := seenPrefix[folded]; ok {
+					continue
+				}
+
+				if folded <= r.KeyMarker {
+					continue
+				}
+
+				if len(out.Versions)+len(out.CommonPrefixes) >= limit {
+					out.IsTruncated = true
+					return out
+				}
+
+				seenPrefix[folded] = struct{}{}
+				out.CommonPrefixes = append(out.CommonPrefixes, folded)
+
+				continue
+			}
+		}
+
+		if key < r.KeyMarker {
+			continue
+		}
+
+		for _, v := range byKey[key] {
+			// Within the marker's own key, resume after the named version.
+			if key == r.KeyMarker && r.VersionIDMarker != "" && v.VersionID <= r.VersionIDMarker {
+				continue
+			}
+
+			if key == r.KeyMarker && r.VersionIDMarker == "" && r.KeyMarker != "" {
+				continue
+			}
+
+			if len(out.Versions)+len(out.CommonPrefixes) >= limit {
+				out.IsTruncated = true
+				return out
+			}
+
+			out.Versions = append(out.Versions, v)
+			out.NextKeyMarker, out.NextVersionIDMarker = v.Key, v.VersionID
+		}
+	}
+
+	return out
 }

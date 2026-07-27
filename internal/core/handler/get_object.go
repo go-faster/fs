@@ -23,7 +23,7 @@ func (h *handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetObject(ctx, bucket, key)
+	resp, err := h.getObjectMaybeVersion(r, bucket, key)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return
@@ -67,6 +67,7 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	writeSSE(w, resp.ServerSideEncryption)
+	writeVersionID(w, resp.VersionID)
 
 	// S3 reports how many tags an object carries so a client can tell "no tags"
 	// from "tags I have not fetched" without a second request.
@@ -269,4 +270,31 @@ func applyResponseOverrides(h http.Header, q url.Values) {
 
 		h.Set(header, q.Get(param))
 	}
+}
+
+// writeVersionID reports which version a response concerns. It is omitted
+// entirely on a bucket that is not versioned, where there is no version to
+// name — a client reads the header's absence, not a placeholder value.
+func writeVersionID(w http.ResponseWriter, versionID string) {
+	if versionID != "" {
+		w.Header().Set("x-amz-version-id", versionID)
+	}
+}
+
+// getObjectMaybeVersion serves the version a request names, or the current one
+// when it names none.
+func (h *handler) getObjectMaybeVersion(
+	r *http.Request, bucket, key string,
+) (*fs.GetObjectResponse, error) {
+	versionID := r.URL.Query().Get("versionId")
+	if versionID == "" {
+		return h.service.GetObject(r.Context(), bucket, key)
+	}
+
+	versioner, ok := h.service.(fs.Versioner)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot address versions")
+	}
+
+	return versioner.GetObjectVersion(r.Context(), bucket, key, versionID)
 }

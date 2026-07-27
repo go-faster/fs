@@ -15,7 +15,7 @@ func (h *handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetObject(ctx, bucket, key)
+	resp, err := h.getObjectMaybeVersion(r, bucket, key)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return

@@ -109,6 +109,7 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeVersionID(w, resp.VersionID)
 	w.Header().Set("ETag", quoteETag(resp.ETag))
 	writeSSE(w, resp.ServerSideEncryption)
 	w.WriteHeader(http.StatusOK)

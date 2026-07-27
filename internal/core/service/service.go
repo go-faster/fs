@@ -427,6 +427,38 @@ func (s Service) BucketVersioning(ctx context.Context, bucket string) (fs.Versio
 	return versioner.BucketVersioning(ctx, bucket)
 }
 
+// GetObjectVersion implements fs.Versioner.
+func (s Service) GetObjectVersion(
+	ctx context.Context, bucket, key, versionID string,
+) (*fs.GetObjectResponse, error) {
+	versioner, err := s.versioner(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	return versioner.GetObjectVersion(ctx, bucket, key, versionID)
+}
+
+// ListObjectVersions implements fs.Versioner.
+func (s Service) ListObjectVersions(
+	ctx context.Context, req *fs.ListObjectVersionsRequest,
+) (*fs.ListObjectVersionsResponse, error) {
+	versioner, err := s.versioner(req.Bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validate.Prefix(req.Prefix); err != nil {
+		return nil, errors.Wrap(err, "validate prefix")
+	}
+
+	return versioner.ListObjectVersions(ctx, req)
+}
+
 // versioner validates the bucket name and resolves the backend's versioning
 // capability.
 func (s Service) versioner(bucket string) (fs.Versioner, error) {

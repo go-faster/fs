@@ -136,6 +136,8 @@ func FromError(err error) APIError {
 		return InvalidArgument
 	case errors.Is(err, fs.ErrEntityTooSmall):
 		return EntityTooSmall
+	case errors.Is(err, fs.ErrMethodNotAllowedOnDeleteMarker):
+		return MethodNotAllowed
 	case errors.Is(err, fs.ErrAccessDenied):
 		return AccessDenied
 	case errors.Is(err, fs.ErrInvalidTag):

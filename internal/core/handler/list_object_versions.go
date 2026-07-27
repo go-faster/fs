@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"net/url"
@@ -12,10 +13,6 @@ import (
 )
 
 // VersionEntry is a single object version in a ListObjectVersions response.
-//
-// The store is unversioned, so every object is reported as a single current
-// version with the well-known VersionId "null" and IsLatest=true — the shape
-// AWS itself returns for objects in a never-versioned bucket.
 type VersionEntry struct {
 	Key          string    `xml:"Key"`
 	VersionID    string    `xml:"VersionId"`
@@ -44,6 +41,7 @@ type ListVersionsResult struct {
 	IsTruncated  bool   `xml:"IsTruncated"`
 
 	Versions       []VersionEntry `xml:"Version"`
+	DeleteMarkers  []VersionEntry `xml:"DeleteMarker"`
 	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes"`
 }
 
@@ -58,14 +56,10 @@ const unversionedVersionID = "null"
 // list_object_versions (rather than list_objects) work correctly.
 func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	path := strings.TrimPrefix(r.URL.Path, "/")
-	bucket, _, _ := strings.Cut(path, "/")
+	bucket, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 
 	q := r.URL.Query()
-	prefix := q.Get("prefix")
-	delimiter := q.Get("delimiter")
 	encodeURL := q.Get("encoding-type") == encodingTypeURL
-	keyMarker := q.Get("key-marker")
 
 	maxKeys := defaultMaxKeys
 	if v := q.Get("max-keys"); v != "" {
@@ -74,12 +68,13 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.service.ListObjects(ctx, &fs.ListObjectsRequest{
-		Bucket:     bucket,
-		Prefix:     prefix,
-		Delimiter:  delimiter,
-		StartAfter: keyMarker,
-		Limit:      maxKeys,
+	page, err := h.listVersions(ctx, &fs.ListObjectVersionsRequest{
+		Bucket:          bucket,
+		Prefix:          q.Get("prefix"),
+		Delimiter:       q.Get("delimiter"),
+		KeyMarker:       q.Get("key-marker"),
+		VersionIDMarker: q.Get("version-id-marker"),
+		Limit:           maxKeys,
 	})
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -94,52 +89,99 @@ func (h *handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 		return s
 	}
 
-	var (
-		versions       []VersionEntry
-		commonPrefixes []CommonPrefix
-	)
-
-	for _, cp := range res.CommonPrefixes {
-		commonPrefixes = append(commonPrefixes, CommonPrefix{Prefix: maybeEncode(cp)})
-	}
-
-	for _, o := range res.Objects {
-		versions = append(versions, VersionEntry{
-			Key:          maybeEncode(o.Key),
-			VersionID:    unversionedVersionID,
-			IsLatest:     true,
-			LastModified: o.LastModified,
-			ETag:         quoteETag(o.ETag),
-			Size:         o.Size,
-		})
-	}
-
-	truncated := res.IsTruncated
-	nextKeyMarker := res.NextStartAfter
-
 	resp := ListVersionsResult{
-		Name:           bucket,
-		Prefix:         maybeEncode(prefix),
-		KeyMarker:      maybeEncode(keyMarker),
-		MaxKeys:        maxKeys,
-		Delimiter:      maybeEncode(delimiter),
-		IsTruncated:    truncated,
-		Versions:       versions,
-		CommonPrefixes: commonPrefixes,
+		Name:            bucket,
+		Prefix:          maybeEncode(q.Get("prefix")),
+		KeyMarker:       maybeEncode(q.Get("key-marker")),
+		VersionIDMarker: q.Get("version-id-marker"),
+		MaxKeys:         maxKeys,
+		Delimiter:       maybeEncode(q.Get("delimiter")),
+		IsTruncated:     page.IsTruncated,
+	}
+
+	// Versions and delete markers are reported in separate elements even
+	// though they are one ordered sequence: a marker has no content, so the
+	// shapes differ, and a client that only cares about content reads one
+	// element and ignores the other.
+	for _, v := range page.Versions {
+		entry := VersionEntry{
+			Key:          maybeEncode(v.Key),
+			VersionID:    v.VersionID,
+			IsLatest:     v.IsLatest,
+			LastModified: v.LastModified,
+			ETag:         quoteETag(v.ETag),
+			Size:         v.Size,
+		}
+
+		if v.DeleteMarker {
+			entry.ETag, entry.Size = "", 0
+			resp.DeleteMarkers = append(resp.DeleteMarkers, entry)
+
+			continue
+		}
+
+		resp.Versions = append(resp.Versions, entry)
+	}
+
+	for _, cp := range page.CommonPrefixes {
+		resp.CommonPrefixes = append(resp.CommonPrefixes, CommonPrefix{Prefix: maybeEncode(cp)})
 	}
 
 	if encodeURL {
 		resp.EncodingType = encodingTypeURL
 	}
 
-	if truncated {
-		resp.NextKeyMarker = maybeEncode(nextKeyMarker)
-		// Both markers or neither: a paginating client feeds NextVersionIdMarker
-		// straight back as VersionIdMarker, and an omitted one arrives as a null
-		// it refuses to send. Every version here is the same synthetic "null",
-		// so that is what the marker says.
-		resp.NextVersionIDMarker = unversionedVersionID
+	if page.IsTruncated {
+		resp.NextKeyMarker = maybeEncode(page.NextKeyMarker)
+		resp.NextVersionIDMarker = page.NextVersionIDMarker
 	}
 
 	writeXML(ctx, w, r, resp)
+}
+
+// listVersions returns a page of versions, falling back to the object listing
+// for a backend that does not keep versions.
+//
+// That fallback is not a stub: for a bucket that was never versioned, every
+// object *is* its own "null" version, and that is exactly what S3 reports. A
+// backend without fs.Versioner has only such buckets, so the answer is right
+// rather than merely non-empty.
+func (h *handler) listVersions(
+	ctx context.Context, req *fs.ListObjectVersionsRequest,
+) (*fs.ListObjectVersionsResponse, error) {
+	if versioner, ok := h.service.(fs.Versioner); ok {
+		return versioner.ListObjectVersions(ctx, req)
+	}
+
+	page, err := h.service.ListObjects(ctx, &fs.ListObjectsRequest{
+		Bucket:     req.Bucket,
+		Prefix:     req.Prefix,
+		Delimiter:  req.Delimiter,
+		StartAfter: req.KeyMarker,
+		Limit:      req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := &fs.ListObjectVersionsResponse{
+		CommonPrefixes:      page.CommonPrefixes,
+		IsTruncated:         page.IsTruncated,
+		NextKeyMarker:       page.NextStartAfter,
+		NextVersionIDMarker: fs.NullVersionID,
+	}
+
+	for _, o := range page.Objects {
+		out.Versions = append(out.Versions, fs.ObjectVersion{
+			Key:          o.Key,
+			VersionID:    fs.NullVersionID,
+			IsLatest:     true,
+			Size:         o.Size,
+			ETag:         o.ETag,
+			LastModified: o.LastModified,
+			Owner:        o.Owner,
+		})
+	}
+
+	return out, nil
 }

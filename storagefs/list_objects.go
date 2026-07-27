@@ -21,7 +21,28 @@ import (
 //
 // NB: bucket and prefix are already sanitized.
 func (s *Storage) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*fs.ListObjectsResponse, error) {
-	bucket, prefix := req.Bucket, req.Prefix
+	objects, err := s.listPlainObjects(ctx, req.Bucket, req.Prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	// A versioned bucket keeps its content under .versions, so the walk above
+	// finds only what predates the first enable. Merge in each key's current
+	// version — and let it win, because it is newer than the plain-path object
+	// of the same name by construction.
+	objects, err = s.mergeCurrentVersions(req.Bucket, req.Prefix, objects)
+	if err != nil {
+		return nil, err
+	}
+
+	return req.FoldPage(objects), nil
+}
+
+// listPlainObjects walks the bucket's key tree: everything written while the
+// bucket was not versioned. It is deliberately unaware of versions, because
+// the version listing needs exactly this — the objects that predate the first
+// enable, which are the "null" versions.
+func (s *Storage) listPlainObjects(ctx context.Context, bucket, prefix string) ([]fs.Object, error) {
 	bucketPath := filepath.Join(s.root, bucket)
 
 	var objects []fs.Object
@@ -79,5 +100,5 @@ func (s *Storage) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (
 		return nil, errors.Wrap(err, "list objects")
 	}
 
-	return req.FoldPage(objects), nil
+	return objects, nil
 }

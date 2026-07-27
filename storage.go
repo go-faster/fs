@@ -259,6 +259,13 @@ type Versioner interface {
 	// BucketVersioning returns the bucket's state, VersioningUnset when it has
 	// never been configured; ErrBucketNotFound when the bucket is absent.
 	BucketVersioning(ctx context.Context, bucket string) (VersioningState, error)
+	// GetObjectVersion serves exactly the named version, whatever the current
+	// one is. ErrObjectNotFound when that version does not exist — including
+	// when it is a delete marker, which has no content to serve.
+	GetObjectVersion(ctx context.Context, bucket, key, versionID string) (*GetObjectResponse, error)
+	// ListObjectVersions returns one page of a bucket's versions and delete
+	// markers, newest first within each key.
+	ListObjectVersions(ctx context.Context, req *ListObjectVersionsRequest) (*ListObjectVersionsResponse, error)
 }
 
 // ObjectAttributer is the optional capability of describing an object without
