@@ -11,6 +11,9 @@ var (
 	ErrInvalidBucketName    = errors.New("invalid bucket name")
 	ErrUnsupportedOperation = errors.New("unsupported operation")
 	ErrPreconditionFailed   = errors.New("precondition failed")
+	// ErrBucketOwnedBySomeoneElse reports a create against a bucket name that
+	// another principal already holds.
+	ErrBucketOwnedBySomeoneElse = errors.New("bucket owned by someone else")
 	// ErrInvalidDigest reports a Content-MD5 the server could not parse: not
 	// base64, or not 16 bytes once decoded.
 	ErrInvalidDigest = errors.New("invalid content digest")

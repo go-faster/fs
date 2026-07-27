@@ -24,9 +24,10 @@ type handler struct {
 type Option func(*options)
 
 type options struct {
-	authenticator Authenticator
-	cors          CORSResolver
-	region        string
+	authenticator  Authenticator
+	cors           CORSResolver
+	region         string
+	ownerIsolation bool
 }
 
 // WithAuthenticator enables SigV4 authentication and grant-based authorization
@@ -40,6 +41,17 @@ func WithAuthenticator(a Authenticator) Option {
 // S3 default region as an empty constraint.
 func WithRegion(region string) Option {
 	return func(o *options) { o.region = region }
+}
+
+// WithOwnerIsolation makes bucket ownership decide access: a bucket belongs to
+// whoever created it, and another principal reaches it only through a grant
+// that names the bucket rather than a wildcard covering it.
+//
+// It is off by default because turning it on changes what an existing
+// deployment's "*" grants mean, which is a decision for the operator and not a
+// side effect of an upgrade. Ownership is recorded either way.
+func WithOwnerIsolation(enabled bool) Option {
+	return func(o *options) { o.ownerIsolation = enabled }
 }
 
 // WithCORS enables per-bucket CORS: OPTIONS preflight handling and CORS
@@ -68,7 +80,7 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 
 	var inner http.Handler = mux
 	if o.authenticator != nil {
-		inner = authMiddleware(o.authenticator, s, inner)
+		inner = authMiddleware(o.authenticator, s, o.ownerIsolation, inner)
 	}
 
 	if o.cors != nil {

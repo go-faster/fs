@@ -181,6 +181,25 @@ type ConditionalDeleter interface {
 	DeleteObjectIf(ctx context.Context, bucket, key string, cond Conditions) error
 }
 
+// BucketOwnership is the optional capability of recording which principal
+// created a bucket.
+//
+// Ownership is what makes a bucket belong to someone: it decides who may reach
+// it when no explicit grant says otherwise, and it is what tells a re-create by
+// its owner (idempotent, as in S3's default region) from one by a stranger
+// (BucketAlreadyExists). A backend that does not implement it has unowned
+// buckets, and the S3 layer falls back to grants alone — which is how this
+// server behaved before ownership existed.
+type BucketOwnership interface {
+	// CreateBucketOwned creates a bucket owned by owner, reporting
+	// ErrBucketAlreadyExists exactly as CreateBucket does.
+	CreateBucketOwned(ctx context.Context, bucket string, owner Owner) error
+	// BucketOwner returns the recorded owner, zero when the bucket predates
+	// ownership or was created without an identity; ErrBucketNotFound when the
+	// bucket is absent.
+	BucketOwner(ctx context.Context, bucket string) (Owner, error)
+}
+
 // ObjectAttributer is the optional capability of describing an object without
 // opening it, including the part layout a completed multipart object was
 // assembled from. It backs GetObjectAttributes and reading a single part with

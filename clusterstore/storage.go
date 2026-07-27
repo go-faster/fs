@@ -82,6 +82,21 @@ func (s *Storage) CreateBucket(ctx context.Context, bucket string) error {
 	return s.coord.CreateBucket(ctx, bucket, fs.ACLPrivate)
 }
 
+// CreateBucketOwned implements fs.BucketOwnership.
+func (s *Storage) CreateBucketOwned(ctx context.Context, bucket string, owner fs.Owner) error {
+	return s.coord.CreateBucketOwned(ctx, bucket, fs.ACLPrivate, owner)
+}
+
+// BucketOwner implements fs.BucketOwnership.
+func (s *Storage) BucketOwner(ctx context.Context, bucket string) (fs.Owner, error) {
+	info, err := s.coord.fetchBucket(ctx, s.coord.topo.Topology(), bucket)
+	if err != nil {
+		return fs.Owner{}, err
+	}
+
+	return info.Owner, nil
+}
+
 // DeleteBucket implements fs.Storage, refusing to delete a non-empty bucket.
 func (s *Storage) DeleteBucket(ctx context.Context, bucket string) error {
 	if err := s.mustBucket(ctx, bucket); err != nil {

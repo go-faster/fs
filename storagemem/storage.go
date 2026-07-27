@@ -50,6 +50,9 @@ type bucket struct {
 	creationDate time.Time
 	objects      map[string]*object
 	acl          fs.ACL
+	// owner is the principal that created the bucket; zero when created
+	// without an identity.
+	owner fs.Owner
 }
 
 // objectState is the state conditional requests are evaluated against. The
@@ -110,6 +113,11 @@ func (s *Storage) ListBuckets(ctx context.Context) ([]fs.Bucket, error) {
 }
 
 func (s *Storage) CreateBucket(ctx context.Context, bucketName string) error {
+	return s.CreateBucketOwned(ctx, bucketName, fs.Owner{})
+}
+
+// CreateBucketOwned implements fs.BucketOwnership.
+func (s *Storage) CreateBucketOwned(_ context.Context, bucketName string, owner fs.Owner) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -121,9 +129,23 @@ func (s *Storage) CreateBucket(ctx context.Context, bucketName string) error {
 		name:         bucketName,
 		creationDate: time.Now(),
 		objects:      make(map[string]*object),
+		owner:        owner,
 	}
 
 	return nil
+}
+
+// BucketOwner implements fs.BucketOwnership.
+func (s *Storage) BucketOwner(_ context.Context, bucketName string) (fs.Owner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.Owner{}, fs.ErrBucketNotFound
+	}
+
+	return b.owner, nil
 }
 
 func (s *Storage) BucketExists(_ context.Context, bucketName string) (bool, error) {

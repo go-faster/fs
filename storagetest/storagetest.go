@@ -118,6 +118,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Conditional/CompleteMultipart":         testConditionalCompleteMultipart,
 	"Attributes/PartLayout":                 testObjectAttributesPartLayout,
 	"Keyspace/OverlappingKeys":              testOverlappingKeys,
+	"Ownership/BucketOwner":                 testBucketOwner,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1192,6 +1193,40 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testBucketOwner covers fs.BucketOwnership: a bucket remembers who created
+// it, and says so consistently.
+func testBucketOwner(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	ownership, ok := storage.(fs.BucketOwnership)
+	if !ok {
+		t.Skip("backend does not implement fs.BucketOwnership")
+	}
+
+	owner := fs.Owner{ID: "user-1", DisplayName: "User One"}
+	require.NoError(t, ownership.CreateBucketOwned(ctx, testBucket, owner))
+
+	got, err := ownership.BucketOwner(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, owner, got)
+
+	// Creating it again is still a conflict at this layer; deciding whether the
+	// caller owns it is the S3 layer's job.
+	require.ErrorIs(t, ownership.CreateBucketOwned(ctx, testBucket, owner), fs.ErrBucketAlreadyExists)
+
+	// A bucket created without an identity is unowned, not owned by nobody in
+	// particular — the distinction the S3 layer relies on to leave older data
+	// reachable.
+	require.NoError(t, storage.CreateBucket(ctx, testBucket+"-plain"))
+
+	got, err = ownership.BucketOwner(ctx, testBucket+"-plain")
+	require.NoError(t, err)
+	require.True(t, got.IsZero())
+
+	_, err = ownership.BucketOwner(ctx, testBucket+"-absent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
 // testOverlappingKeys covers the flatness of the S3 keyspace: a key that is a

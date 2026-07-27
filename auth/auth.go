@@ -253,6 +253,38 @@ func (s *Store) Allow(accessKey, bucket string, action Action) bool {
 	return false
 }
 
+// AllowsExplicitly reports whether the key is granted action on bucket by a
+// grant that names it, rather than by a wildcard that happens to cover it.
+//
+// The distinction exists because bucket ownership is the default answer to
+// "who may touch this", and a blanket "*" grant is not evidence that its holder
+// was meant to reach someone else's bucket — it is what an operator writes to
+// mean "the buckets I make". A pattern that actually names the bucket is that
+// evidence, and stays the way to share one.
+func (s *Store) AllowsExplicitly(accessKey, bucket string, action Action) bool {
+	k, ok := s.snap.Load().keys[accessKey]
+	if !ok || bucket == "" {
+		return false
+	}
+
+	need := Read
+	if action == ActionWrite {
+		need = Write
+	}
+
+	for _, g := range k.Grants {
+		if g.Pattern == "*" || g.Permission < need {
+			continue
+		}
+
+		if patternMatches(g.Pattern, bucket) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // PublicRead reports whether bucket permits anonymous reads.
 func (s *Store) PublicRead(bucket string) bool {
 	_, ok := s.snap.Load().publicRead[bucket]

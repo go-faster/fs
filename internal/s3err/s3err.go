@@ -84,6 +84,10 @@ func FromError(err error) APIError {
 		return NoSuchKey
 	case errors.Is(err, fs.ErrUploadNotFound):
 		return NoSuchUpload
+	case errors.Is(err, fs.ErrBucketOwnedBySomeoneElse):
+		// The name is taken by another principal: S3 reports the name as
+		// unavailable, not as something the caller already owns.
+		return BucketAlreadyExists
 	case errors.Is(err, fs.ErrBucketAlreadyExists):
 		return BucketAlreadyOwnedByYou
 	case errors.Is(err, fs.ErrBucketNotEmpty):

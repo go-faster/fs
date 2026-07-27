@@ -242,6 +242,36 @@ func (s Service) completedUpload(
 	}, true
 }
 
+// CreateBucketOwned implements fs.BucketOwnership, falling back to an unowned
+// create when the backend does not record owners.
+func (s Service) CreateBucketOwned(ctx context.Context, bucket string, owner fs.Owner) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	if owned, ok := s.storage.(fs.BucketOwnership); ok {
+		return owned.CreateBucketOwned(ctx, bucket, owner)
+	}
+
+	return s.storage.CreateBucket(ctx, bucket)
+}
+
+// BucketOwner implements fs.BucketOwnership. A backend that does not record
+// owners reports every bucket as unowned, which the S3 layer reads as
+// "grants alone decide" — how this server behaved before ownership existed.
+func (s Service) BucketOwner(ctx context.Context, bucket string) (fs.Owner, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return fs.Owner{}, errors.Wrap(err, "validate bucket name")
+	}
+
+	owned, ok := s.storage.(fs.BucketOwnership)
+	if !ok {
+		return fs.Owner{}, nil
+	}
+
+	return owned.BucketOwner(ctx, bucket)
+}
+
 // ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
 // when it can describe an object without opening it, and reporting
 // ErrUnsupportedOperation when it cannot.
