@@ -30,6 +30,8 @@ type bucketMeta struct {
 	PublicAccessBlock *fs.PublicAccessBlock `json:"public_access_block,omitempty"`
 	// ObjectOwnership is the ?ownershipControls rule; empty when unset.
 	ObjectOwnership string `json:"object_ownership,omitempty"`
+	// Encryption is the ?encryption default algorithm; empty when unset.
+	Encryption string `json:"encryption,omitempty"`
 }
 
 func (s *Storage) bucketMetaPath(bucket string) string {
@@ -240,6 +242,33 @@ func (s *Storage) SetBucketObjectOwnership(_ context.Context, bucket, ownership 
 
 	meta := s.readBucketMeta(bucket)
 	meta.ObjectOwnership = ownership
+
+	return s.writeBucketMeta(bucket, meta)
+}
+
+// BucketEncryption implements fs.BucketEncrypter.
+func (s *Storage) BucketEncryption(_ context.Context, bucket string) (string, error) {
+	if !s.bucketExists(bucket) {
+		return "", fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	return s.readBucketMeta(bucket).Encryption, nil
+}
+
+// SetBucketEncryption implements fs.BucketEncrypter.
+func (s *Storage) SetBucketEncryption(_ context.Context, bucket, algorithm string) error {
+	if !s.bucketExists(bucket) {
+		return fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	meta := s.readBucketMeta(bucket)
+	meta.Encryption = algorithm
 
 	return s.writeBucketMeta(bucket, meta)
 }

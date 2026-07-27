@@ -100,7 +100,7 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		IfMatch:     r.Header.Get("If-Match"),
 		ContentMD5:  contentMD5,
 
-		ServerSideEncryption: h.requestedEncryption(r),
+		ServerSideEncryption: h.requestedEncryption(r, bucket),
 	}
 
 	resp, err := h.service.PutObject(ctx, req)

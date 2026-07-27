@@ -59,7 +59,7 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 
 		// Settled here rather than at completion: by then the parts are
 		// already on disk, and would have been staged in the clear.
-		ServerSideEncryption: h.requestedEncryption(r),
+		ServerSideEncryption: h.requestedEncryption(r, bucket),
 	})
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -74,7 +74,7 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
-	writeSSE(w, h.requestedEncryption(r))
+	writeSSE(w, h.requestedEncryption(r, bucket))
 	w.WriteHeader(http.StatusOK)
 	_ = xml.NewEncoder(w).Encode(result)
 }

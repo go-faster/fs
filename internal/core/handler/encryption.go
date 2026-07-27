@@ -8,15 +8,20 @@ import (
 // the request and echoed on the response.
 const sseHeader = "x-amz-server-side-encryption"
 
-// requestedEncryption resolves the algorithm a write should use: what the
-// request asks for, falling back to the server's default.
+// requestedEncryption resolves the algorithm a write should use, most
+// specific first: the request header, then the bucket's ?encryption default,
+// then the server-wide default.
 //
-// The header wins over the default in both directions, which is what makes a
-// default safe to turn on: a client that names an algorithm gets it, and the
-// storage layer refuses anything it cannot honor rather than storing
-// plaintext under a header that claims otherwise.
-func (h *handler) requestedEncryption(r *http.Request) string {
+// That order is S3's, and it is what makes a default safe to turn on: a client
+// that names an algorithm gets exactly it, and the storage layer refuses
+// anything it cannot honor rather than storing plaintext under a header that
+// claims otherwise.
+func (h *handler) requestedEncryption(r *http.Request, bucket string) string {
 	if v := r.Header.Get(sseHeader); v != "" {
+		return v
+	}
+
+	if v := h.bucketDefaultEncryption(r, bucket); v != "" {
 		return v
 	}
 

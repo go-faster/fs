@@ -220,7 +220,6 @@ s3tests/functional/test_s3.py::test_create_bucket_bucket_owner_enforced
 s3tests/functional/test_s3.py::test_create_bucket_bucket_owner_preferred
 s3tests/functional/test_s3.py::test_create_bucket_object_writer
 s3tests/functional/test_s3.py::test_delete_bucket_encryption_kms
-s3tests/functional/test_s3.py::test_delete_bucket_encryption_s3
 s3tests/functional/test_s3.py::test_delete_marker_expiration
 s3tests/functional/test_s3.py::test_delete_marker_nonversioned
 s3tests/functional/test_s3.py::test_delete_marker_suspended
@@ -253,7 +252,6 @@ s3tests/functional/test_s3.py::test_encryption_sse_c_present
 s3tests/functional/test_s3.py::test_expected_bucket_owner
 s3tests/functional/test_s3.py::test_get_authpublic_acl_bucket_policy_status
 s3tests/functional/test_s3.py::test_get_bucket_encryption_kms
-s3tests/functional/test_s3.py::test_get_bucket_encryption_s3
 s3tests/functional/test_s3.py::test_get_bucket_policy_status
 s3tests/functional/test_s3.py::test_get_checksum_object_attributes
 s3tests/functional/test_s3.py::test_get_multipart_checksum_object_attributes
@@ -378,7 +376,6 @@ s3tests/functional/test_s3.py::test_post_object_escaped_field_values
 s3tests/functional/test_s3.py::test_post_object_upload_checksum
 s3tests/functional/test_s3.py::test_put_bucket_acl_grant_group_read
 s3tests/functional/test_s3.py::test_put_bucket_encryption_kms
-s3tests/functional/test_s3.py::test_put_bucket_encryption_s3
 s3tests/functional/test_s3.py::test_put_bucket_logging
 s3tests/functional/test_s3.py::test_put_bucket_logging_account_s
 s3tests/functional/test_s3.py::test_put_bucket_logging_errors

@@ -200,6 +200,8 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.GetBucketPublicAccessBlock(w, r)
 		case q.Has("ownershipControls"):
 			h.GetBucketOwnershipControls(w, r)
+		case q.Has("encryption"):
+			h.GetBucketEncryption(w, r)
 		case q.Has("versions"):
 			h.ListObjectVersions(w, r)
 		case q.Has("uploads"):
@@ -222,6 +224,9 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 		case q.Has("ownershipControls"):
 			h.PutBucketOwnershipControls(w, r)
 			return
+		case q.Has("encryption"):
+			h.PutBucketEncryption(w, r)
+			return
 		}
 
 		if hasUnsupportedBucketSubresource(q) {
@@ -242,6 +247,9 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			return
 		case q.Has("ownershipControls"):
 			h.DeleteBucketOwnershipControls(w, r)
+			return
+		case q.Has("encryption"):
+			h.DeleteBucketEncryption(w, r)
 			return
 		}
 
@@ -316,7 +324,7 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 // server does not implement; requests carrying them get a NotImplemented error
 // rather than being misinterpreted as a plain listing or create.
 var unsupportedBucketSubresources = []string{
-	"accelerate", "acl", "analytics", "encryption", "inventory",
+	"accelerate", "acl", "analytics", "inventory",
 	"lifecycle", "logging", "metrics", "notification", "object-lock",
 	"policy", "policyStatus",
 	"replication", "requestPayment", "tagging", "versioning", "website",

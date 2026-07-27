@@ -229,6 +229,23 @@ type BucketSettingsStore interface {
 	SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error
 }
 
+// BucketEncrypter is the optional capability of remembering a bucket's default
+// server-side encryption, backing the ?encryption subresource.
+//
+// It is separate from BucketSettingsStore, and deliberately so: a backend that
+// can store bucket settings may still be unable to encrypt, and letting it
+// record a default it cannot honor would produce a bucket whose every write is
+// refused. Only a backend that can actually encrypt should advertise this, so
+// ?encryption reports NotImplemented rather than accepting a setting that does
+// nothing.
+type BucketEncrypter interface {
+	// BucketEncryption returns the bucket's default algorithm, empty when it
+	// has none configured. ErrBucketNotFound when the bucket is absent.
+	BucketEncryption(ctx context.Context, bucket string) (string, error)
+	// SetBucketEncryption records the default; empty clears it.
+	SetBucketEncryption(ctx context.Context, bucket, algorithm string) error
+}
+
 // ObjectAttributer is the optional capability of describing an object without
 // opening it, including the part layout a completed multipart object was
 // assembled from. It backs GetObjectAttributes and reading a single part with

@@ -38,6 +38,11 @@ var (
 		"NoSuchPublicAccessBlockConfiguration", http.StatusNotFound,
 		"The public access block configuration was not found.",
 	}
+	ServerSideEncryptionConfigurationNotFound = APIError{
+		"ServerSideEncryptionConfigurationNotFoundError", http.StatusNotFound,
+		"The server side encryption configuration was not found.",
+	}
+
 	OwnershipControlsNotFound = APIError{
 		"OwnershipControlsNotFoundError", http.StatusNotFound,
 		"The bucket ownership controls were not found.",
