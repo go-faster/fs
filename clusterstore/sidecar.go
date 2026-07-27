@@ -64,6 +64,10 @@ type Sidecar struct {
 	// Owner is the principal that wrote the object; absent in sidecars written
 	// before owners were modeled.
 	Owner fs.Owner `json:"owner,omitzero"`
+	// Parts is the part layout a multipart object was assembled from. Absent
+	// for single PUTs and for multipart objects written before the layout was
+	// recorded, both of which read as a single part.
+	Parts []fs.ObjectPart `json:"parts,omitempty"`
 }
 
 // ObjectMetadata converts the sidecar's header fields to the domain type.

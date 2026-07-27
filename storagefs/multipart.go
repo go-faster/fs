@@ -369,6 +369,8 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	hash := md5.New()        //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	contentHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
+	layout := make([]fs.ObjectPart, 0, len(parts))
+
 	uploadPath := s.multipart.uploadPath(req.UploadID)
 	for _, part := range parts {
 		partPath := filepath.Join(uploadPath, strconv.Itoa(part.PartNumber))
@@ -380,13 +382,19 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		}
 
 		partHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-		_, err = io.Copy(io.MultiWriter(finalFile, partHash, contentHash), partFile)
+		written, err := io.Copy(io.MultiWriter(finalFile, partHash, contentHash), partFile)
 		_ = partFile.Close()
 
 		if err != nil {
 			cleanup()
 			return nil, errors.Wrapf(err, "copy part %d", part.PartNumber)
 		}
+
+		layout = append(layout, fs.ObjectPart{
+			PartNumber: part.PartNumber,
+			Size:       written,
+			ETag:       hex.EncodeToString(partHash.Sum(nil)),
+		})
 
 		_, _ = hash.Write(partHash.Sum(nil))
 	}
@@ -437,8 +445,12 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	checksum := hex.EncodeToString(contentHash.Sum(nil))
 
 	// Persist the multipart ETag, content checksum and the metadata captured at
-	// initiation.
-	if err := s.writeSidecar(meta.Bucket, newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)); err != nil {
+	// initiation, plus the part layout: the upload directory is gone by now, so
+	// this is the only remaining record of where the part boundaries are.
+	sc := newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)
+	sc.Parts = layout
+
+	if err := s.writeSidecar(meta.Bucket, sc); err != nil {
 		return nil, err
 	}
 

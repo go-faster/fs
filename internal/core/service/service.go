@@ -214,6 +214,26 @@ func (s Service) DeleteObject(ctx context.Context, bucket, key string) error {
 	return s.storage.DeleteObject(ctx, bucket, key)
 }
 
+// ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
+// when it can describe an object without opening it, and reporting
+// ErrUnsupportedOperation when it cannot.
+func (s Service) ObjectAttributes(ctx context.Context, bucket, key string) (*fs.ObjectAttributes, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	if err := validate.Key(key); err != nil {
+		return nil, errors.Wrap(err, "validate object key")
+	}
+
+	attributer, ok := s.storage.(fs.ObjectAttributer)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot describe objects")
+	}
+
+	return attributer.ObjectAttributes(ctx, bucket, key)
+}
+
 // DeleteObjectIf implements fs.ConditionalDeleter by forwarding to the backend
 // when it supports conditional deletes, and reporting ErrUnsupportedOperation
 // when it does not — never by falling back to a racy check-then-delete.

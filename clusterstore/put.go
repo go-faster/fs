@@ -38,6 +38,10 @@ type PutRequest struct {
 	// ETag overrides the stored ETag (multipart composite ETags); empty means
 	// the content MD5.
 	ETag string
+	// Parts is the completed part layout for a multipart object, retained in
+	// the sidecar so the object can still be described and read a part at a
+	// time; nil for a single PUT.
+	Parts []fs.ObjectPart
 }
 
 // Put writes an object at its bucket's scheme, acknowledging only once the
@@ -149,6 +153,7 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 		Tags:               req.Tags,
 		ACL:                req.ACL,
 		Owner:              req.Owner,
+		Parts:              req.Parts,
 	}
 
 	// Commit: replace the sidecar on every quorum target. This is what makes

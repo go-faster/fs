@@ -116,6 +116,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Conditional/ConcurrentCASSingleWinner": testConditionalConcurrentCASSingleWinner,
 	"Conditional/Delete":                    testConditionalDelete,
 	"Conditional/CompleteMultipart":         testConditionalCompleteMultipart,
+	"Attributes/PartLayout":                 testObjectAttributesPartLayout,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1190,6 +1191,87 @@ func testConditionalIfMatch(t *testing.T, storage fs.Storage) {
 	_, err = putConditional(t, storage, "obj", []byte("v2"), "", put.ETag)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v2"), readObject(t, storage, "obj"))
+}
+
+// testObjectAttributesPartLayout covers fs.ObjectAttributer: a completed
+// multipart object keeps its part boundaries after the upload state is gone,
+// and a single PUT reports none.
+func testObjectAttributesPartLayout(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	attributer, ok := storage.(fs.ObjectAttributer)
+	if !ok {
+		t.Skip("backend does not implement fs.ObjectAttributer")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	// A single PUT has no layout: part 1 is the whole object.
+	_, err := putConditional(t, storage, "single", []byte("body"), "", "")
+	require.NoError(t, err)
+
+	attrs, err := attributer.ObjectAttributes(ctx, testBucket, "single")
+	require.NoError(t, err)
+	require.Empty(t, attrs.Parts)
+	require.Equal(t, int64(4), attrs.Size)
+
+	offset, length, ok := attrs.PartRange(1)
+	require.True(t, ok)
+	require.Equal(t, int64(0), offset)
+	require.Equal(t, int64(4), length)
+
+	_, _, ok = attrs.PartRange(2)
+	require.False(t, ok)
+
+	// A multipart object keeps one entry per completed part, in order.
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+		Bucket: testBucket,
+		Key:    "multi",
+	})
+	require.NoError(t, err)
+
+	sizes := []int{7, 3}
+	completed := make([]fs.CompletedPart, 0, len(sizes))
+
+	for i, size := range sizes {
+		part, err := storage.UploadPart(ctx, &fs.UploadPartRequest{
+			Bucket:     testBucket,
+			Key:        "multi",
+			UploadID:   upload.UploadID,
+			PartNumber: i + 1,
+			Reader:     bytes.NewReader(bytes.Repeat([]byte("x"), size)),
+			Size:       int64(size),
+		})
+		require.NoError(t, err)
+
+		completed = append(completed, fs.CompletedPart{PartNumber: i + 1, ETag: part.ETag})
+	}
+
+	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket:   testBucket,
+		Key:      "multi",
+		UploadID: upload.UploadID,
+		Parts:    completed,
+	})
+	require.NoError(t, err)
+
+	attrs, err = attributer.ObjectAttributes(ctx, testBucket, "multi")
+	require.NoError(t, err)
+	require.Len(t, attrs.Parts, 2)
+	require.Equal(t, 2, attrs.PartsCount())
+	require.Equal(t, int64(10), attrs.Size)
+	require.Equal(t, int64(7), attrs.Parts[0].Size)
+	require.Equal(t, int64(3), attrs.Parts[1].Size)
+
+	// The ranges tile the object exactly.
+	offset, length, ok = attrs.PartRange(2)
+	require.True(t, ok)
+	require.Equal(t, int64(7), offset)
+	require.Equal(t, int64(3), length)
+
+	// A missing object reports the usual error, not an empty layout.
+	_, err = attributer.ObjectAttributes(ctx, testBucket, "absent")
+	require.ErrorIs(t, err, fs.ErrObjectNotFound)
 }
 
 // testConditionalDelete covers fs.ConditionalDeleter: a guarded delete removes

@@ -178,6 +178,8 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 			h.GetObjectTagging(w, r)
 		case q.Has("acl"):
 			h.GetObjectACL(w, r)
+		case q.Has("attributes"):
+			h.GetObjectAttributes(w, r)
 		default:
 			h.GetObject(w, r)
 		}

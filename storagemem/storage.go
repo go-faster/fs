@@ -37,6 +37,9 @@ type object struct {
 	tags         []fs.Tag
 	acl          fs.ACL
 	owner        fs.Owner
+	// parts is the layout a multipart object was assembled from, retained
+	// after completion; nil for a single PUT.
+	parts []fs.ObjectPart
 }
 
 type bucket struct {
@@ -597,6 +600,23 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 
 	etag := multipartETag(parts, upload.parts)
 
+	// Retain the part layout: it is what lets the completed object still be
+	// described and read a part at a time.
+	layout := make([]fs.ObjectPart, 0, len(parts))
+
+	for _, part := range parts {
+		p, ok := upload.parts[part.PartNumber]
+		if !ok {
+			continue
+		}
+
+		layout = append(layout, fs.ObjectPart{
+			PartNumber: part.PartNumber,
+			Size:       int64(len(p.data)),
+			ETag:       p.etag,
+		})
+	}
+
 	b.objects[upload.key] = &object{
 		data:         data,
 		lastModified: time.Now(),
@@ -605,6 +625,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		tags:         upload.tags,
 		acl:          upload.acl,
 		owner:        upload.owner,
+		parts:        layout,
 	}
 
 	delete(s.uploads, req.UploadID)
@@ -628,4 +649,22 @@ func (s *Storage) AbortMultipartUpload(ctx context.Context, bucket, key, uploadI
 	delete(s.uploads, uploadID)
 
 	return nil
+}
+
+// ObjectAttributes implements fs.ObjectAttributer.
+func (s *Storage) ObjectAttributes(_ context.Context, bucketName, key string) (*fs.ObjectAttributes, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	obj, err := s.getObject(bucketName, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &fs.ObjectAttributes{
+		ETag:         obj.etag,
+		Size:         int64(len(obj.data)),
+		LastModified: obj.lastModified,
+		Parts:        append([]fs.ObjectPart(nil), obj.parts...),
+	}, nil
 }

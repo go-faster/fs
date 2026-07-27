@@ -229,6 +229,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 	var (
 		totalSize int64
 		partKeys  []string
+		layout    []fs.ObjectPart
 		etagHash  = md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	)
 
@@ -241,6 +242,14 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		totalSize += sc.Size
 
 		partKeys = append(partKeys, sc.Key)
+
+		// Retain the boundary: after the upload state is deleted this is the
+		// only record of where one part ends and the next begins.
+		layout = append(layout, fs.ObjectPart{
+			PartNumber: part.PartNumber,
+			Size:       sc.Size,
+			ETag:       sc.ETag,
+		})
 
 		if sum, err := hex.DecodeString(sc.Checksum); err == nil {
 			_, _ = etagHash.Write(sum)
@@ -281,6 +290,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		ACL:      rec.ACL,
 		Owner:    rec.Owner,
 		ETag:     etag,
+		Parts:    layout,
 	})
 
 	l.Unlock()

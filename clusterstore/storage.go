@@ -425,3 +425,19 @@ func normalizeACL(a fs.ACL) fs.ACL {
 
 	return a
 }
+
+// ObjectAttributes implements fs.ObjectAttributer, reading the part layout the
+// completion recorded in the sidecar.
+func (s *Storage) ObjectAttributes(ctx context.Context, bucket, key string) (*fs.ObjectAttributes, error) {
+	sc, err := s.statObject(ctx, bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &fs.ObjectAttributes{
+		ETag:         sc.ETag,
+		Size:         sc.Size,
+		LastModified: sc.Modified,
+		Parts:        append([]fs.ObjectPart(nil), sc.Parts...),
+	}, nil
+}

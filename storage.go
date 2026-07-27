@@ -180,3 +180,14 @@ type Storage interface {
 type ConditionalDeleter interface {
 	DeleteObjectIf(ctx context.Context, bucket, key string, cond Conditions) error
 }
+
+// ObjectAttributer is the optional capability of describing an object without
+// opening it, including the part layout a completed multipart object was
+// assembled from. It backs GetObjectAttributes and reading a single part with
+// ?partNumber=N; a backend that does not retain the layout can still implement
+// it by reporting Parts as nil, which reads as "written by a single PUT".
+//
+// It returns ErrBucketNotFound / ErrObjectNotFound the way GetObject does.
+type ObjectAttributer interface {
+	ObjectAttributes(ctx context.Context, bucket, key string) (*ObjectAttributes, error)
+}

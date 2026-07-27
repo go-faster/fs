@@ -44,6 +44,11 @@ type sidecar struct {
 	// and verify-on-read for bit-rot detection. Distinct from ETag, which for a
 	// multipart object is the "-N" composite, not a content hash.
 	Checksum string `json:"checksum,omitempty"`
+	// Parts is the part layout a multipart object was assembled from, retained
+	// after completion so the object can still be described and read a part at
+	// a time. Absent for single PUTs and for multipart objects written before
+	// the layout was recorded, both of which read as a single part.
+	Parts []fs.ObjectPart `json:"parts,omitempty"`
 }
 
 // metadata converts the sidecar's header fields to the domain type.

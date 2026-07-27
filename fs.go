@@ -128,6 +128,56 @@ type Part struct {
 	LastModified time.Time
 }
 
+// ObjectPart is one part of a *completed* multipart object, retained after the
+// upload finishes so the object can still be read and described a part at a
+// time (GetObjectAttributes, ?partNumber=N).
+type ObjectPart struct {
+	PartNumber int
+	Size       int64
+	ETag       string
+}
+
+// ObjectAttributes describes an object without opening its body: what
+// GetObjectAttributes reports, plus the part layout when the object was
+// assembled from a multipart upload (nil for a single PUT).
+type ObjectAttributes struct {
+	ETag         string
+	Size         int64
+	LastModified time.Time
+	// Parts is the completed part layout in ascending part-number order, or
+	// nil when the object was written by a single PUT.
+	Parts []ObjectPart
+}
+
+// PartRange returns the byte range covered by part number n (1-based) and
+// whether it exists. For an object with no recorded parts, part 1 is the whole
+// object, which is what S3 reports for a single PUT.
+func (a *ObjectAttributes) PartRange(n int) (offset, length int64, ok bool) {
+	if len(a.Parts) == 0 {
+		if n != 1 {
+			return 0, 0, false
+		}
+
+		return 0, a.Size, true
+	}
+
+	for _, p := range a.Parts {
+		if p.PartNumber == n {
+			return offset, p.Size, true
+		}
+
+		offset += p.Size
+	}
+
+	return 0, 0, false
+}
+
+// PartsCount reports how many parts the object was assembled from; zero when
+// it was written by a single PUT.
+func (a *ObjectAttributes) PartsCount() int {
+	return len(a.Parts)
+}
+
 // UploadPartRequest represents a request to upload a part.
 type UploadPartRequest struct {
 	Bucket     string

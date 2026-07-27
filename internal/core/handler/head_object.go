@@ -10,6 +10,11 @@ func (h *handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	bucket, key, _ := strings.Cut(path, "/")
 
+	if raw := r.URL.Query().Get("partNumber"); raw != "" {
+		h.servePartNumber(w, r, bucket, key, raw)
+		return
+	}
+
 	resp, err := h.service.GetObject(ctx, bucket, key)
 	if err != nil {
 		renderError(ctx, w, r, err)
