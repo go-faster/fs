@@ -27,6 +27,11 @@ on:
 permissions:
   contents: read
 
+# One run per ref; see the same block in s3tests.yml for why.
+concurrency:
+  group: s3tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Keep in lockstep with .github/workflows/s3tests.yml: the two runs must
   # execute the same suite revision or their results are not comparable.
@@ -35,6 +40,9 @@ env:
 jobs:
   s3tests-cluster:
     runs-on: ubuntu-latest
+    # Three nodes and etcd, so slower than the single-node job, but nowhere
+    # near this. Hitting it means stuck, not busy.
+    timeout-minutes: 20
 
     services:
       etcd:
