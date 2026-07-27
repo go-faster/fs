@@ -181,8 +181,10 @@ func (s *Storage) currentVersion(bucket, key string) (*versionSidecar, bool, err
 // versionedBucket reports whether writes to this bucket should create
 // versions.
 func (s *Storage) versionedBucket(bucket string) bool {
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
+	// Read-shared: this is on the PutObject path, so an exclusive lock here
+	// would serialize every concurrent write to the store.
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 
 	return s.readBucketMeta(bucket).Versioning == fs.VersioningEnabled
 }

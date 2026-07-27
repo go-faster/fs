@@ -169,8 +169,8 @@ func (s *Storage) BucketCORS(_ context.Context, bucket string) ([]fs.CORSRule, e
 		return nil, fs.ErrBucketNotFound
 	}
 
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 
 	return s.readBucketMeta(bucket).CORS, nil
 }
@@ -201,8 +201,8 @@ func (s *Storage) BucketPublicAccessBlock(_ context.Context, bucket string) (*fs
 		return nil, fs.ErrBucketNotFound
 	}
 
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 
 	return s.readBucketMeta(bucket).PublicAccessBlock, nil
 }
@@ -228,8 +228,8 @@ func (s *Storage) BucketObjectOwnership(_ context.Context, bucket string) (strin
 		return "", fs.ErrBucketNotFound
 	}
 
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 
 	return s.readBucketMeta(bucket).ObjectOwnership, nil
 }
@@ -297,8 +297,8 @@ func (s *Storage) BucketVersioning(_ context.Context, bucket string) (fs.Version
 		return fs.VersioningUnset, fs.ErrBucketNotFound
 	}
 
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
 
 	return s.readBucketMeta(bucket).Versioning, nil
 }

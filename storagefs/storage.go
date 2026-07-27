@@ -68,8 +68,15 @@ type Storage struct {
 	etagMu    sync.Mutex
 	etagCache map[string]etagEntry
 
-	// metaMu serializes sidecar read-modify-write cycles (tagging updates).
-	metaMu sync.Mutex
+	// metaMu serializes sidecar and bucket-meta read-modify-write cycles
+	// (tagging and ACL updates), which are read-mutate-write over a file and
+	// would otherwise lose one of two concurrent updates.
+	//
+	// Pure readers take RLock and so do not contend with each other. That
+	// matters because one of them, versionedBucket, is on the PutObject path:
+	// under an exclusive lock every concurrent write to the store would
+	// serialize behind a mutex held across a file read.
+	metaMu sync.RWMutex
 
 	// putMu serializes the finalize step of PutObject (conditional-write
 	// evaluation, rename into place, and sidecar write) so concurrent
