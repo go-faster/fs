@@ -53,6 +53,13 @@ type sidecar struct {
 	// UploadID names the multipart upload that produced the object, so a
 	// retried completion can be told from a stale one. Empty for a single PUT.
 	UploadID string `json:"upload_id,omitempty"`
+	// ChecksumAlgorithm, Checksum and ChecksumType hold the client-visible
+	// checksum (x-amz-checksum-*) the object was written with. Distinct from
+	// Checksum's namesake below: this one the client chose and expects back,
+	// while the integrity checksum is ours and is never reported.
+	ChecksumAlgorithm string `json:"checksum_algorithm,omitempty"`
+	ClientChecksum    string `json:"client_checksum,omitempty"`
+	ChecksumType      string `json:"checksum_type,omitempty"`
 	// Encryption records how the body is encrypted at rest, and is absent for
 	// a body stored in the clear. It is per object rather than per store so
 	// that enabling encryption leaves existing objects readable and does not

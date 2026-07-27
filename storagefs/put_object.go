@@ -76,7 +76,17 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 		return nil, err
 	}
 
-	size, err := io.Copy(io.MultiWriter(enc, hash), req.Reader)
+	// The client-visible checksum is computed over the same bytes as the ETag
+	// — what arrived, before any encryption — so it is the digest of the
+	// object as the client knows it rather than of how it happens to be
+	// stored.
+	cks, err := newChecksum(req.ChecksumAlgorithm)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+
+	size, err := io.Copy(io.MultiWriter(enc, hash, cks), req.Reader)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("failed to write object: %w", err)
@@ -101,6 +111,14 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	}
 
 	etag := hex.EncodeToString(hash.Sum(nil))
+
+	// Both digests are checked here, at the last moment before the object
+	// becomes visible: refusing later would leave content readable that the
+	// client was about to be told is corrupt.
+	if err := cks.verify(req.Checksum); err != nil {
+		_ = os.Remove(tmp.Name())
+		return nil, err
+	}
 
 	// The body is on disk but not yet visible: this is the last moment at which
 	// a digest mismatch can be refused without anyone having been able to read
@@ -140,6 +158,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	sc := newSidecar(req.Key, etag, etag, req.Metadata, req.Tags, req.ACL, req.Owner)
 	sc.Encryption = enc.finish(size)
+	cks.record(sc)
 
 	// A versioned write records the same sidecar under the version's own id,
 	// encryption record included, so a version reads back exactly as the
@@ -161,6 +180,8 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	return &fs.PutObjectResponse{
 		ETag:                 etag,
+		ChecksumAlgorithm:    req.ChecksumAlgorithm,
+		Checksum:             cks.value(),
 		VersionID:            versionID,
 		ServerSideEncryption: req.ServerSideEncryption,
 	}, nil

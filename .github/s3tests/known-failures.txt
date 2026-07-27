@@ -76,17 +76,12 @@ s3tests/functional/test_s3.py::test_sse_kms_transfer_1kb
 s3tests/functional/test_s3.py::test_sse_s3_default_method_head
 s3tests/functional/test_s3.py::test_sse_s3_default_multipart_upload
 
-# --- Client-visible checksums (7) --------------------------------------------
+# --- Client-visible checksums (5) --------------------------------------------
 #
-# x-amz-checksum-* is accepted and ignored: the digest is neither verified nor
-# reported, so a wrong one is stored and acknowledged as if it had been
-# checked. #120.
-#
-# Listed before the tests exist at the pinned S3T_REF — s3t ignores an entry
-# naming a test it does not carry — so that the gate stays honest the moment
-# the pin moves rather than going red on the bump.
-s3tests/functional/test_s3.py::test_object_checksum_crc64nvme
-s3tests/functional/test_s3.py::test_object_checksum_sha256
+# The single-PUT path verifies and reports x-amz-checksum-* now; what is left
+# is multipart, where a part carries its own digest and the completed object
+# carries a COMPOSITE one — a digest of the part digests, not of the body.
+# #120.
 s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_crc32
 s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_crc32c
 s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_crc64nvme

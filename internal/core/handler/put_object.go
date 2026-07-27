@@ -12,6 +12,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/s3err"
 )
 
@@ -103,6 +104,8 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		ServerSideEncryption: h.requestedEncryption(r, bucket),
 	}
 
+	req.ChecksumAlgorithm, req.Checksum = requestChecksum(r)
+
 	resp, err := h.service.PutObject(ctx, req)
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -112,6 +115,16 @@ func (h *handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	writeVersionID(w, resp.VersionID)
 	w.Header().Set("ETag", quoteETag(resp.ETag))
 	writeSSE(w, resp.ServerSideEncryption)
+
+	// A write echoes the checksum unconditionally: the client just sent the
+	// body, so there is nothing to withhold, and the SDKs read it back to
+	// confirm the digest they computed is the one that was stored.
+	if resp.Checksum != "" {
+		if a, err := checksum.Parse(resp.ChecksumAlgorithm); err == nil && a != "" {
+			w.Header().Set(a.Header(), resp.Checksum)
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
