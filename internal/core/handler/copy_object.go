@@ -31,11 +31,13 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	destBucket, destKey, _ := strings.Cut(path, "/")
 
-	srcBucket, srcKey, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	src, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
 	if !ok {
 		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-copy-source"))
 		return
 	}
+
+	srcBucket, srcKey := src.Bucket, src.Key
 
 	metadataDirective, ok := parseDirective(r.Header.Get("X-Amz-Metadata-Directive"))
 	if !ok {
@@ -50,30 +52,33 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Copying an object onto itself is only allowed when it changes something
-	// (metadata REPLACE), matching S3.
-	if srcBucket == destBucket && srcKey == destKey && metadataDirective != directiveReplace {
+	// (metadata REPLACE), matching S3. Naming a source version is such a
+	// change: it is how S3 restores an old version, by copying it back over the
+	// key to become the current one.
+	if srcBucket == destBucket && srcKey == destKey &&
+		metadataDirective != directiveReplace && src.VersionID == "" {
 		renderAPIError(ctx, w, r, s3err.InvalidRequest,
 			errors.New("copy to itself without metadata directive REPLACE"))
 
 		return
 	}
 
-	src, err := h.service.GetObject(ctx, srcBucket, srcKey)
+	srcObj, err := h.getObjectVersion(ctx, srcBucket, srcKey, src.VersionID)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return
 	}
 
-	defer func() { _ = src.Reader.Close() }()
+	defer func() { _ = srcObj.Reader.Close() }()
 
-	if !copySourceConditionsHold(r.Header, src) {
+	if !copySourceConditionsHold(r.Header, srcObj) {
 		renderAPIError(ctx, w, r, s3err.PreconditionFailed,
 			errors.New("x-amz-copy-source-if-* condition failed"))
 
 		return
 	}
 
-	metadata := src.Metadata
+	metadata := srcObj.Metadata
 	if metadataDirective == directiveReplace {
 		metadata = extractObjectMetadata(r.Header)
 	}
@@ -91,10 +96,10 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	put := &fs.PutObjectRequest{
-		Reader:   src.Reader,
+		Reader:   srcObj.Reader,
 		Bucket:   destBucket,
 		Key:      destKey,
-		Size:     src.Size,
+		Size:     srcObj.Size,
 		Metadata: metadata,
 		Tags:     tags,
 		ACL:      fs.ParseACL(r.Header.Get("X-Amz-Acl")),
@@ -184,16 +189,34 @@ func parseDirective(value string) (string, bool) {
 	}
 }
 
+// copySource is the object a copy reads from: a key, and optionally the
+// version of it the request named.
+type copySource struct {
+	Bucket    string
+	Key       string
+	VersionID string
+}
+
 // parseCopySource parses an x-amz-copy-source value of the form "/bucket/key" or
 // "bucket/key", tolerating a leading slash, URL-encoding, and a trailing
 // ?versionId. The bucket and key are URL-decoded independently so encoded
 // slashes inside the key are preserved.
-func parseCopySource(s string) (bucket, key string, ok bool) {
+//
+// The ?versionId is part of what the header addresses, not decoration: dropping
+// it silently copies whatever is current instead of the version the client
+// asked for, which is wrong bytes rather than an error.
+func parseCopySource(s string) (src copySource, ok bool) {
 	if s == "" {
-		return "", "", false
+		return copySource{}, false
 	}
 
 	if i := strings.IndexByte(s, '?'); i >= 0 {
+		// Only versionId is defined here; anything else is ignored rather than
+		// rejected, matching how the rest of the query surface is treated.
+		if q, err := url.ParseQuery(s[i+1:]); err == nil {
+			src.VersionID = q.Get("versionId")
+		}
+
 		s = s[:i]
 	}
 
@@ -201,7 +224,7 @@ func parseCopySource(s string) (bucket, key string, ok bool) {
 
 	b, k, found := strings.Cut(s, "/")
 	if !found {
-		return "", "", false
+		return copySource{}, false
 	}
 
 	if decoded, err := url.QueryUnescape(b); err == nil {
@@ -213,8 +236,10 @@ func parseCopySource(s string) (bucket, key string, ok bool) {
 	}
 
 	if b == "" || k == "" {
-		return "", "", false
+		return copySource{}, false
 	}
 
-	return b, k, true
+	src.Bucket, src.Key = b, k
+
+	return src, true
 }

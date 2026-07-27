@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -286,9 +287,18 @@ func writeVersionID(w http.ResponseWriter, versionID string) {
 func (h *handler) getObjectMaybeVersion(
 	r *http.Request, bucket, key string,
 ) (*fs.GetObjectResponse, error) {
-	versionID := r.URL.Query().Get("versionId")
+	return h.getObjectVersion(r.Context(), bucket, key, r.URL.Query().Get("versionId"))
+}
+
+// getObjectVersion serves exactly the named version, or the current one when
+// versionID is empty. It is what every read that can be version-addressed goes
+// through — GET, HEAD, and both halves of a server-side copy — so that naming a
+// version means the same thing wherever it is named.
+func (h *handler) getObjectVersion(
+	ctx context.Context, bucket, key, versionID string,
+) (*fs.GetObjectResponse, error) {
 	if versionID == "" {
-		return h.service.GetObject(r.Context(), bucket, key)
+		return h.service.GetObject(ctx, bucket, key)
 	}
 
 	versioner, ok := h.service.(fs.Versioner)
@@ -296,5 +306,5 @@ func (h *handler) getObjectMaybeVersion(
 		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot address versions")
 	}
 
-	return versioner.GetObjectVersion(r.Context(), bucket, key, versionID)
+	return versioner.GetObjectVersion(ctx, bucket, key, versionID)
 }
