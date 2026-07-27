@@ -43,6 +43,10 @@ var (
 		"The server side encryption configuration was not found.",
 	}
 
+	IllegalVersioningConfiguration = APIError{
+		"IllegalVersioningConfigurationException", http.StatusBadRequest,
+		"The versioning configuration specified in the request is invalid.",
+	}
 	OwnershipControlsNotFound = APIError{
 		"OwnershipControlsNotFoundError", http.StatusNotFound,
 		"The bucket ownership controls were not found.",

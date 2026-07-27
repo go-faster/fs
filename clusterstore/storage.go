@@ -524,3 +524,18 @@ func refuseEncryption(algorithm string) error {
 	return errors.Wrapf(fs.ErrUnsupportedOperation,
 		"server-side encryption (%s) is not supported by this storage backend", algorithm)
 }
+
+// SetBucketVersioning implements fs.Versioner.
+func (s *Storage) SetBucketVersioning(ctx context.Context, bucket string, state fs.VersioningState) error {
+	return s.coord.SetBucketVersioning(ctx, bucket, state)
+}
+
+// BucketVersioning implements fs.Versioner.
+func (s *Storage) BucketVersioning(ctx context.Context, bucket string) (fs.VersioningState, error) {
+	info, err := s.coord.fetchBucket(ctx, s.coord.topo.Topology(), bucket)
+	if err != nil {
+		return fs.VersioningUnset, err
+	}
+
+	return info.Versioning, nil
+}

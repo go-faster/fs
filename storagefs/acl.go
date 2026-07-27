@@ -32,6 +32,9 @@ type bucketMeta struct {
 	ObjectOwnership string `json:"object_ownership,omitempty"`
 	// Encryption is the ?encryption default algorithm; empty when unset.
 	Encryption string `json:"encryption,omitempty"`
+	// Versioning is the bucket's versioning state; empty means never
+	// configured, which is distinct from Suspended.
+	Versioning fs.VersioningState `json:"versioning,omitempty"`
 }
 
 func (s *Storage) bucketMetaPath(bucket string) string {
@@ -271,4 +274,31 @@ func (s *Storage) SetBucketEncryption(_ context.Context, bucket, algorithm strin
 	meta.Encryption = algorithm
 
 	return s.writeBucketMeta(bucket, meta)
+}
+
+// SetBucketVersioning implements fs.Versioner.
+func (s *Storage) SetBucketVersioning(_ context.Context, bucket string, state fs.VersioningState) error {
+	if !s.bucketExists(bucket) {
+		return fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	meta := s.readBucketMeta(bucket)
+	meta.Versioning = state
+
+	return s.writeBucketMeta(bucket, meta)
+}
+
+// BucketVersioning implements fs.Versioner.
+func (s *Storage) BucketVersioning(_ context.Context, bucket string) (fs.VersioningState, error) {
+	if !s.bucketExists(bucket) {
+		return fs.VersioningUnset, fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	return s.readBucketMeta(bucket).Versioning, nil
 }

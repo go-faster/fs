@@ -63,6 +63,9 @@ type BucketInfo struct {
 	PublicAccessBlock *fs.PublicAccessBlock `json:"public_access_block,omitempty"`
 	// ObjectOwnership is the ?ownershipControls rule; empty when unset.
 	ObjectOwnership string `json:"object_ownership,omitempty"`
+	// Versioning is the bucket's versioning state; empty means never
+	// configured, which is distinct from Suspended.
+	Versioning fs.VersioningState `json:"versioning,omitempty"`
 	// Scheme overrides the cluster default replication scheme for this
 	// bucket's objects ("rf2.5", "rf3", "ec:k,m"); empty applies the default.
 	// Changing it affects new writes immediately; existing objects follow
@@ -281,6 +284,22 @@ func (c *Coordinator) SetBucketObjectOwnership(ctx context.Context, bucket, owne
 	}
 
 	info.ObjectOwnership = ownership
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// SetBucketVersioning rewrites the bucket record's versioning state.
+func (c *Coordinator) SetBucketVersioning(
+	ctx context.Context, bucket string, state fs.VersioningState,
+) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.Versioning = state
 
 	return c.writeBucket(ctx, topo, info)
 }

@@ -104,6 +104,37 @@ func corsHeaderAllowed(allowed []string, header string) bool {
 	return false
 }
 
+// VersioningState is a bucket's versioning setting. The zero value means the
+// bucket was never versioned, which is a third state and not a synonym for
+// Suspended: a never-versioned bucket reports no status at all, and its
+// objects have no version IDs until the first enable adopts them as "null".
+//
+// A bucket moves unversioned -> Enabled -> Suspended -> Enabled -> ... and can
+// never go back to unversioned; that is S3's model, and it is what lets the
+// read path assume that a bucket with any versioning history keeps its
+// versions forever.
+type VersioningState string
+
+// The versioning states a bucket can be in.
+const (
+	// VersioningUnset is a bucket that has never had versioning configured.
+	VersioningUnset VersioningState = ""
+	// VersioningEnabled makes every write create a new version.
+	VersioningEnabled VersioningState = "Enabled"
+	// VersioningSuspended sends writes to the "null" version while retaining
+	// the versions written while it was enabled.
+	VersioningSuspended VersioningState = "Suspended"
+)
+
+// NullVersionID is the version ID of an object written while versioning was
+// suspended, and of one that predates the first enable.
+//
+// It is a real version ID, not a sentinel for "no version": clients send it,
+// listings report it, and a delete addressed at it removes exactly that
+// version. Code that treats it as equivalent to the empty string will work
+// until the first suspended write.
+const NullVersionID = "null"
+
 // PublicAccessBlock is a bucket's public-access-block configuration: four
 // independent switches over the ways a bucket can become publicly readable.
 // Absent (a nil *PublicAccessBlock) means no configuration, which S3 reports

@@ -246,6 +246,21 @@ type BucketEncrypter interface {
 	SetBucketEncryption(ctx context.Context, bucket, algorithm string) error
 }
 
+// Versioner is the optional capability of keeping more than one version of a
+// key. A backend that does not implement it reports NotImplemented for
+// PutBucketVersioning and behaves exactly as it does today.
+//
+// The interface grows as the feature does; today it carries the bucket state
+// only, which is what decides whether any of the rest applies.
+type Versioner interface {
+	// SetBucketVersioning records the bucket's versioning state. Moving to
+	// VersioningUnset is not possible: S3 has no way back to never-versioned.
+	SetBucketVersioning(ctx context.Context, bucket string, state VersioningState) error
+	// BucketVersioning returns the bucket's state, VersioningUnset when it has
+	// never been configured; ErrBucketNotFound when the bucket is absent.
+	BucketVersioning(ctx context.Context, bucket string) (VersioningState, error)
+}
+
 // ObjectAttributer is the optional capability of describing an object without
 // opening it, including the part layout a completed multipart object was
 // assembled from. It backs GetObjectAttributes and reading a single part with
