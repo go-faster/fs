@@ -34,6 +34,14 @@ var (
 	NoSuchUpload            = APIError{"NoSuchUpload", http.StatusNotFound, "The specified multipart upload does not exist."}
 	NoSuchBucketPolicy      = APIError{"NoSuchBucketPolicy", http.StatusNotFound, "The bucket policy does not exist."}
 	NoSuchCORSConfiguration = APIError{"NoSuchCORSConfiguration", http.StatusNotFound, "The CORS configuration does not exist."}
+	NoSuchPublicAccessBlock = APIError{
+		"NoSuchPublicAccessBlockConfiguration", http.StatusNotFound,
+		"The public access block configuration was not found.",
+	}
+	OwnershipControlsNotFound = APIError{
+		"OwnershipControlsNotFoundError", http.StatusNotFound,
+		"The bucket ownership controls were not found.",
+	}
 	BucketAlreadyExists     = APIError{"BucketAlreadyExists", http.StatusConflict, "The requested bucket name is not available."}
 	BucketAlreadyOwnedByYou = APIError{"BucketAlreadyOwnedByYou", http.StatusConflict, "The bucket you tried to create already exists and you own it."}
 	BucketNotEmpty          = APIError{"BucketNotEmpty", http.StatusConflict, "The bucket you tried to delete is not empty."}

@@ -120,6 +120,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Keyspace/OverlappingKeys":              testOverlappingKeys,
 	"Ownership/BucketOwner":                 testBucketOwner,
 	"CORS/RoundTrip":                        testBucketCORS,
+	"Settings/PublicAccessAndOwnership":     testBucketSettings,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
 	"ACL/BucketNotFound":                    testACLBucketNotFound,
@@ -1234,6 +1235,56 @@ func testBucketCORS(t *testing.T, storage fs.Storage) {
 	require.Empty(t, got)
 
 	_, err = store.BucketCORS(ctx, testBucket+"-absent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+}
+
+// testBucketSettings covers fs.BucketSettingsStore. Both settings have to
+// distinguish "unset" from any value they can hold, because S3 reports an
+// absent configuration as its own error rather than as a default.
+func testBucketSettings(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	store, ok := storage.(fs.BucketSettingsStore)
+	if !ok {
+		t.Skip("backend does not store bucket settings")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	block, err := store.BucketPublicAccessBlock(ctx, testBucket)
+	require.NoError(t, err)
+	require.Nil(t, block)
+
+	want := &fs.PublicAccessBlock{BlockPublicACLs: true, BlockPublicPolicy: true}
+	require.NoError(t, store.SetBucketPublicAccessBlock(ctx, testBucket, want))
+
+	block, err = store.BucketPublicAccessBlock(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, want, block)
+
+	require.NoError(t, store.SetBucketPublicAccessBlock(ctx, testBucket, nil))
+
+	block, err = store.BucketPublicAccessBlock(ctx, testBucket)
+	require.NoError(t, err)
+	require.Nil(t, block)
+
+	ownership, err := store.BucketObjectOwnership(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, ownership)
+
+	require.NoError(t, store.SetBucketObjectOwnership(ctx, testBucket, fs.OwnershipBucketOwnerEnforced))
+
+	ownership, err = store.BucketObjectOwnership(ctx, testBucket)
+	require.NoError(t, err)
+	require.Equal(t, fs.OwnershipBucketOwnerEnforced, ownership)
+
+	require.NoError(t, store.SetBucketObjectOwnership(ctx, testBucket, ""))
+
+	ownership, err = store.BucketObjectOwnership(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, ownership)
+
+	_, err = store.BucketPublicAccessBlock(ctx, testBucket+"-absent")
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 

@@ -59,6 +59,10 @@ type BucketInfo struct {
 	Owner fs.Owner `json:"owner,omitzero"`
 	// CORS is the bucket's rule set, as set through the ?cors subresource.
 	CORS []fs.CORSRule `json:"cors,omitempty"`
+	// PublicAccessBlock is the ?publicAccessBlock configuration; nil when unset.
+	PublicAccessBlock *fs.PublicAccessBlock `json:"public_access_block,omitempty"`
+	// ObjectOwnership is the ?ownershipControls rule; empty when unset.
+	ObjectOwnership string `json:"object_ownership,omitempty"`
 	// Scheme overrides the cluster default replication scheme for this
 	// bucket's objects ("rf2.5", "rf3", "ec:k,m"); empty applies the default.
 	// Changing it affects new writes immediately; existing objects follow
@@ -247,6 +251,38 @@ func (c *Coordinator) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSR
 	}
 
 	return info.CORS, nil
+}
+
+// SetBucketPublicAccessBlock rewrites the bucket record's public-access-block
+// configuration; nil clears it.
+func (c *Coordinator) SetBucketPublicAccessBlock(
+	ctx context.Context, bucket string, block *fs.PublicAccessBlock,
+) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.PublicAccessBlock = block
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// SetBucketObjectOwnership rewrites the bucket record's ownership rule; empty
+// clears it.
+func (c *Coordinator) SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.ObjectOwnership = ownership
+
+	return c.writeBucket(ctx, topo, info)
 }
 
 // SetBucketScheme rewrites the bucket record with a new object scheme

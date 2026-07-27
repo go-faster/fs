@@ -315,6 +315,63 @@ func (s Service) DeleteBucketCORS(ctx context.Context, bucket string) error {
 	return store.DeleteBucketCORS(ctx, bucket)
 }
 
+// BucketPublicAccessBlock implements fs.BucketSettingsStore.
+func (s Service) BucketPublicAccessBlock(ctx context.Context, bucket string) (*fs.PublicAccessBlock, error) {
+	store, err := s.settingsStore(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return store.BucketPublicAccessBlock(ctx, bucket)
+}
+
+// SetBucketPublicAccessBlock implements fs.BucketSettingsStore.
+func (s Service) SetBucketPublicAccessBlock(
+	ctx context.Context, bucket string, block *fs.PublicAccessBlock,
+) error {
+	store, err := s.settingsStore(bucket)
+	if err != nil {
+		return err
+	}
+
+	return store.SetBucketPublicAccessBlock(ctx, bucket, block)
+}
+
+// BucketObjectOwnership implements fs.BucketSettingsStore.
+func (s Service) BucketObjectOwnership(ctx context.Context, bucket string) (string, error) {
+	store, err := s.settingsStore(bucket)
+	if err != nil {
+		return "", err
+	}
+
+	return store.BucketObjectOwnership(ctx, bucket)
+}
+
+// SetBucketObjectOwnership implements fs.BucketSettingsStore.
+func (s Service) SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error {
+	store, err := s.settingsStore(bucket)
+	if err != nil {
+		return err
+	}
+
+	return store.SetBucketObjectOwnership(ctx, bucket, ownership)
+}
+
+// settingsStore validates the bucket name and resolves the backend's
+// per-bucket settings capability.
+func (s Service) settingsStore(bucket string) (fs.BucketSettingsStore, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketSettingsStore)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store bucket settings")
+	}
+
+	return store, nil
+}
+
 // ObjectAttributes implements fs.ObjectAttributer by forwarding to the backend
 // when it can describe an object without opening it, and reporting
 // ErrUnsupportedOperation when it cannot.

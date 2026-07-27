@@ -13,6 +13,9 @@ import (
 	"github.com/go-faster/fs/internal/s3err"
 )
 
+// s3XMLNamespace is the namespace every S3 XML document carries.
+const s3XMLNamespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+
 type handler struct {
 	service fs.Storage
 	// region is the location constraint reported for every bucket. Empty means
@@ -175,6 +178,10 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.GetBucketLocation(w, r)
 		case q.Has("cors"):
 			h.GetBucketCORS(w, r)
+		case q.Has("publicAccessBlock"):
+			h.GetBucketPublicAccessBlock(w, r)
+		case q.Has("ownershipControls"):
+			h.GetBucketOwnershipControls(w, r)
 		case q.Has("versions"):
 			h.ListObjectVersions(w, r)
 		case q.Has("uploads"):
@@ -187,8 +194,15 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.ListObjectsV1(w, r)
 		}
 	case http.MethodPut:
-		if q.Has("cors") {
+		switch {
+		case q.Has("cors"):
 			h.PutBucketCORS(w, r)
+			return
+		case q.Has("publicAccessBlock"):
+			h.PutBucketPublicAccessBlock(w, r)
+			return
+		case q.Has("ownershipControls"):
+			h.PutBucketOwnershipControls(w, r)
 			return
 		}
 
@@ -201,8 +215,15 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 	case http.MethodHead:
 		h.HeadBucket(w, r)
 	case http.MethodDelete:
-		if q.Has("cors") {
+		switch {
+		case q.Has("cors"):
 			h.DeleteBucketCORS(w, r)
+			return
+		case q.Has("publicAccessBlock"):
+			h.DeleteBucketPublicAccessBlock(w, r)
+			return
+		case q.Has("ownershipControls"):
+			h.DeleteBucketOwnershipControls(w, r)
 			return
 		}
 
@@ -279,7 +300,7 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 var unsupportedBucketSubresources = []string{
 	"accelerate", "acl", "analytics", "encryption", "inventory",
 	"lifecycle", "logging", "metrics", "notification", "object-lock",
-	"ownershipControls", "policy", "policyStatus", "publicAccessBlock",
+	"policy", "policyStatus",
 	"replication", "requestPayment", "tagging", "versioning", "website",
 }
 

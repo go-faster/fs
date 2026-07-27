@@ -8,6 +8,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/s3err"
 )
 
 // CreateBucket implements PUT /{bucket}. Any LocationConstraint in the request
@@ -27,6 +28,25 @@ func (h *handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	if err := h.createBucket(ctx, name); err != nil {
 		renderError(ctx, w, r, err)
 		return
+	}
+
+	// x-amz-object-ownership sets the ownership rule at create time, which is
+	// the only moment BucketOwnerEnforced can be chosen before any object
+	// exists to be owned.
+	if ownership := r.Header.Get("X-Amz-Object-Ownership"); ownership != "" {
+		if !validObjectOwnership(ownership) {
+			renderAPIError(ctx, w, r, s3err.InvalidArgument,
+				errors.Errorf("unknown object ownership %q", ownership))
+
+			return
+		}
+
+		if store, ok := h.service.(fs.BucketSettingsStore); ok {
+			if err := store.SetBucketObjectOwnership(ctx, name, ownership); err != nil {
+				renderError(ctx, w, r, err)
+				return
+			}
+		}
 	}
 
 	if acl := fs.ParseACL(r.Header.Get("X-Amz-Acl")); acl != fs.ACLPrivate {

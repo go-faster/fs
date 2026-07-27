@@ -104,6 +104,30 @@ func corsHeaderAllowed(allowed []string, header string) bool {
 	return false
 }
 
+// PublicAccessBlock is a bucket's public-access-block configuration: four
+// independent switches over the ways a bucket can become publicly readable.
+// Absent (a nil *PublicAccessBlock) means no configuration, which S3 reports
+// as NoSuchPublicAccessBlockConfiguration rather than as all-false.
+type PublicAccessBlock struct {
+	BlockPublicACLs       bool
+	IgnorePublicACLs      bool
+	BlockPublicPolicy     bool
+	RestrictPublicBuckets bool
+}
+
+// Object-ownership settings, which decide who owns objects another principal
+// writes into a bucket. Empty means the bucket has no configuration.
+const (
+	// OwnershipBucketOwnerEnforced disables ACLs entirely; the bucket owner
+	// owns every object.
+	OwnershipBucketOwnerEnforced = "BucketOwnerEnforced"
+	// OwnershipBucketOwnerPreferred gives the bucket owner objects written
+	// with the bucket-owner-full-control canned ACL.
+	OwnershipBucketOwnerPreferred = "BucketOwnerPreferred"
+	// OwnershipObjectWriter leaves each object owned by its writer.
+	OwnershipObjectWriter = "ObjectWriter"
+)
+
 // Tag is a single object tag.
 type Tag struct {
 	Key   string
