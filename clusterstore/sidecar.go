@@ -45,6 +45,11 @@ type Sidecar struct {
 	// Encryption records how the stored bytes are encrypted, absent when they
 	// are stored in the clear.
 	Encryption *EncryptionInfo `json:"encryption,omitempty"`
+	// RequestedEncryption is the algorithm a multipart upload asked for when
+	// it was created, carried on the upload's own record so that each part and
+	// the completed object are sealed the same way. It is only ever set on an
+	// upload record, which has no body of its own to encrypt.
+	RequestedEncryption string `json:"requested_encryption,omitempty"`
 	// Generation names the fragment set this sidecar commits.
 	Generation string `json:"generation"`
 	// Seq is a per-object write sequence (previous committed Seq + 1): the

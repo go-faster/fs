@@ -237,3 +237,98 @@ func (f *fakeCluster) disksOf(node cluster.NodeID) []cluster.DiskID {
 
 	return disks
 }
+
+// TestClusterMultipartEncrypted covers the path a large object takes on the
+// cluster. Part sizes are deliberately not multiples of the chunk size, so a
+// completion that concatenated the parts as they were sealed would fail here.
+func TestClusterMultipartEncrypted(t *testing.T) {
+	for _, s := range []scheme.Scheme{
+		{Kind: scheme.RF3},
+		{Kind: scheme.EC, K: 2, M: 1},
+	} {
+		t.Run(s.String(), func(t *testing.T) {
+			store, fc := encryptedCluster(t, s, testKeyring(t))
+			ctx := t.Context()
+
+			require.NoError(t, store.CreateBucket(ctx, "bucket"))
+
+			up, err := store.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+				Bucket: "bucket", Key: "big", ServerSideEncryption: sse.Algorithm,
+			})
+			require.NoError(t, err)
+
+			partBodies := [][]byte{
+				bytes.Repeat([]byte("alpha part;"), 7000),
+				bytes.Repeat([]byte("beta part;"), 5000),
+				[]byte("gamma tail"),
+			}
+
+			completed := make([]fs.CompletedPart, 0, len(partBodies))
+
+			for i, body := range partBodies {
+				p, err := store.UploadPart(ctx, &fs.UploadPartRequest{
+					Bucket: "bucket", Key: "big", UploadID: up.UploadID,
+					PartNumber: i + 1, Reader: bytes.NewReader(body), Size: int64(len(body)),
+				})
+				require.NoError(t, err)
+				require.Equal(t, int64(len(body)), p.Size, "a part must report its plaintext size")
+
+				completed = append(completed, fs.CompletedPart{PartNumber: i + 1, ETag: p.ETag})
+			}
+
+			// Parts are sealed on arrival: an abandoned upload must not leave
+			// readable content behind.
+			requireNoPlaintextOnDisk(t, fc, []byte("alpha part"))
+
+			resp, err := store.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+				Bucket: "bucket", Key: "big", UploadID: up.UploadID, Parts: completed,
+			})
+			require.NoError(t, err)
+			require.Equal(t, sse.Algorithm, resp.ServerSideEncryption)
+
+			want := bytes.Join(partBodies, nil)
+
+			got, err := store.GetObject(ctx, "bucket", "big")
+			require.NoError(t, err)
+
+			defer func() { _ = got.Reader.Close() }()
+
+			require.Equal(t, int64(len(want)), got.Size, "completed object must report the plaintext size")
+			require.Equal(t, sse.Algorithm, got.ServerSideEncryption)
+
+			body, err := io.ReadAll(got.Reader)
+			require.NoError(t, err)
+			require.Equal(t, want, body)
+
+			requireNoPlaintextOnDisk(t, fc, []byte("beta part"))
+		})
+	}
+}
+
+// requireNoPlaintextOnDisk fails if any fragment on any peer contains needle.
+func requireNoPlaintextOnDisk(t *testing.T, fc *fakeCluster, needle []byte) {
+	t.Helper()
+
+	for node, store := range fc.stores {
+		for _, disk := range fc.disksOf(node) {
+			names, err := store.List(t.Context(), disk, "")
+			if err != nil {
+				continue
+			}
+
+			for _, name := range names {
+				rc, _, err := store.Open(t.Context(), disk, name)
+				if err != nil {
+					continue
+				}
+
+				data, err := io.ReadAll(rc)
+				_ = rc.Close()
+
+				require.NoError(t, err)
+				require.False(t, bytes.Contains(data, needle),
+					"fragment %s on %s holds readable plaintext", name, node)
+			}
+		}
+	}
+}

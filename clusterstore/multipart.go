@@ -49,8 +49,13 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		return nil, err
 	}
 
-	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
-		return nil, err
+	// Settled here rather than at completion: the parts are already on disk by
+	// then, and an abandoned upload leaves them there, so they have to be
+	// sealed as they arrive.
+	if req.ServerSideEncryption != "" {
+		if _, _, err := s.coord.beginEncryption(req.ServerSideEncryption); err != nil {
+			return nil, err
+		}
 	}
 
 	uploadID := uuid.New().String()
@@ -64,6 +69,8 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		Tags:     append([]fs.Tag(nil), req.Tags...),
 		ACL:      req.ACL,
 		Owner:    req.Owner,
+
+		RequestedEncryption: req.ServerSideEncryption,
 	})
 	if err != nil {
 		return nil, err
@@ -97,15 +104,21 @@ func (s *Storage) findUpload(ctx context.Context, bucket, uploadID string) (*Sid
 
 // UploadPart implements fs.Storage. Re-uploading a part number replaces it.
 func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
-	if _, _, err := s.findUpload(ctx, req.Bucket, req.UploadID); err != nil {
+	rec, _, err := s.findUpload(ctx, req.Bucket, req.UploadID)
+	if err != nil {
 		return nil, err
 	}
 
+	// A part is object content sitting on disk for as long as the upload
+	// lasts, and an abandoned upload leaves it there indefinitely — so it is
+	// sealed on arrival, under its own key, not at completion.
 	sc, err := s.coord.Put(ctx, &PutRequest{
 		Bucket: partsBucket(req.Bucket),
 		Key:    partKey(req.UploadID, req.PartNumber),
 		Size:   req.Size,
 		Body:   req.Reader,
+
+		ServerSideEncryption: rec.RequestedEncryption,
 	})
 	if err != nil {
 		return nil, err
@@ -243,7 +256,7 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 			continue
 		}
 
-		totalSize += sc.Size
+		totalSize += sc.LogicalSize()
 
 		partKeys = append(partKeys, sc.Key)
 
@@ -283,6 +296,11 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		Bucket: req.Bucket,
 		Key:    key,
 		Size:   totalSize,
+		// The parts are decrypted as they are concatenated and the object is
+		// sealed afresh under its own key. Concatenating the parts as they
+		// were sealed would put chunk boundaries wherever the client's part
+		// sizes happened to fall, and the plaintext-offset arithmetic assumes
+		// they are uniform.
 		Body: &partsReader{
 			ctx:    ctx,
 			coord:  s.coord,
@@ -296,6 +314,8 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 		ETag:     etag,
 		Parts:    layout,
 		UploadID: req.UploadID,
+
+		ServerSideEncryption: rec.RequestedEncryption,
 	})
 
 	l.Unlock()
@@ -307,10 +327,11 @@ func (s *Storage) CompleteMultipartUpload(ctx context.Context, req *fs.CompleteM
 	s.deleteUpload(ctx, req.Bucket, req.UploadID, rec)
 
 	return &fs.CompleteMultipartUploadResponse{
-		Location: "/" + req.Bucket + "/" + key,
-		Bucket:   req.Bucket,
-		Key:      key,
-		ETag:     sc.ETag,
+		Location:             "/" + req.Bucket + "/" + key,
+		Bucket:               req.Bucket,
+		Key:                  key,
+		ETag:                 sc.ETag,
+		ServerSideEncryption: encryptionAlgorithm(sc),
 	}, nil
 }
 
@@ -355,9 +376,19 @@ func (r *partsReader) Read(p []byte) (int, error) {
 				return 0, io.EOF
 			}
 
-			_, rc, err := r.coord.Get(r.ctx, r.bucket, r.keys[0])
+			sc, rc, err := r.coord.Get(r.ctx, r.bucket, r.keys[0])
 			if err != nil {
 				return 0, errors.Wrapf(err, "open part %q", r.keys[0])
+			}
+
+			if sc.Encryption != nil {
+				decrypted, err := r.coord.openEncrypted(rc, sc.Encryption)
+				if err != nil {
+					_ = rc.Close()
+					return 0, errors.Wrapf(err, "decrypt part %q", r.keys[0])
+				}
+
+				rc = decrypted
 			}
 
 			r.keys = r.keys[1:]

@@ -520,19 +520,3 @@ func (s *Storage) BucketObjectOwnership(ctx context.Context, bucket string) (str
 func (s *Storage) SetBucketObjectOwnership(ctx context.Context, bucket, ownership string) error {
 	return s.coord.SetBucketObjectOwnership(ctx, bucket, ownership)
 }
-
-// refuseEncryption reports that this backend cannot encrypt at rest.
-//
-// A backend that ignored the field would store the body in the clear and
-// answer as though the request had been honored, which is the one failure this
-// feature exists to prevent — and it would be invisible, since an object
-// stored in the clear reads back perfectly. Refusing is the only honest
-// answer until the backend can encrypt.
-func refuseEncryption(algorithm string) error {
-	if algorithm == "" {
-		return nil
-	}
-
-	return errors.Wrapf(fs.ErrUnsupportedOperation,
-		"server-side encryption (%s) is not supported by this storage backend", algorithm)
-}

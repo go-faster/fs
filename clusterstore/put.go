@@ -52,6 +52,10 @@ type PutRequest struct {
 	// ServerSideEncryption asks for the body to be encrypted before it is
 	// fragmented; empty stores it in the clear.
 	ServerSideEncryption string
+	// RequestedEncryption is recorded on the sidecar without encrypting
+	// anything, for a multipart upload record to remember what its parts and
+	// its completion should use.
+	RequestedEncryption string
 }
 
 // Put writes an object at its bucket's scheme, acknowledging only once the
@@ -175,28 +179,29 @@ func (c *Coordinator) Put(ctx context.Context, req *PutRequest) (*Sidecar, error
 	}
 
 	sc := &Sidecar{
-		Version:            sidecarVersion,
-		Bucket:             req.Bucket,
-		Key:                req.Key,
-		Scheme:             s.String(),
-		Size:               storedSize,
-		Encryption:         encInfo,
-		Generation:         gen,
-		Seq:                seq,
-		Modified:           time.Now().UTC(),
-		ETag:               etag,
-		Checksum:           checksum,
-		ContentType:        req.Metadata.ContentType,
-		CacheControl:       req.Metadata.CacheControl,
-		ContentDisposition: req.Metadata.ContentDisposition,
-		ContentEncoding:    req.Metadata.ContentEncoding,
-		Expires:            req.Metadata.Expires,
-		UserMetadata:       req.Metadata.UserMetadata,
-		Tags:               req.Tags,
-		ACL:                req.ACL,
-		Owner:              req.Owner,
-		Parts:              req.Parts,
-		UploadID:           req.UploadID,
+		Version:             sidecarVersion,
+		Bucket:              req.Bucket,
+		Key:                 req.Key,
+		Scheme:              s.String(),
+		Size:                storedSize,
+		Encryption:          encInfo,
+		RequestedEncryption: req.RequestedEncryption,
+		Generation:          gen,
+		Seq:                 seq,
+		Modified:            time.Now().UTC(),
+		ETag:                etag,
+		Checksum:            checksum,
+		ContentType:         req.Metadata.ContentType,
+		CacheControl:        req.Metadata.CacheControl,
+		ContentDisposition:  req.Metadata.ContentDisposition,
+		ContentEncoding:     req.Metadata.ContentEncoding,
+		Expires:             req.Metadata.Expires,
+		UserMetadata:        req.Metadata.UserMetadata,
+		Tags:                req.Tags,
+		ACL:                 req.ACL,
+		Owner:               req.Owner,
+		Parts:               req.Parts,
+		UploadID:            req.UploadID,
 	}
 
 	// Commit: replace the sidecar on every quorum target. This is what makes
