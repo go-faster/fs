@@ -40,6 +40,8 @@ const (
 	ShardOpVerified = "verified"
 	ShardOpCoverage = "coverage"
 	ShardOpReset    = "reset"
+	// ShardOpApply replays an owner's committed batch on a follower.
+	ShardOpApply = "apply"
 )
 
 // ShardRequest is one operation against a peer's shard.
@@ -58,10 +60,22 @@ type ShardRequest struct {
 	Entry *metastore.Entry `json:"entry,omitempty"`
 	// Records are the verification stamps.
 	Records []metastore.Verification `json:"records,omitempty"`
+	// Batch is an owner's committed batch, as pebble recorded it, for a
+	// follower to replay. Opaque here on purpose: the wire carries what the
+	// owner applied rather than a re-description of it, so a follower's state
+	// is the owner's state and not a reconstruction that could differ.
+	Batch []byte `json:"batch,omitempty"`
 }
 
 // ShardResponse is the peer's answer.
 type ShardResponse struct {
+	// NotFollowed reports that the peer does not replicate the named range.
+	//
+	// Separate from NotOwned because they are different mistakes: NotOwned
+	// means the caller's map is stale, NotFollowed means the *sender's*
+	// follower set is, and the two are fixed by different parties.
+	NotFollowed bool `json:"not_followed,omitempty"`
+
 	// NotOwned reports that the key or range is outside what the peer serves.
 	//
 	// Carried as a field rather than an HTTP status because it is an answer,

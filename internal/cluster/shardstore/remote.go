@@ -100,6 +100,18 @@ func Serve(shard *Shard) transport.ShardFunc {
 
 			return transport.ShardResponse{Coverage: &cov}, nil
 
+		case transport.ShardOpApply:
+			if req.Range == nil {
+				return transport.ShardResponse{}, errors.New("apply without a range")
+			}
+
+			err := shard.ApplyBatch(ctx, *req.Range, req.Batch)
+			if errors.Is(err, ErrNotFollowed) {
+				return transport.ShardResponse{NotFollowed: true}, nil
+			}
+
+			return transport.ShardResponse{}, err
+
 		case transport.ShardOpReset:
 			return transport.ShardResponse{}, shard.Reset(ctx)
 
@@ -158,7 +170,23 @@ func (p *Peer) call(ctx context.Context, req transport.ShardRequest) (transport.
 		return transport.ShardResponse{}, ErrNotOwned
 	}
 
+	if resp.NotFollowed {
+		return transport.ShardResponse{}, ErrNotFollowed
+	}
+
 	return resp, nil
+}
+
+// ApplyBatch ships a committed batch to this peer, which replays it as a
+// follower of the range.
+func (p *Peer) ApplyBatch(ctx context.Context, r rangemap.Range, repr []byte) error {
+	_, err := p.call(ctx, transport.ShardRequest{
+		Op:    transport.ShardOpApply,
+		Range: &r,
+		Batch: repr,
+	})
+
+	return err
 }
 
 // Put implements Backend.
