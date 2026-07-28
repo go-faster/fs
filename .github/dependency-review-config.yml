@@ -7,6 +7,21 @@ allow_licenses:
   - 'BSD-3-Clause'
   - 'Apache-2.0'
 allow_dependencies_licenses:
+  # npm transitives of the admin dashboard's toolchain. All three are already in
+  # the tree on main at these versions; they resurface as "added" whenever the
+  # lockfile is restructured, because the action diffs entries rather than
+  # versions. Allowed per-package rather than by widening allow_licenses, so a
+  # genuinely new dependency under one of these licenses still gets a review.
+  #
+  #   tslib         0BSD             TypeScript's emit helpers; BSD Zero Clause
+  #                                  is MIT without the attribution clause.
+  #   lodash        CC0-1.0 AND MIT  Code is MIT; CC0 covers the docs, and is a
+  #                                  public-domain dedication.
+  #   caniuse-lite  CC-BY-4.0        Browser-support data, not code, reached
+  #                                  through browserslist. Attribution only.
+  - 'pkg:npm/tslib'
+  - 'pkg:npm/lodash'
+  - 'pkg:npm/caniuse-lite'
   - 'pkg:golang/golang.org/x/crypto'
   - 'pkg:golang/golang.org/x/exp'
   - 'pkg:golang/golang.org/x/mod'
