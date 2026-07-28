@@ -193,6 +193,13 @@ Command-line flags override YAML configuration values.`,
 					go clusterRT.usage.Run(ctx)
 					go clusterRT.RunUsageRecount(ctx)
 
+					// The sharded metadata plane's controller: partitions the
+					// plane once and thereafter moves ranges off nodes that are
+					// gone. Every node is a candidate; one holds it.
+					if clusterRT.metaPlane != nil {
+						go clusterRT.RunPlaneController(ctx, cfg)
+					}
+
 					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {
 						return errors.Wrap(err, "register cluster metrics")
 					}

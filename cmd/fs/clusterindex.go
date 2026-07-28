@@ -47,7 +47,11 @@ func isObjectRecord(name string) bool {
 // index is derived: dropping an entry costs a rebuild, while failing the write
 // that produced it would cost the object.
 type objectIndexer struct {
-	index metastore.Store
+	// index is where records land. An atomic because it is redirected once,
+	// during startup, and read from every disk commit thereafter — the plane it
+	// may be redirected to cannot exist yet when the disk store is built, since
+	// the disk store is what reports commits to it.
+	index atomic.Pointer[metastore.Store]
 	lg    *zap.Logger
 
 	// dropped counts records the index could not take. A non-zero count means
@@ -58,8 +62,22 @@ type objectIndexer struct {
 var _ diskstore.CommitObserver = (*objectIndexer)(nil)
 
 func newObjectIndexer(index metastore.Store, lg *zap.Logger) *objectIndexer {
-	return &objectIndexer{index: index, lg: lg}
+	o := &objectIndexer{lg: lg}
+	o.index.Store(&index)
+
+	return o
 }
+
+// redirect points the indexer at a different store.
+//
+// Called once, before the node serves, when the sharded metadata plane takes
+// over from this node's own index. It has to be after construction because the
+// disk store is built with this observer and the plane is built with the disk
+// store, so the two cannot be created in one order.
+func (o *objectIndexer) redirect(index metastore.Store) { o.index.Store(&index) }
+
+// store is where records currently land.
+func (o *objectIndexer) store() metastore.Store { return *o.index.Load() }
 
 // observed is the context the observer records under.
 //
@@ -83,7 +101,7 @@ func (o *objectIndexer) Committed(disk cluster.DiskID, name string, data []byte)
 		return
 	}
 
-	if err := o.index.Put(observed(), entry); err != nil {
+	if err := o.store().Put(observed(), entry); err != nil {
 		o.drop(name, err)
 	}
 }
@@ -97,7 +115,7 @@ func (o *objectIndexer) Deleted(_ cluster.DiskID, name string, data []byte) {
 		return
 	}
 
-	if err := o.index.Delete(observed(), sc.Bucket, sc.Key); err != nil {
+	if err := o.store().Delete(observed(), sc.Bucket, sc.Key); err != nil {
 		o.drop(name, err)
 	}
 }

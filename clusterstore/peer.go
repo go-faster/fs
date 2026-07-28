@@ -137,6 +137,18 @@ func (h *HTTPPeers) Peer(node cluster.Node) (Peer, error) {
 		return h.local, nil
 	}
 
+	return h.Client(node)
+}
+
+// Client returns the transport client for another node, from the same cache
+// Peer uses.
+//
+// Exported because the metadata plane reaches peers through the same transport
+// but needs the client itself rather than the Peer view of it, and dialing it
+// separately would open a second connection per node for no reason. Unlike
+// Peer, this has no local shortcut: a caller asking for a client to itself
+// wants one, and it is not this type's place to decide otherwise.
+func (h *HTTPPeers) Client(node cluster.Node) (*transport.Client, error) {
 	if node.Addr == "" {
 		return nil, errors.Errorf("node %q has no address", node.ID)
 	}
