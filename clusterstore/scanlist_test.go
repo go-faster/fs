@@ -48,6 +48,10 @@ func clusterCoordinator(t *testing.T, fc *fakeCluster) (*Coordinator, metastore.
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
+	// A real bucket record, because a rebuild discovers buckets from them and
+	// the storage layer refuses a listing without one.
+	require.NoError(t, c.CreateBucket(t.Context(), "b", fs.ACLPrivate))
+
 	return c, store
 }
 
@@ -256,8 +260,9 @@ func TestClusterScopeFallsBackWhenTheStoreIsNotReady(t *testing.T) {
 	require.ErrorIs(t, err, ErrIndexUnavailable)
 	require.Empty(t, objects)
 
-	// And the walk still answers, which is what the fallback resolves to.
-	res, err := NewStorage(c).listFromSidecars(t.Context(), &fs.ListObjectsRequest{Bucket: "b"})
+	// And the storage layer turns that into the walk rather than an error,
+	// which is the behavior an S3 client actually sees.
+	res, err := NewStorage(c).ListObjects(t.Context(), &fs.ListObjectsRequest{Bucket: "b"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.txt"}, keysOf(res))
 }
