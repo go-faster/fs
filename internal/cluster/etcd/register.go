@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/go-faster/fs/internal/cluster"
@@ -159,6 +160,15 @@ func (r *Registration) Close() error {
 	defer cancel()
 
 	if _, err := r.client.Revoke(ctx, leaseID); err != nil {
+		// A lease that is already gone is the outcome this asked for. It
+		// happens whenever the node was partitioned or stalled longer than the
+		// TTL — the registry dropped it, which is exactly what revoking would
+		// have done — and reporting it would make a clean shutdown fail for
+		// having already succeeded.
+		if errors.Is(err, rpctypes.ErrLeaseNotFound) {
+			return nil
+		}
+
 		return errors.Wrap(err, "revoke registration lease")
 	}
 
