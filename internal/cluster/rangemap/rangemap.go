@@ -327,3 +327,156 @@ func boundary(i, n int) string {
 	//nolint:gosec // Clamped to [splitLow, splitHigh] on the line above, both byte constants.
 	return string([]byte{keyspace.Object, byte(b)})
 }
+
+// ErrNotSplittable reports a split point that would not produce two ranges.
+var ErrNotSplittable = errors.New("split point does not divide the range")
+
+// Split replaces the range holding at with two ranges meeting there.
+//
+// # A split moves nothing
+//
+// This is the operation's defining property and the reason it can be run
+// eagerly. A shard holds its ranges as key intervals in one pebble instance, so
+// the two halves of a split are already on the right sides of the new boundary
+// — every key was, before anyone decided where the boundary would be. Splitting
+// is a map edit and nothing else, which is why it costs a control-plane write
+// and no I/O at all.
+//
+// Moving a range is the expensive operation, and it is deliberately separate.
+//
+// # Both halves keep the owner and the followers
+//
+// A split that also reassigned would be a split and a move at once, and the
+// move is what has a cost. Rebalancing decides where the halves go afterwards,
+// with the split already durable — so an interrupted rebalance leaves a
+// partition that is merely uneven rather than one that is half-formed.
+//
+// The returned map is a new value; the receiver is not modified, so a caller
+// that fails to persist it has not changed what it is routing by.
+func (m *Map) Split(at string) (*Map, error) {
+	if at == "" {
+		// The empty key starts the first range, so nothing sorts below it and
+		// the left half would be empty.
+		return nil, errors.Wrap(ErrNotSplittable, "the empty key is the start of the key space")
+	}
+
+	i, err := m.indexOf(at)
+	if err != nil {
+		return nil, err
+	}
+
+	r := m.Ranges[i]
+
+	if at == r.Start {
+		// Already a boundary. Reported rather than ignored: a caller splitting
+		// at a key it computed from data is asking for two ranges, and silently
+		// returning one would leave it believing it made progress.
+		return nil, errors.Wrapf(ErrNotSplittable, "%q is already a range boundary", at)
+	}
+
+	out := &Map{Revision: m.Revision, Ranges: make([]Range, 0, len(m.Ranges)+1)}
+	out.Ranges = append(out.Ranges, m.Ranges[:i]...)
+
+	left := r
+	left.End = at
+	left.Followers = slices.Clone(r.Followers)
+
+	right := r
+	right.Start = at
+	right.Followers = slices.Clone(r.Followers)
+
+	out.Ranges = append(out.Ranges, left, right)
+	out.Ranges = append(out.Ranges, m.Ranges[i+1:]...)
+
+	if err := out.Validate(); err != nil {
+		return nil, errors.Wrap(err, "split produced an invalid map")
+	}
+
+	return out, nil
+}
+
+// Merge dissolves a boundary, replacing the range starting at it and the one
+// before with a single range spanning both.
+//
+// The exact inverse of Split, and named the same way for that reason: whatever
+// key created a boundary removes it, so `m.Split(k)` followed by `Merge(k)`
+// gives back the map that went in. An API where one named the boundary and the
+// other named a range would be two operations that happen to be opposites
+// rather than one operation and its undo.
+//
+// Like Split it moves nothing — but **only when the two halves share an owner**,
+// which is why it refuses otherwise. Merging ranges on different nodes would
+// make one node's data unreachable, since the surviving owner holds nothing for
+// the half it never had, and nothing would report it: the merged range is a
+// valid partition that simply answers "no such object".
+//
+// Merging exists because splits are one-way otherwise. A range split during a
+// burst and then emptied leaves the partition permanently finer than the data
+// warrants, and a map that only ever grows is one whose per-range overhead
+// grows with it.
+func (m *Map) Merge(at string) (*Map, error) {
+	i, err := m.indexOf(at)
+	if err != nil {
+		return nil, err
+	}
+
+	if m.Ranges[i].Start != at {
+		return nil, errors.Errorf("%q is not a range boundary", at)
+	}
+
+	if i == 0 {
+		return nil, errors.New("the start of the key space is not a boundary that can be dissolved")
+	}
+
+	left, right := m.Ranges[i-1], m.Ranges[i]
+
+	if left.Owner != right.Owner {
+		return nil, errors.Errorf(
+			"ranges at %q and %q are owned by %s and %s: merge them onto one node first",
+			left.Start, right.Start, left.Owner, right.Owner)
+	}
+
+	out := &Map{Revision: m.Revision, Ranges: make([]Range, 0, len(m.Ranges)-1)}
+	out.Ranges = append(out.Ranges, m.Ranges[:i-1]...)
+
+	merged := left
+	merged.End = right.End
+	// The surviving follower set is the intersection: a node following only one
+	// half holds only one half, and calling it a follower of the whole would
+	// have a promotion serve the part it never received as empty.
+	merged.Followers = intersect(left.Followers, right.Followers)
+
+	out.Ranges = append(out.Ranges, merged)
+	out.Ranges = append(out.Ranges, m.Ranges[i+1:]...)
+
+	if err := out.Validate(); err != nil {
+		return nil, errors.Wrap(err, "merge produced an invalid map")
+	}
+
+	return out, nil
+}
+
+// indexOf returns the position of the range holding a key.
+func (m *Map) indexOf(key string) (int, error) {
+	for i, r := range m.Ranges {
+		if r.Contains(key) {
+			return i, nil
+		}
+	}
+
+	return 0, errors.Errorf("no range holds %q", key)
+}
+
+// intersect returns the nodes in both lists, in the first's order, or nil when
+// there are none.
+func intersect(a, b []cluster.NodeID) []cluster.NodeID {
+	var out []cluster.NodeID
+
+	for _, n := range a {
+		if slices.Contains(b, n) {
+			out = append(out, n)
+		}
+	}
+
+	return out
+}

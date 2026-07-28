@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/metastore/keyspace"
 	"github.com/go-faster/fs/internal/cluster/metastore/metastoretest"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 	"github.com/go-faster/fs/internal/cluster/shardstore"
@@ -372,6 +373,95 @@ func scanWith(t *testing.T, s *shardstore.Shard, prefix, after string, limit int
 
 		return nil
 	}))
+
+	return out
+}
+
+// TestSplitMovesNothing is the property the whole split design rests on, and it
+// is worth asserting on a real shard rather than reasoning about.
+//
+// A shard holds its ranges as key intervals in one pebble instance, so the two
+// halves of a split are already on the right sides of the new boundary — every
+// key was, before anyone decided where the boundary would be. Adopting the
+// split map is therefore the entire operation: no copy, no scan, no I/O.
+//
+// If this ever stops being true, splitting stops being cheap, and the policy
+// built on top of it — split eagerly, move deliberately — stops being right.
+func TestSplitMovesNothing(t *testing.T) {
+	shard := openShard(t, whole)
+
+	keys := []string{"a", "b", "m", "n", "y", "z"}
+	for i, key := range keys {
+		require.NoError(t, shard.Put(t.Context(), entry("photos", key, int64(10+i), 1)))
+	}
+
+	before := scanKeys(t, shard, "photos")
+	require.Equal(t, keys, before)
+
+	usageBefore, err := shard.Usage(t.Context(), "photos")
+	require.NoError(t, err)
+
+	// Split the key space where the objects actually are: 'o' + bucket + NUL +
+	// key, so a boundary inside the bucket divides its keys.
+	at := string(keyspace.ObjectKey("photos", "n"))
+
+	m := &rangemap.Map{Ranges: []rangemap.Range{whole}}
+
+	split, err := m.Split(at)
+	require.NoError(t, err)
+	require.Len(t, split.Ranges, 2)
+
+	shard.Adopt(split.Ranges)
+
+	assert.Equal(t, before, scanKeys(t, shard, "photos"),
+		"every key is still served, in the same order, from the same shard")
+
+	usageAfter, err := shard.Usage(t.Context(), "photos")
+	require.NoError(t, err)
+	assert.Equal(t, usageBefore, usageAfter,
+		"the counters are per bucket and a split does not touch them")
+
+	// And each half serves exactly its side, which is what makes the halves
+	// separable at all — a move later hands over one of them.
+	assert.Equal(t, []string{"a", "b", "m"}, rangeKeys(t, shard, split.Ranges[0], "photos"))
+	assert.Equal(t, []string{"n", "y", "z"}, rangeKeys(t, shard, split.Ranges[1], "photos"))
+}
+
+// TestSplitAtABucketBoundary: a boundary between buckets is the ordinary case,
+// since the presplit puts them all there. Neither half may claim the other's
+// objects.
+func TestSplitAtABucketBoundary(t *testing.T) {
+	shard := openShard(t, whole)
+
+	for _, bucket := range []string{"alpha", "omega"} {
+		require.NoError(t, shard.Put(t.Context(), entry(bucket, "k", 1, 1)))
+	}
+
+	m := &rangemap.Map{Ranges: []rangemap.Range{whole}}
+
+	split, err := m.Split(string(keyspace.BucketPrefix("omega")))
+	require.NoError(t, err)
+
+	shard.Adopt(split.Ranges)
+
+	assert.Equal(t, []string{"k"}, rangeKeys(t, shard, split.Ranges[0], "alpha"))
+	assert.Empty(t, rangeKeys(t, shard, split.Ranges[0], "omega"),
+		"the lower half must not answer for the bucket above its boundary")
+	assert.Equal(t, []string{"k"}, rangeKeys(t, shard, split.Ranges[1], "omega"))
+}
+
+// rangeKeys is what one range of a shard holds in a bucket.
+func rangeKeys(t *testing.T, s *shardstore.Shard, r rangemap.Range, bucket string) []string {
+	t.Helper()
+
+	var out []string
+
+	require.NoError(t, s.ScanRange(t.Context(), r, bucket, "", "", 0,
+		func(e metastore.Entry) error {
+			out = append(out, e.Key)
+
+			return nil
+		}))
 
 	return out
 }
