@@ -3,6 +3,8 @@ package clusterstore
 import (
 	"context"
 	"strings"
+
+	"github.com/go-faster/fs/internal/cluster/metastore"
 )
 
 // UsageObserver receives per-bucket object accounting: how many objects and
@@ -134,6 +136,25 @@ func (c *Coordinator) CountObjectsIndexed(ctx context.Context) (map[string]Bucke
 
 // countBucketIndexed pages one bucket through the merged indexes.
 func (c *Coordinator) countBucketIndexed(ctx context.Context, bucket string) (BucketTotals, error) {
+	// A cluster-scope store already holds the answer. Its counters move in the
+	// same transaction as the entries that produce them and describe the whole
+	// cluster, so there is nothing to add up across nodes and nothing to page
+	// through — which is the difference between a read and a walk of the
+	// bucket, at every size.
+	if c.meta != nil && c.meta.Scope() == metastore.ScopeCluster {
+		state, err := c.meta.State(ctx)
+		if err != nil || state != metastore.StateReady {
+			return BucketTotals{}, ErrIndexUnavailable //nolint:nilerr // Not ready is an answer.
+		}
+
+		usage, err := c.meta.Usage(ctx, bucket)
+		if err != nil {
+			return BucketTotals{}, ErrIndexUnavailable
+		}
+
+		return BucketTotals{Objects: usage.Objects, Bytes: usage.Bytes}, nil
+	}
+
 	var (
 		total BucketTotals
 		after string
