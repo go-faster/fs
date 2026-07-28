@@ -8,6 +8,30 @@
 // the disks themselves. Naming it apart from any one engine is what lets a
 // second engine arrive without touching a caller.
 //
+// # The target implementation
+//
+// Pluggability is the means, not the goal, and the interface is not neutral
+// about where it is going. The destination is **sharded pebble running in the
+// fs processes themselves** — the (bucket, key) space cut into ranges, each
+// with one owner and log-shipped followers, the range map in etcd, the whole
+// thing embedded in the storage nodes. That is a first-class citizen of this
+// design rather than one option among several, because it is the only
+// cluster-scope answer that keeps the project's single-external-dependency
+// guarantee: no database to stand up, no second deployment role, and metadata
+// capacity that grows with the cluster instead of being provisioned.
+//
+// The other implementations are deliberately not that. The node-local pebble
+// store is today's code and stays the default for small clusters. PostgreSQL is
+// scaffolding: it makes this contract real and CI-testable with a container and
+// zero distributed-systems work, so the sharded plane implements a settled
+// interface instead of co-designing one. A hosted database backend is the tier
+// above the target, for deployments that would rather operate one than own the
+// sharded plane.
+//
+// So when a signature here looks like it is accommodating something, check what
+// it costs the sharded plane first — that is the implementation this interface
+// is shaped for.
+//
 // The store is **derived, never authoritative**, and that is load-bearing
 // rather than incidental. Sidecars remain the commit point: they are
 // self-describing and sit next to the data, so a disk stays interpretable on
