@@ -349,3 +349,175 @@ func TestReplicationSpreadsTheFollowerLoad(t *testing.T) {
 		assert.InDelta(t, 8, load[n.ID], 2, "node %s carries a lopsided share", n.ID)
 	}
 }
+
+// TestSplitProducesAPartition: the invariant every consumer relies on survives
+// the operation. A split that left a gap would route keys to the range before
+// it, whose owner does not have them, and the objects would read as absent.
+func TestSplitProducesAPartition(t *testing.T) {
+	m, err := rangemap.Initial(4, unracked("n0", "n1"), 2)
+	require.NoError(t, err)
+
+	for _, at := range []string{"oa", "om", "oq", "oz", "p", "\xff"} {
+		split, err := m.Split(at)
+		require.NoError(t, err, "split at %q", at)
+		require.NoError(t, split.Validate())
+		require.Len(t, split.Ranges, len(m.Ranges)+1)
+
+		// And the key that was split on now starts a range, which is what makes
+		// a split point mean anything.
+		r, ok := split.Lookup(at)
+		require.True(t, ok)
+		assert.Equal(t, at, r.Start, "split at %q did not create a boundary there", at)
+	}
+}
+
+// TestSplitKeepsOwnerAndFollowers: a split that also reassigned would be a split
+// and a move at once, and the move is the half with a cost.
+//
+// Rebalancing decides where the halves go afterwards, with the split already
+// durable — so an interrupted rebalance leaves a partition that is merely
+// uneven rather than one that is half-formed.
+func TestSplitKeepsOwnerAndFollowers(t *testing.T) {
+	m := &rangemap.Map{Revision: 9, Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Followers: []cluster.NodeID{"n1", "n2"}},
+	}}
+	require.NoError(t, m.Validate())
+
+	split, err := m.Split("om")
+	require.NoError(t, err)
+	require.Len(t, split.Ranges, 2)
+
+	for i, r := range split.Ranges {
+		assert.Equal(t, cluster.NodeID("n0"), r.Owner, "half %d changed owner", i)
+		assert.Equal(t, []cluster.NodeID{"n1", "n2"}, r.Followers, "half %d changed followers", i)
+	}
+
+	assert.Equal(t, int64(9), split.Revision,
+		"the revision is etcd's, and this map has not been written yet")
+}
+
+// TestSplitDoesNotMutateTheReceiver: a caller that fails to persist the result
+// must not have changed what it is routing by.
+func TestSplitDoesNotMutateTheReceiver(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Followers: []cluster.NodeID{"n1"}},
+	}}
+
+	before := len(m.Ranges)
+
+	_, err := m.Split("om")
+	require.NoError(t, err)
+
+	assert.Len(t, m.Ranges, before)
+	assert.Equal(t, "", m.Ranges[0].End, "the original range still spans the key space")
+
+	// The follower slices are cloned rather than shared, so editing a half
+	// cannot reach back into the map that produced it.
+	split, err := m.Split("om")
+	require.NoError(t, err)
+
+	for i := range split.Ranges {
+		split.Ranges[i].Followers[0] = "someone-else"
+		assert.Equal(t, cluster.NodeID("n1"), m.Ranges[0].Followers[0],
+			"half %d shares its follower slice with the map it came from", i)
+	}
+}
+
+// TestSplitRefusesANonBoundary: a caller splitting at a key it computed from
+// data is asking for two ranges. Quietly returning one would leave it believing
+// it had made progress, and it would ask again with the same answer forever.
+func TestSplitRefusesANonBoundary(t *testing.T) {
+	m, err := rangemap.Initial(4, unracked("n0"), 1)
+	require.NoError(t, err)
+
+	_, err = m.Split("")
+	require.ErrorIs(t, err, rangemap.ErrNotSplittable, "the empty key starts the key space")
+
+	_, err = m.Split(m.Ranges[2].Start)
+	require.ErrorIs(t, err, rangemap.ErrNotSplittable, "already a boundary")
+}
+
+// TestSplitIsRepeatable: splitting converges rather than fighting itself. A
+// range split repeatedly toward one end is what a sequential-key workload
+// produces, and each split has to leave a map the next one can act on.
+func TestSplitIsRepeatable(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{Start: "", End: "", Owner: "n0"}}}
+
+	for _, at := range []string{"om", "ot", "ow", "oy", "oz"} {
+		next, err := m.Split(at)
+		require.NoError(t, err, "split at %q", at)
+
+		m = next
+	}
+
+	require.NoError(t, m.Validate())
+	assert.Len(t, m.Ranges, 6)
+
+	for i := 1; i < len(m.Ranges); i++ {
+		assert.Less(t, m.Ranges[i-1].Start, m.Ranges[i].Start, "boundary %d is out of order", i)
+	}
+}
+
+// TestMergeIsTheInverseOfSplit: splits must not be one-way, or a range split
+// during a burst and then emptied leaves the partition permanently finer than
+// the data warrants — and a map that only ever grows is one whose per-range
+// overhead grows with it.
+func TestMergeIsTheInverseOfSplit(t *testing.T) {
+	m, err := rangemap.Initial(4, unracked("n0"), 1)
+	require.NoError(t, err)
+
+	split, err := m.Split("om")
+	require.NoError(t, err)
+
+	merged, err := split.Merge("om")
+	require.NoError(t, err)
+
+	assert.Equal(t, m.Ranges, merged.Ranges)
+}
+
+// TestMergeRefusesAcrossOwners: merging ranges on different nodes would make one
+// node's data unreachable, because the surviving owner holds nothing for the
+// half it never had — and nothing would report it, since the merged range is a
+// valid partition that simply answers "no such object".
+func TestMergeRefusesAcrossOwners(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "om", Owner: "n0"},
+		{Start: "om", End: "", Owner: "n1"},
+	}}
+	require.NoError(t, m.Validate())
+
+	_, err := m.Merge("om")
+	require.ErrorContains(t, err, "merge them onto one node first")
+}
+
+// TestMergeKeepsOnlyCommonFollowers: a node following one half holds one half.
+// Calling it a follower of the whole would have a promotion serve the part it
+// never received as empty — a wrong answer produced by a bookkeeping decision.
+func TestMergeKeepsOnlyCommonFollowers(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "om", Owner: "n0", Followers: []cluster.NodeID{"n1", "n2"}},
+		{Start: "om", End: "", Owner: "n0", Followers: []cluster.NodeID{"n2", "n3"}},
+	}}
+	require.NoError(t, m.Validate())
+
+	merged, err := m.Merge("om")
+	require.NoError(t, err)
+	require.Len(t, merged.Ranges, 1)
+
+	assert.Equal(t, []cluster.NodeID{"n2"}, merged.Ranges[0].Followers)
+}
+
+// TestMergeRefusesWhatIsNotABoundary: the start of the key space was never a
+// boundary anyone created, so there is nothing there to dissolve — and a key in
+// the middle of a range is a caller that has confused a split point it computed
+// with one that exists.
+func TestMergeRefusesWhatIsNotABoundary(t *testing.T) {
+	m, err := rangemap.Initial(3, unracked("n0"), 1)
+	require.NoError(t, err)
+
+	_, err = m.Merge("")
+	require.ErrorContains(t, err, "start of the key space")
+
+	_, err = m.Merge("oO-definitely-not-a-boundary")
+	require.ErrorContains(t, err, "not a range boundary")
+}
