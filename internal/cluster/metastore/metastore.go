@@ -21,12 +21,10 @@
 // capacity that grows with the cluster instead of being provisioned.
 //
 // The other implementations are deliberately not that. The node-local pebble
-// store is today's code and stays the default for small clusters. PostgreSQL is
-// scaffolding: it makes this contract real and CI-testable with a container and
-// zero distributed-systems work, so the sharded plane implements a settled
-// interface instead of co-designing one. A hosted database backend is the tier
-// above the target, for deployments that would rather operate one than own the
-// sharded plane.
+// store is today's code and stays the default for small clusters. The in-memory
+// store is scaffolding: it makes the cluster-scope paths testable before the
+// sharded plane exists, so that plane implements a settled interface instead of
+// co-designing one, and it is not a deployment option.
 //
 // So when a signature here looks like it is accommodating something, check what
 // it costs the sharded plane first — that is the implementation this interface

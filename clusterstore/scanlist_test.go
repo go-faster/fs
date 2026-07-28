@@ -9,36 +9,29 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/metastore/memstore"
 	"github.com/go-faster/fs/internal/cluster/objindex"
+	"github.com/go-faster/fs/storagetest"
 )
-
-// clusterScope makes a store report cluster scope.
-//
-// objindex is node-local by nature, but the listing path reads exactly one
-// thing to choose its algorithm — Scope — and everything else it needs from a
-// store is the same either way: keys in byte order, a prefix bound, an
-// exclusive cursor, a limit. Wrapping it is how these tests get a *real* store,
-// with real scan semantics, without standing up PostgreSQL for every case.
-//
-// The PostgreSQL backend's own conformance run is what proves a genuine
-// cluster-scope store behaves; this is what proves the listing built on top of
-// one does.
-type clusterScope struct{ metastore.Store }
-
-func (clusterScope) Scope() metastore.Scope { return metastore.ScopeCluster }
 
 // clusterCoordinator builds a coordinator backed by a cluster-scope store
 // instead of by per-node indexes.
+//
+// The store is fed by the write path, through the same observer seam the real
+// one uses: every record that lands on a node's disks is reported and indexed.
+// Filling it afterwards would test the listing against a store that agrees with
+// the disks by construction, which is not the thing worth checking.
 func clusterCoordinator(t *testing.T, fc *fakeCluster) (*Coordinator, metastore.Store) {
 	t.Helper()
 
-	idx, err := objindex.Open(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = idx.Close() })
-
-	store := clusterScope{idx}
+	store := memstore.New()
 	require.NoError(t, store.MarkReady(t.Context()))
+
+	for _, node := range fc.topo.Nodes {
+		fc.stores[node.ID].observe(indexRecord(t, store), forgetRecord(t, store))
+	}
 
 	c, err := New(Config{
 		Topology:  fakeTopoSource{fc: fc},
@@ -55,57 +48,91 @@ func clusterCoordinator(t *testing.T, fc *fakeCluster) (*Coordinator, metastore.
 	return c, store
 }
 
-// syncStore fills the cluster-scope store from what the cluster actually wrote.
-//
-// A real deployment feeds it from the write path; here the sidecars on disk are
-// read back, which keeps the fixtures honest — the store ends up holding what
-// the disks hold, and the listing is then compared against the walk of those
-// same disks.
-func syncStore(t *testing.T, fc *fakeCluster, store metastore.Store) {
+// indexRecord returns a commit observer that indexes object records, and
+// forgetRecord one that removes them — together, what cmd/fs's objectIndexer
+// does against the node-local index.
+func indexRecord(t testing.TB, store metastore.Store) func(cluster.DiskID, string, []byte) {
 	t.Helper()
 
-	seen := make(map[string]struct{})
+	return func(_ cluster.DiskID, name string, data []byte) {
+		sc, ok := objectRecord(name, data)
+		if !ok {
+			return
+		}
 
-	for _, node := range fc.topo.Nodes {
-		s := fc.stores[node.ID]
+		_ = store.Put(context.Background(), metastore.Entry{
+			Bucket:     sc.Bucket,
+			Key:        sc.Key,
+			Size:       sc.Size,
+			ETag:       sc.ETag,
+			Modified:   sc.Modified,
+			Seq:        sc.Seq,
+			Generation: sc.Generation,
+			OwnerID:    sc.Owner.ID,
+			OwnerName:  sc.Owner.DisplayName,
+		})
+	}
+}
 
-		for _, disk := range node.Disks {
-			names, err := s.List(context.Background(), disk.ID, "obj/")
-			if err != nil {
-				continue
-			}
+func forgetRecord(t testing.TB, store metastore.Store) func(cluster.DiskID, string, []byte) {
+	t.Helper()
 
-			for _, name := range names {
-				if !strings.HasSuffix(name, "/meta") {
-					continue
-				}
-
-				sc, err := readSidecarFrom(context.Background(), LocalPeer{Store: s}, disk.ID, name)
-				if err != nil || sc == nil {
-					continue
-				}
-
-				ref := objectRef(sc.Bucket, sc.Key)
-				if _, dup := seen[ref]; dup {
-					continue
-				}
-
-				seen[ref] = struct{}{}
-
-				require.NoError(t, store.Put(t.Context(), metastore.Entry{
-					Bucket:     sc.Bucket,
-					Key:        sc.Key,
-					Size:       sc.Size,
-					ETag:       sc.ETag,
-					Modified:   sc.Modified,
-					Seq:        sc.Seq,
-					Generation: sc.Generation,
-					OwnerID:    sc.Owner.ID,
-					OwnerName:  sc.Owner.DisplayName,
-				}))
-			}
+	return func(_ cluster.DiskID, name string, data []byte) {
+		if sc, ok := objectRecord(name, data); ok {
+			_ = store.Delete(context.Background(), sc.Bucket, sc.Key)
 		}
 	}
+}
+
+// objectRecord decodes a stored record when it is an object's commit record.
+//
+// Both halves of the name matter: bucket records end in "/meta" too, and
+// feeding one to an index that only understands objects is how a bucket ends up
+// listed as an object.
+func objectRecord(name string, data []byte) (*Sidecar, bool) {
+	if !strings.HasPrefix(name, "obj/") || !strings.HasSuffix(name, "/meta") {
+		return nil, false
+	}
+
+	sc, err := decodeSidecar(data)
+	if err != nil || sc == nil || sc.Bucket == "" || sc.Key == "" {
+		return nil, false
+	}
+
+	return sc, true
+}
+
+// TestConformanceThroughClusterScope runs the whole fs.Storage suite against a
+// cluster whose listings come from a cluster-scope store.
+//
+// #148 asks for the suite on **both** scopes — "the matrix, not one arm" — and
+// this is the other arm of TestConformanceThroughTheIndex. It is the strongest
+// statement available that scope is an implementation detail: every case an S3
+// client's behavior is pinned by passes identically whether a page came from a
+// merge across nodes or from one scan.
+func TestConformanceThroughClusterScope(t *testing.T) {
+	storagetest.Run(t, func(tb testing.TB) fs.Storage {
+		fc := newFakeCluster(3, 2)
+
+		store := memstore.New()
+		if err := store.MarkReady(context.Background()); err != nil {
+			tb.Fatal(err)
+		}
+
+		for _, node := range fc.topo.Nodes {
+			fc.stores[node.ID].observe(indexRecord(tb, store), forgetRecord(tb, store))
+		}
+
+		c, err := New(Config{
+			Topology:  fakeTopoSource{fc: fc},
+			Peers:     indexedPeers{fc: fc, state: newIndexState(fc)},
+			Metastore: store,
+		})
+		require.NoError(tb, err)
+		tb.Cleanup(func() { _ = c.Close() })
+
+		return NewStorage(c)
+	})
 }
 
 // TestClusterScopeListingMatchesTheWalk is the case that matters: the same
@@ -117,7 +144,7 @@ func syncStore(t *testing.T, fc *fakeCluster, store metastore.Store) {
 // client sees.
 func TestClusterScopeListingMatchesTheWalk(t *testing.T) {
 	fc := newFakeCluster(3, 2)
-	c, store := clusterCoordinator(t, fc)
+	c, _ := clusterCoordinator(t, fc)
 
 	keys := []string{
 		"a.txt", "b.txt",
@@ -131,7 +158,6 @@ func TestClusterScopeListingMatchesTheWalk(t *testing.T) {
 	}
 
 	c.Flush()
-	syncStore(t, fc, store)
 
 	for _, tt := range []struct {
 		name string
@@ -164,7 +190,7 @@ func TestClusterScopeListingMatchesTheWalk(t *testing.T) {
 // one query.
 func TestClusterScopePagesTheWholeBucket(t *testing.T) {
 	fc := newFakeCluster(3, 1)
-	c, store := clusterCoordinator(t, fc)
+	c, _ := clusterCoordinator(t, fc)
 
 	var want []string
 
@@ -175,7 +201,6 @@ func TestClusterScopePagesTheWholeBucket(t *testing.T) {
 	}
 
 	c.Flush()
-	syncStore(t, fc, store)
 
 	var (
 		got   []string
@@ -213,7 +238,6 @@ func TestClusterScopeIssuesOneQueryPerPage(t *testing.T) {
 	}
 
 	c.Flush()
-	syncStore(t, fc, store)
 
 	counted := &countingStore{Store: store}
 	c.meta = counted
@@ -252,7 +276,6 @@ func TestClusterScopeFallsBackWhenTheStoreIsNotReady(t *testing.T) {
 
 	mustPut(t, c, "a.txt", randBytes(16))
 	c.Flush()
-	syncStore(t, fc, store)
 
 	require.NoError(t, store.MarkBuilding(t.Context()))
 
@@ -279,7 +302,6 @@ func TestClusterScopeUsageIsReadNotWalked(t *testing.T) {
 	}
 
 	c.Flush()
-	syncStore(t, fc, store)
 
 	counted := &countingStore{Store: store}
 	c.meta = counted
