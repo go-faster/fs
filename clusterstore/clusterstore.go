@@ -31,6 +31,7 @@ import (
 
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/fragment"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/sse"
 )
@@ -91,6 +92,17 @@ type Config struct {
 	// Keyring holds the master key object bodies are encrypted under. Nil
 	// leaves the cluster unable to encrypt, and writes asking for it refused.
 	Keyring *sse.Keyring
+	// Metastore is the metadata plane, when the coordinator has direct access
+	// to one. Only a cluster-scope store changes anything: it lets a listing be
+	// one range scan instead of a merge across nodes, and a bucket's usage a
+	// read instead of a sum. A local-scope store, or nil, leaves both paths
+	// exactly as they were — the per-node indexes are still reached through the
+	// peer transport.
+	//
+	// It is optional because the coordinator must keep working without it. The
+	// store is derived, never authoritative, so an absent or unusable one costs
+	// the sidecar walk and nothing else.
+	Metastore metastore.Store
 }
 
 // Coordinator is the cluster object data plane: quorum writes, failover
@@ -103,6 +115,7 @@ type Coordinator struct {
 	onErr     func(bucket, key string, err error)
 	usage     UsageObserver
 	keyring   *sse.Keyring
+	meta      metastore.Store
 
 	// epochs remembers recent topology snapshots so reads, deletes and repair
 	// can reach fragments still sitting at a previous epoch's placement.
@@ -160,6 +173,7 @@ func New(cfg Config) (*Coordinator, error) {
 		onErr:     onErr,
 		usage:     cfg.Usage,
 		keyring:   cfg.Keyring,
+		meta:      cfg.Metastore,
 		queue:     make(chan func(), queueLen),
 		inflight:  make(map[string]int),
 	}

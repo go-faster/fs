@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
@@ -54,9 +55,7 @@ func (c *Coordinator) ListPage(
 	bucket, prefix, delimiter, after string,
 	limit int,
 ) (objects []*Sidecar, commonPrefixes []string, truncated bool, err error) {
-	topo := c.topo.Topology()
-
-	streams, err := c.openIndexStreams(ctx, topo, bucket, prefix, after)
+	src, err := c.openEntrySource(ctx, bucket, prefix, after)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -72,7 +71,7 @@ func (c *Coordinator) ListPage(
 			// One more entry decides truncation: a page that ends exactly on
 			// the last key is not truncated, and claiming otherwise costs the
 			// caller a wasted request.
-			next, err := peekStreams(ctx, streams)
+			next, err := src.peek(ctx)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -82,7 +81,7 @@ func (c *Coordinator) ListPage(
 			break
 		}
 
-		entry, ok, err := nextEntry(ctx, streams)
+		entry, ok, err := src.next(ctx)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -99,7 +98,7 @@ func (c *Coordinator) ListPage(
 			// entry the client has seen; without this they would be served
 			// again on every subsequent page.
 			if folded <= after {
-				skipGroup(streams, folded)
+				src.skipGroup(folded)
 
 				continue
 			}
@@ -115,7 +114,7 @@ func (c *Coordinator) ListPage(
 			// every key under a folded prefix produces the same entry, and on
 			// a deep prefix that is the difference between one seek and a
 			// million reads.
-			skipGroup(streams, folded)
+			src.skipGroup(folded)
 
 			continue
 		}
@@ -152,6 +151,50 @@ func foldKey(key, prefix, delimiter string) (string, bool) {
 
 	return prefix + rest[:idx+len(delimiter)], true
 }
+
+// entrySource yields a bucket's entries in key order, already resolved to one
+// record per key.
+//
+// It exists because the folding, paging and cursor logic above is the same
+// whatever produced the entries, and only the production differs: at local
+// scope each node indexes what its own disks hold and a page is a merge of N
+// streams; at cluster scope one store holds every object and a page is one
+// scan. Keeping the merge and the scan behind this means a listing cannot
+// behave differently on the two, which is what makes running the whole listing
+// suite against both worth anything.
+type entrySource interface {
+	// next returns the next key in order, consuming it.
+	next(ctx context.Context) (transport.IndexEntry, bool, error)
+	// peek reports whether any entry remains, without consuming it.
+	peek(ctx context.Context) (bool, error)
+	// skipGroup moves past every key under a folded prefix, so a delimiter
+	// listing costs one seek per group rather than one read per key in it.
+	skipGroup(prefix string)
+}
+
+// openEntrySource picks how this listing's entries are produced. A
+// cluster-scope store answers the whole bucket itself; anything else is merged
+// from the nodes.
+func (c *Coordinator) openEntrySource(ctx context.Context, bucket, prefix, after string) (entrySource, error) {
+	if c.meta != nil && c.meta.Scope() == metastore.ScopeCluster {
+		return newScanSource(ctx, c.meta, bucket, prefix, after)
+	}
+
+	streams, err := c.openIndexStreams(ctx, c.topo.Topology(), bucket, prefix, after)
+	if err != nil {
+		return nil, err
+	}
+
+	return &mergeSource{streams: streams}, nil
+}
+
+// mergeSource is the local-scope production: one stream per node, merged here,
+// with replicas of a key resolved to the newest record.
+type mergeSource struct {
+	streams []*indexStream
+}
+
+var _ entrySource = (*mergeSource)(nil)
 
 // indexStream is one node's page of the merge.
 type indexStream struct {
@@ -322,9 +365,11 @@ func (s *indexStream) seekPast(prefix string) {
 	}
 }
 
-// nextEntry returns the next key in merged order, resolving replicas of the
-// same key to the newest record.
-func nextEntry(ctx context.Context, streams []*indexStream) (transport.IndexEntry, bool, error) {
+// next returns the next key in merged order, resolving replicas of the same
+// key to the newest record.
+func (m *mergeSource) next(ctx context.Context) (transport.IndexEntry, bool, error) {
+	streams := m.streams
+
 	var (
 		best  transport.IndexEntry
 		found bool
@@ -372,9 +417,9 @@ func nextEntry(ctx context.Context, streams []*indexStream) (transport.IndexEntr
 	return best, true, nil
 }
 
-// peekStreams reports whether any entry remains, without consuming it.
-func peekStreams(ctx context.Context, streams []*indexStream) (bool, error) {
-	for _, s := range streams {
+// peek reports whether any entry remains, without consuming it.
+func (m *mergeSource) peek(ctx context.Context) (bool, error) {
+	for _, s := range m.streams {
 		_, ok, err := s.head(ctx)
 		if err != nil {
 			return false, err
@@ -389,8 +434,8 @@ func peekStreams(ctx context.Context, streams []*indexStream) (bool, error) {
 }
 
 // skipGroup moves every stream past a folded prefix.
-func skipGroup(streams []*indexStream, prefix string) {
-	for _, s := range streams {
+func (m *mergeSource) skipGroup(prefix string) {
+	for _, s := range m.streams {
 		s.seekPast(prefix)
 	}
 }
