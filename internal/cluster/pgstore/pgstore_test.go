@@ -41,24 +41,39 @@ var dsn atomic.Pointer[string]
 // a schema gives.
 func TestMain(m *testing.M) {
 	// The container runtime is not available everywhere a contributor might run
-	// the suite. Skipping is handled per-test rather than here so that `go test
-	// ./...` stays green without Docker while CI, which has it, runs everything.
+	// the suite, so locally a missing one skips: `go test ./...` stays green
+	// without Docker.
+	//
+	// In CI it must not. A silent skip there is the worst outcome available —
+	// the backend's entire test suite stops running and the pipeline still
+	// reports green, which is indistinguishable from the suite passing. So on
+	// CI a container that will not start fails the run and says why.
 	if runtime.GOOS == "linux" {
-		ctx := context.Background()
-
-		if endpoint, terminate, err := startPostgres(ctx); err == nil {
+		endpoint, stop, err := startPostgres(context.Background())
+		switch {
+		case err == nil:
 			dsn.Store(&endpoint)
 
 			code := m.Run()
 
-			terminate()
-			//nolint:gocritic // The deferred terminate has already run.
+			stop()
+			//nolint:gocritic // stop has already run; there is nothing deferred.
 			exit(code)
+		case required():
+			fmt.Fprintf(os.Stderr,
+				"postgres container failed to start, and CI must not silently skip "+
+					"this backend's tests: %v\n", err)
+			exit(1)
 		}
 	}
 
 	exit(m.Run())
 }
+
+// required reports whether a missing container is a failure rather than a
+// reason to skip. Detected rather than configured, because the reusable test
+// workflow this repository shares does not take per-matrix environment.
+func required() bool { return os.Getenv("CI") != "" && runtime.GOOS == "linux" }
 
 // startPostgres brings up the container and returns its DSN.
 func startPostgres(ctx context.Context) (uri string, stop func(), err error) {
