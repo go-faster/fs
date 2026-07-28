@@ -12,6 +12,10 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },
+  "comment:overrides": "GHSA-mh99-v99m-4gvg (DoS via unbounded brace expansion) covers every brace-expansion <= 5.0.7, so there is no patched 1.x to float to. Both paths that reach it here are build-time only — orval's spectral ruleset and the codemods @gravity-ui/navigation ships as a dependency — and neither is in the browser bundle, but pinning the patched line keeps the tree clean rather than carrying a known-vulnerable transitive. Drop this once minimatch upstream stops resolving to 1.x.",
+  "overrides": {
+    "brace-expansion": "^5.0.8"
+  },
   "dependencies": {
     "@gravity-ui/icons": "^2.21.0",
     "@gravity-ui/navigation": "^6.3.1",
