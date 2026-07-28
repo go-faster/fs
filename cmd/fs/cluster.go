@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"github.com/go-faster/sdk/zctx"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 
@@ -304,7 +305,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	coord, err := clusterstore.New(clusterstore.Config{
 		Topology: source,
-		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, nil).WithLocalIndex(rt.indexPages),
+		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, peerHTTPClient(0)).WithLocalIndex(rt.indexPages),
 		Scheme:   func(string) scheme.Scheme { return defaultScheme },
 		OnAsyncError: func(bucket, key string, err error) {
 			lg.Warn("Async replication remainder failed (repair will complete it)",
@@ -367,11 +368,16 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// it is what an admin — on any node or headless — aggregates into the
 	// cluster-wide view.
 	rt.server = &http.Server{
-		Handler: transport.NewServer(store, secret,
+		Handler: instrumentPeerHandler(transport.NewServer(store, secret,
 			transport.WithStatus(rt.nodeStatus),
 			transport.WithIndex(rt.indexPages),
-		),
+		)),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Seed the peer-request contexts with this node's logger. Without it
+		// zctx hands the transport a nop and everything it reports about a
+		// failed peer request — including the originating request ID — is
+		// written nowhere.
+		BaseContext: func(net.Listener) context.Context { return zctx.Base(ctx, lg) },
 	}
 
 	return rt, nil

@@ -165,7 +165,7 @@ func (c *Client) Status(ctx context.Context) (NodeStatus, error) {
 
 	reqSig := c.secret.authenticate(req, c.node, c.now())
 
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return NodeStatus{}, errors.Wrap(err, "get node status")
 	}

@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"github.com/go-faster/sdk/zctx"
+	"go.uber.org/zap"
 
 	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/reqid"
 )
 
 // Server serves a node's local fragment store to its peers, plus — when wired
@@ -70,10 +73,20 @@ func NewServer(store Store, secret Secret, opts ...ServerOption) *Server {
 
 // ServeHTTP authenticates the request, then dispatches. The request signature
 // is stashed in the header for handlers to bind response signatures to.
+//
+// Authenticated requests carry the sending node and the originating S3 request
+// ID onto the context logger, so a failure served here lands in this node's log
+// under the same ID the client was handed by the coordinator.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reqSig, err := s.secret.verifyRequest(r, s.now())
 	if err != nil {
+		zctx.From(r.Context()).Warn("Peer request rejected",
+			zap.String("peer_node", r.Header.Get(headerNode)),
+			zap.String("path", r.URL.Path),
+			zap.Error(err),
+		)
 		http.Error(w, "cluster auth failed", http.StatusUnauthorized)
+
 		return
 	}
 
@@ -81,7 +94,46 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// here, never the raw client value.
 	r.Header.Set(headerAuth, reqSig)
 
-	s.mux.ServeHTTP(w, r)
+	ctx := zctx.With(r.Context(),
+		zap.String("peer_node", r.Header.Get(headerNode)),
+	)
+
+	// Only tag with an ID when there is a usable one: peer traffic from scrub,
+	// repair and rebalance has no client request behind it, and an empty field
+	// would read as "correlated to nothing" rather than "not client-originated".
+	//
+	// An ID that fails validation is dropped rather than logged — logging the
+	// value is exactly what an oversized or escape-laden one is for. The length
+	// is enough to tell a misbehaving peer from a missing header.
+	if id := r.Header.Get(headerRequestID); id != "" {
+		if reqid.Valid(id) {
+			ctx = reqid.NewContext(ctx, id)
+			ctx = zctx.With(ctx, zap.String(reqid.Field, id))
+		} else {
+			zctx.From(ctx).Warn("Discarding malformed peer request ID",
+				zap.Int("length", len(id)),
+			)
+		}
+	}
+
+	s.mux.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// fail logs why this node is refusing and answers with err's message.
+//
+// Every 5xx here is a cause the coordinator cannot see: it receives a bare
+// status code, wraps it as "peer returned status 500", and that is all its log
+// says. Unless the peer records the underlying error itself, the reason is lost
+// on both sides.
+func fail(r *http.Request, w http.ResponseWriter, status int, err error) {
+	zctx.From(r.Context()).Error("Peer request failed",
+		zap.Int("status", status),
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.Error(err),
+	)
+
+	http.Error(w, err.Error(), status)
 }
 
 // target extracts and validates the (disk, name) pair from the route.
@@ -101,13 +153,13 @@ func target(r *http.Request) (cluster.DiskID, string, bool) {
 func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 	disk, name, ok := target(r)
 	if !ok {
-		http.Error(w, "bad fragment path", http.StatusBadRequest)
+		fail(r, w, http.StatusBadRequest, errors.New("bad fragment path"))
 		return
 	}
 
 	wc, err := s.store.Create(r.Context(), disk, name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fail(r, w, http.StatusInternalServerError, errors.Wrap(err, "create fragment"))
 		return
 	}
 
@@ -116,13 +168,13 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(io.MultiWriter(wc, hash), r.Body); err != nil {
 		_ = wc.Close()
 
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fail(r, w, http.StatusInternalServerError, errors.Wrap(err, "stream fragment body"))
 
 		return
 	}
 
 	if err := wc.Close(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fail(r, w, http.StatusInternalServerError, errors.Wrap(err, "commit fragment"))
 		return
 	}
 
@@ -138,13 +190,13 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	disk, name, ok := target(r)
 	if !ok {
-		http.Error(w, "bad fragment path", http.StatusBadRequest)
+		fail(r, w, http.StatusBadRequest, errors.New("bad fragment path"))
 		return
 	}
 
 	rc, size, err := s.store.Open(r.Context(), disk, name)
 	if err != nil {
-		s.storeError(w, err)
+		s.storeError(r, w, err)
 		return
 	}
 
@@ -179,13 +231,13 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	disk := cluster.DiskID(r.PathValue("disk"))
 	if disk == "" {
-		http.Error(w, "bad list path", http.StatusBadRequest)
+		fail(r, w, http.StatusBadRequest, errors.New("bad list path"))
 		return
 	}
 
 	names, err := s.store.List(r.Context(), disk, r.PathValue("prefix"))
 	if err != nil {
-		s.storeError(w, err)
+		s.storeError(r, w, err)
 		return
 	}
 
@@ -213,13 +265,13 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 func (s *Server) stat(w http.ResponseWriter, r *http.Request) {
 	disk, name, ok := target(r)
 	if !ok {
-		http.Error(w, "bad fragment path", http.StatusBadRequest)
+		fail(r, w, http.StatusBadRequest, errors.New("bad fragment path"))
 		return
 	}
 
 	size, err := s.store.Stat(r.Context(), disk, name)
 	if err != nil {
-		s.storeError(w, err)
+		s.storeError(r, w, err)
 		return
 	}
 
@@ -234,12 +286,12 @@ func (s *Server) stat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	disk, name, ok := target(r)
 	if !ok {
-		http.Error(w, "bad fragment path", http.StatusBadRequest)
+		fail(r, w, http.StatusBadRequest, errors.New("bad fragment path"))
 		return
 	}
 
 	if err := s.store.Delete(r.Context(), disk, name); err != nil {
-		s.storeError(w, err)
+		s.storeError(r, w, err)
 		return
 	}
 
@@ -248,11 +300,13 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // storeError maps store errors onto HTTP statuses.
-func (s *Server) storeError(w http.ResponseWriter, err error) {
+func (s *Server) storeError(r *http.Request, w http.ResponseWriter, err error) {
+	// A missing fragment is a normal answer (the caller repairs or reads
+	// elsewhere), so it stays quiet; anything else is this node failing.
 	if errors.Is(err, ErrNotFound) {
 		http.Error(w, "fragment not found", http.StatusNotFound)
 		return
 	}
 
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	fail(r, w, http.StatusInternalServerError, err)
 }

@@ -85,7 +85,7 @@ func dialClusterClient(ctx context.Context, cfg Config, label string, wrap func(
 	host, _ := os.Hostname()
 	c.self = cluster.NodeID(fmt.Sprintf("%s/%s/%d", label, host, os.Getpid()))
 
-	var dialer clusterstore.PeerDialer = clusterstore.NewHTTPPeers(c.self, nil, transport.Secret(cfg.ClusterSecret()), nil)
+	var dialer clusterstore.PeerDialer = clusterstore.NewHTTPPeers(c.self, nil, transport.Secret(cfg.ClusterSecret()), peerHTTPClient(0))
 	if wrap != nil {
 		dialer = wrap(dialer)
 	}
