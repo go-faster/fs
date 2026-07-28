@@ -72,6 +72,10 @@ type clusterRuntime struct {
 	index metastore.Store
 	// indexer feeds it from the disk store, and counts what it could not take.
 	indexer *objectIndexer
+	// indexAdopted is whether the previous process handed the index over
+	// cleanly. Captured at construction because Open is the only moment it can
+	// be known — see objindex.Index.Adopted.
+	indexAdopted bool
 
 	// scrub accumulates this node's scrub totals for metrics.
 	scrub scrubTotals
@@ -183,6 +187,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// write to it — and so a failure anywhere below this line does not leave an
 	// open database behind. On Windows an unclosed one cannot even be deleted.
 	rt.index = index
+	rt.indexAdopted = index.Adopted()
 	rt.indexer = indexer
 	rt.closers = append(rt.closers, index.Close)
 

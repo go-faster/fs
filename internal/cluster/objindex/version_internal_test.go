@@ -77,3 +77,64 @@ func TestCurrentEntryVersionIsAdopted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, entryVersion, stored, "a current index keeps its stamp")
 }
+
+// TestAdoptedSurvivesOpen is the signal Open used to destroy.
+//
+// Open must record the index as building before serving a write, so a process
+// that dies leaves the next start something to rebuild from. That overwrite is
+// also the only record of how the *last* process ended, so reading State after
+// Open always said "building" — and every restart re-walked every disk, which
+// is the scan the index exists to avoid.
+func TestAdoptedSurvivesOpen(t *testing.T) {
+	dir := t.TempDir()
+
+	idx, err := Open(dir)
+	require.NoError(t, err)
+	assert.False(t, idx.Adopted(), "a fresh index was handed over by nobody")
+
+	require.NoError(t, idx.Put(t.Context(), metastore.Entry{Bucket: "photos", Key: "a.jpg", Size: 100}))
+	require.NoError(t, idx.MarkReady(t.Context()))
+	require.NoError(t, idx.Close())
+
+	clean, err := Open(dir)
+	require.NoError(t, err)
+	assert.True(t, clean.Adopted(), "a clean close is adoptable")
+
+	// And the persisted state is still building, because a crash from here
+	// must schedule a rebuild. Both things are true at once, which is why the
+	// answer has to be carried separately from State.
+	state, err := clean.State(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, metastore.StateBuilding, state)
+
+	// A process that dies without closing leaves nothing to adopt.
+	require.NoError(t, clean.db.Close())
+
+	crashed, err := Open(dir)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = crashed.Close() })
+
+	assert.False(t, crashed.Adopted(), "an unclean stop is rebuilt, not adopted")
+}
+
+// TestOlderVersionIsNotAdopted: a clean close at a shape this binary cannot
+// read is still a rebuild. The two reasons are independent and either is
+// enough.
+func TestOlderVersionIsNotAdopted(t *testing.T) {
+	dir := t.TempDir()
+
+	idx, err := Open(dir)
+	require.NoError(t, err)
+	require.NoError(t, idx.setEntryVersion(entryVersion-1))
+	require.NoError(t, idx.MarkReady(t.Context()))
+	require.NoError(t, idx.Close())
+
+	reopened, err := Open(dir)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	assert.False(t, reopened.Adopted(),
+		"a clean close in an older shape is not something to trust")
+}

@@ -72,6 +72,9 @@ type Index struct {
 	// the whole difference between an index that is rebuilt after a crash and
 	// one that is never behind an acknowledged write. See WithSyncWrites.
 	write *pebble.WriteOptions
+	// adopted is what the previous process left behind: whether it handed the
+	// index over cleanly, at a shape this binary can read. See Adopted.
+	adopted bool
 }
 
 var _ metastore.Store = (*Index)(nil)
@@ -124,6 +127,16 @@ func Open(dir string, opts ...Option) (*Index, error) {
 		o(idx)
 	}
 
+	// What the last process left behind. Read before anything overwrites it,
+	// because writing the answer down is the only way it survives Open —
+	// see Adopted.
+	state, err := idx.state()
+	if err != nil {
+		_ = db.Close()
+
+		return nil, err
+	}
+
 	// Entries written in another shape cannot be read as this one, so they are
 	// not adopted: the stamp is corrected and the index rebuilt.
 	stored, err := idx.entryVersion()
@@ -139,7 +152,11 @@ func Open(dir string, opts ...Option) (*Index, error) {
 
 			return nil, err
 		}
+
+		state = metastore.StateBuilding
 	}
+
+	idx.adopted = state == metastore.StateReady
 
 	// Invalidate before serving a single write: from here on only an orderly
 	// Close can call the index ready.
@@ -188,6 +205,26 @@ func (i *Index) Close() error {
 // Dir is where the index lives. It is not part of metastore.Store: a store
 // backed by anything other than a local database has no directory to name.
 func (i *Index) Dir() string { return i.dir }
+
+// Adopted reports whether the previous process handed this index over cleanly,
+// at a shape this binary can read — that is, whether its contents can be
+// trusted without a rebuild.
+//
+// It exists because Open destroys the evidence. Open must record the index as
+// building before serving a single write, so that a process which then dies
+// leaves the next start something to rebuild from; but that overwrite is also
+// the only record of how the *last* process ended. Reading State after Open
+// therefore always says "building" and cannot distinguish a clean shutdown from
+// a crash, which is how every restart came to re-walk every disk — the exact
+// scan the index exists to avoid.
+//
+// So the answer is captured at Open and read from here. It is fixed for the
+// lifetime of the index: it describes one handover, not the current state.
+//
+// A caller that adopts must mark the index ready itself. Open deliberately
+// leaves it building, so an adopting caller that forgets would leave the node
+// excluded from listings for as long as it runs.
+func (i *Index) Adopted() bool { return i.adopted }
 
 // State implements metastore.Store.
 func (i *Index) State(ctx context.Context) (metastore.State, error) {
