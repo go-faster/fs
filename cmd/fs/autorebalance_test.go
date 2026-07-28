@@ -24,7 +24,7 @@ func TestRebalancePolicyTick(t *testing.T) {
 	endpoint := startTestEtcd(t)
 	lg := zaptest.NewLogger(t)
 
-	addr := testFreeAddr(t)
+	addr := testNodeAddr
 
 	cfg := validClusterConfig()
 	cfg.Cluster.Addr = addr
@@ -109,7 +109,7 @@ func TestAutoRebalanceConverges(t *testing.T) {
 	auto := RebalanceConfig{Settle: time.Second, Cooldown: time.Second}
 
 	nodeConfig := func(i int) Config {
-		addr := testFreeAddr(t)
+		addr := testNodeAddr
 
 		cfg := validClusterConfig()
 		cfg.Cluster.NodeID = "n" + strconv.Itoa(i)

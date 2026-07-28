@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/cluster/objindex"
 )
 
 func validClusterConfig() Config {
@@ -98,6 +99,21 @@ func startTestEtcd(t *testing.T) string {
 	return clientURL.String()
 }
 
+// testNodeAddr is what a node under test binds to.
+//
+// Port 0, so the kernel allocates one at bind time and nothing can take it in
+// between. Picking a port first and binding it second is a race that CI loses
+// often enough to matter: the runs are parallel and every one of them wants
+// ephemeral ports. buildCluster resolves the advertised port from what it
+// actually bound, so peers still find each other.
+const testNodeAddr = "127.0.0.1:0"
+
+// testFreeAddr picks a port, releases it, and returns the address.
+//
+// Racy by construction, and only usable where the port must be known before
+// anything binds it: embedded etcd's URLs, which its config wants up front, and
+// the deliberately-dead peer address a test dials to prove nothing answers.
+// Anything that binds a node should use testNodeAddr instead.
 func testFreeAddr(t *testing.T) string {
 	t.Helper()
 
@@ -122,7 +138,7 @@ func TestClusterWiring(t *testing.T) {
 	nodes := make([]*clusterRuntime, 3)
 
 	for i := range nodes {
-		addr := testFreeAddr(t)
+		addr := testNodeAddr
 
 		cfg := validClusterConfig()
 		cfg.Cluster.NodeID = "n" + strconv.Itoa(i)
@@ -205,18 +221,21 @@ func diskWeight(w float64) *float64 { return &w }
 // write.
 func TestClusterRegistersTheAdvertisedAddressFromEnv(t *testing.T) {
 	endpoint := startTestEtcd(t)
-	addr := testFreeAddr(t)
+
+	// A name rather than an address, which is what this override is for: the
+	// value peers dial need not be anything this node could bind.
+	const advertised = "node.svc.cluster.local:7080"
 
 	cfg := validClusterConfig()
 	cfg.Cluster.NodeID = ""
 	cfg.Cluster.AdvertiseAddr = ""
-	cfg.Cluster.Addr = addr
+	cfg.Cluster.Addr = testNodeAddr
 	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-advertise", TTL: 2 * time.Second}
 	cfg.Cluster.Disks = []ClusterDiskConfig{{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")}}
 	cfg.Storage.Fsync = "none"
 
 	t.Setenv("FS_CLUSTER_NODE_ID", "env-node")
-	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", addr)
+	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", advertised)
 
 	// The config is valid with the identity coming only from the environment.
 	require.NoError(t, cfg.Validate())
@@ -233,5 +252,55 @@ func TestClusterRegistersTheAdvertisedAddressFromEnv(t *testing.T) {
 	nodes := rt.coord.Topology().Nodes
 	require.Len(t, nodes, 1)
 	assert.EqualValues(t, "env-node", nodes[0].ID)
-	assert.Equal(t, addr, nodes[0].Addr, "peers must have something to dial")
+	assert.Equal(t, advertised, nodes[0].Addr,
+		"peers must have something to dial, and it is the environment's answer "+
+			"rather than the port this node happened to bind")
+}
+
+// TestFailedBindReleasesTheObjectIndex: by the time the listener is bound, the
+// runtime already owns an open pebble database. A failure that returned without
+// closing it would leave the index open for the life of the process — and on
+// Windows an open database cannot even be deleted, which is the whole reason
+// every other failure path below the bind goes through rt.close().
+//
+// Asserted by reopening it: pebble takes a lock on its directory, so a second
+// Open succeeds only if the first was really closed.
+func TestFailedBindReleasesTheObjectIndex(t *testing.T) {
+	// Hold the port so the node's bind cannot succeed.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = held.Close() })
+
+	root := t.TempDir()
+
+	cfg := validClusterConfig()
+	cfg.Cluster.Addr = held.Addr().String()
+	cfg.Cluster.AdvertiseAddr = held.Addr().String()
+	cfg.Cluster.Disks = []ClusterDiskConfig{{ID: "d0", Path: filepath.Join(root, "d0")}}
+	cfg.Storage.Fsync = "none"
+
+	_, err = buildCluster(t.Context(), zaptest.NewLogger(t), cfg, root)
+	require.ErrorContains(t, err, "bind cluster listener")
+
+	reopened, err := objindex.Open(objindex.DefaultDir(root))
+	require.NoError(t, err, "the index was left open by the failed build")
+	require.NoError(t, reopened.Close())
+}
+
+// TestAdvertisedPortZeroBecomesTheBoundPort: a node told to advertise port 0
+// advertises what it actually bound.
+//
+// Binding is what allocates the port, so nothing before it can know the answer,
+// and a registration carrying ":0" is one no peer can dial. Anything else is
+// passed through untouched — an advertised address is often a name this node
+// could not bind at all.
+func TestAdvertisedPortZeroBecomesTheBoundPort(t *testing.T) {
+	bound, err := net.ResolveTCPAddr("tcp", "10.0.0.7:41234")
+	require.NoError(t, err)
+
+	assert.Equal(t, "127.0.0.1:41234", resolveAdvertisePort("127.0.0.1:0", bound))
+	assert.Equal(t, "node.svc:7080", resolveAdvertisePort("node.svc:7080", bound))
+	assert.Equal(t, "node.svc", resolveAdvertisePort("node.svc", bound),
+		"an address with no port at all is not this function's business")
+	assert.Empty(t, resolveAdvertisePort("", bound))
 }

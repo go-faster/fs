@@ -21,7 +21,7 @@ func TestSchemaGateAndMigrate(t *testing.T) {
 	lg := zaptest.NewLogger(t)
 
 	newCfg := func(prefix string) Config {
-		addr := testFreeAddr(t)
+		addr := testNodeAddr
 
 		cfg := validClusterConfig()
 		cfg.Cluster.Addr = addr

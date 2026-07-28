@@ -32,7 +32,7 @@ func TestHeadlessAdminClusterStatus(t *testing.T) {
 	endpoint := startTestEtcd(t)
 	lg := zaptest.NewLogger(t)
 
-	addr := testFreeAddr(t)
+	addr := testNodeAddr
 
 	cfg := validClusterConfig()
 	cfg.Cluster.Addr = addr
@@ -73,7 +73,8 @@ func TestHeadlessAdminClusterStatus(t *testing.T) {
 
 	require.Len(t, st.Nodes, 1)
 	assert.Equal(t, "n0", st.Nodes[0].ID)
-	assert.Equal(t, addr, st.Nodes[0].Addr)
+	assert.Equal(t, rt.addr, st.Nodes[0].Addr,
+		"the registry carries the address the node actually bound")
 	require.NotEmpty(t, st.Nodes[0].Disks)
 	// The node reported real filesystem capacity at registration.
 	assert.Positive(t, st.Nodes[0].Disks[0].TotalBytes, "node registered with disk capacity")
