@@ -43,6 +43,13 @@ type ControllerConfig struct {
 	// its lease is gone, not merely quiet.
 	Live func() []cluster.NodeID
 
+	// Measure asks a range's owner what it holds and where it would divide.
+	// Nil disables splitting, which is what a plane with no transport gets.
+	Measure func(context.Context, cluster.NodeID, rangemap.Range) (Measurement, error)
+
+	// Split is when a range is too large to leave alone.
+	Split SplitPolicy
+
 	// Readiness is the cluster-wide build flag. Orphaning a range makes the
 	// plane untrustworthy until it is rebuilt, and this is what says so.
 	Readiness Readiness
@@ -117,6 +124,8 @@ type Reconciliation struct {
 	Promoted []rangemap.Range
 	Held     []rangemap.Range
 	Orphaned []rangemap.Range
+	// Split are the boundaries this pass created.
+	Split []string
 }
 
 // RebuildOwed reports whether this pass left ranges that hold nothing, which
@@ -190,7 +199,15 @@ func (c *Controller) Reconcile(ctx context.Context) (Reconciliation, error) {
 	}
 
 	if len(out.Promoted) == 0 && len(out.Orphaned) == 0 {
-		return result, nil
+		// Nothing is wrong with the membership, so the pass can spend itself on
+		// making the partitioning better rather than correct.
+		//
+		// One or the other, never both. A pass that failed over *and* split
+		// would be deciding where data goes from measurements taken while it
+		// was moving, and the second decision would be made against a map the
+		// first had already invalidated. Splits wait a pass; they are not
+		// urgent, and the next pass is five seconds away.
+		return c.split(ctx, m, result)
 	}
 
 	// Building before the map, not after. A node that picked up a map with an
@@ -254,6 +271,57 @@ func (c *Controller) churn(m *rangemap.Map, live []cluster.NodeID) error {
 	}
 
 	return nil
+}
+
+// split makes the partitioning finer where the data warrants it.
+//
+// Runs only on a pass where the membership needed nothing, so every range has a
+// live owner to be measured — a range whose owner is gone cannot be measured,
+// and splitting it on the last number anyone saw would be a map edit made from
+// a stale reading.
+func (c *Controller) split(
+	ctx context.Context,
+	m *rangemap.Map,
+	result Reconciliation,
+) (Reconciliation, error) {
+	if c.cfg.Measure == nil {
+		return result, nil
+	}
+
+	boundaries := PlanSplits(ctx, m, c.cfg.Measure, c.cfg.Split)
+	if len(boundaries) == 0 {
+		return result, nil
+	}
+
+	next := m
+
+	for _, at := range boundaries {
+		// Applied one at a time onto the result of the last, because two
+		// boundaries can land in the same range: the plan is computed from one
+		// map, and the first split of a range invalidates the second's view of
+		// it. Split rejects what it cannot apply, and a rejected boundary is
+		// skipped rather than fatal — the range is measured again next pass.
+		split, err := next.Split(at)
+		if err != nil {
+			continue
+		}
+
+		next = split
+
+		result.Split = append(result.Split, at)
+	}
+
+	if len(result.Split) == 0 {
+		return result, nil
+	}
+
+	if err := c.cfg.Save(ctx, next); err != nil {
+		return Reconciliation{}, errors.Wrap(err, "write the partitioning")
+	}
+
+	result.Changed = true
+
+	return result, nil
 }
 
 // track records when each missing node was first noticed missing.

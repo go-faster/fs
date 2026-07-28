@@ -305,7 +305,27 @@ type MetadataConfig struct {
 	// DefaultMetadataReplicas). 1 means no followers, so every lost owner costs
 	// a cluster-wide rebuild rather than a promotion.
 	Replicas int `yaml:"replicas,omitempty"`
+
+	// MaxRangeBytes is the size above which a range splits (default
+	// shardstore.DefaultMaxRangeBytes).
+	//
+	// The number that matters is what a *move* of one range costs, since that
+	// is the unit a rebalance shifts: a range too large to hand to another node
+	// in reasonable time is one the cluster cannot rebalance, however even the
+	// partition looks on paper.
+	MaxRangeBytes uint64 `yaml:"max_range_bytes,omitempty"`
+
+	// MaxSplitsPerPass bounds how many ranges one reconciliation splits
+	// (default shardstore.DefaultMaxSplitsPerPass). Splitting moves no data,
+	// but each one is a map revision every node in the cluster refetches.
+	MaxSplitsPerPass int `yaml:"max_splits_per_pass,omitempty"`
 }
+
+// MetadataMaxRangeBytes is the configured split threshold, or the default.
+func (c *Config) MetadataMaxRangeBytes() uint64 { return c.Cluster.Metadata.MaxRangeBytes }
+
+// MetadataMaxSplitsPerPass is the configured per-pass cap, or the default.
+func (c *Config) MetadataMaxSplitsPerPass() int { return c.Cluster.Metadata.MaxSplitsPerPass }
 
 // MetadataRanges is the configured presplit count, or the default.
 func (c *Config) MetadataRanges() int {

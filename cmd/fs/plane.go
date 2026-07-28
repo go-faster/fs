@@ -233,6 +233,11 @@ func servePlaneLeadership(
 		},
 		Live:      rt.liveNodes,
 		Readiness: rt.metaPlane.state,
+		Measure:   rt.metaPlane.plane.Measure,
+		Split: shardstore.SplitPolicy{
+			MaxBytes:         cfg.MetadataMaxRangeBytes(),
+			MaxSplitsPerPass: cfg.MetadataMaxSplitsPerPass(),
+		},
 	})
 	if err != nil {
 		return err
@@ -266,10 +271,18 @@ func servePlaneLeadership(
 			continue
 		}
 
-		lg.Info("Metadata plane reassigned",
-			zap.Int("promoted", len(out.Promoted)),
-			zap.Int("orphaned", len(out.Orphaned)),
-			zap.Int("held", len(out.Held)))
+		if len(out.Split) > 0 {
+			lg.Info("Metadata plane split",
+				zap.Int("boundaries", len(out.Split)),
+				zap.String("first", out.Split[0]))
+		}
+
+		if len(out.Promoted)+len(out.Orphaned)+len(out.Held) > 0 {
+			lg.Info("Metadata plane reassigned",
+				zap.Int("promoted", len(out.Promoted)),
+				zap.Int("orphaned", len(out.Orphaned)),
+				zap.Int("held", len(out.Held)))
+		}
 
 		if out.RebuildOwed() {
 			// Said loudly. The plane is marked building, so listings are

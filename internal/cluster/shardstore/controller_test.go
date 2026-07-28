@@ -382,3 +382,240 @@ func TestUnpartitionedPlaneIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, ctl.acts)
 }
+
+// sized backs a controller's Measure from a table keyed by range start.
+type sized struct {
+	byStart map[string]shardstore.Measurement
+	calls   int
+}
+
+func (s *sized) measure(
+	_ context.Context, _ cluster.NodeID, r rangemap.Range,
+) (shardstore.Measurement, error) {
+	s.calls++
+
+	return s.byStart[r.Start], nil
+}
+
+// splitting builds a controller whose membership is healthy and whose ranges
+// measure as the table says.
+func splitting(t *testing.T, m *rangemap.Map, table *sized, live ...cluster.NodeID) *fixture {
+	t.Helper()
+
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: live,
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load:      f.ctl.load,
+		Save:      f.ctl.save,
+		Live:      func() []cluster.NodeID { return f.live },
+		Readiness: f.ctl,
+		Measure:   table.measure,
+		Split:     shardstore.SplitPolicy{MaxBytes: 1000, MaxSplitsPerPass: 4},
+		Now:       f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	return f
+}
+
+// TestControllerSplitsAnOversizedRange is the loop closing: E3 shipped a
+// partitioning nothing ever changed, and this is what changes it.
+func TestControllerSplitsAnOversizedRange(t *testing.T) {
+	table := &sized{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 9000, SplitAt: "om"},
+	}}
+
+	f := splitting(t, &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Followers: []cluster.NodeID{"n1"}},
+	}}, table, "n0", "n1")
+
+	out := f.reconcile(t)
+	require.True(t, out.Changed)
+	assert.Equal(t, []string{"om"}, out.Split)
+
+	require.Len(t, f.ctl.m.Ranges, 2)
+	assert.Equal(t, "om", f.ctl.m.Ranges[1].Start)
+	assert.Equal(t, []string{"save"}, f.ctl.acts,
+		"a split does not make the plane untrustworthy: it moves nothing")
+
+	// Both halves keep the owner and the followers, so nothing has to be copied
+	// before the map is published.
+	for i, r := range f.ctl.m.Ranges {
+		assert.Equal(t, cluster.NodeID("n0"), r.Owner, "half %d", i)
+		assert.Equal(t, []cluster.NodeID{"n1"}, r.Followers, "half %d", i)
+	}
+}
+
+// TestControllerLeavesASettledPartitioningAlone: a pass where nothing is wrong
+// and nothing is oversized must write nothing. This runs on a timer forever.
+func TestControllerLeavesASettledPartitioningAlone(t *testing.T) {
+	table := &sized{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 10, SplitAt: "om"},
+	}}
+
+	f := splitting(t, &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0"},
+	}}, table, "n0")
+
+	for range 3 {
+		out := f.reconcile(t)
+		assert.False(t, out.Changed)
+		assert.Empty(t, out.Split)
+	}
+
+	assert.Empty(t, f.ctl.acts)
+	assert.Positive(t, table.calls, "it did look")
+}
+
+// TestFailoverAndSplitDoNotShareAPass: a pass that failed over *and* split would
+// be deciding where data goes from measurements taken while it was moving, and
+// the second decision would be made against a map the first had invalidated.
+//
+// Splits are not urgent and the next pass is seconds away.
+func TestFailoverAndSplitDoNotShareAPass(t *testing.T) {
+	// Small to begin with, so the warm-up passes that notice n0 do not split
+	// first — which is what the earlier version of this test let happen, and
+	// why it failed on a range count rather than on the claim.
+	table := &sized{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 10, SplitAt: "om"},
+	}}
+
+	f := splitting(t, &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Followers: []cluster.NodeID{"n1"}},
+	}}, table, "n0", "n1")
+
+	f.reconcile(t) // notices n0 while it is alive
+
+	f.live = []cluster.NodeID{"n1"}
+	f.reconcile(t)
+	f.clk.advance(time.Minute)
+
+	// It grew while the owner was away, so this pass has both jobs available.
+	table.byStart[""] = shardstore.Measurement{Bytes: 9000, SplitAt: "om"}
+
+	out := f.reconcile(t)
+	require.True(t, out.Changed)
+	require.Len(t, out.Promoted, 1)
+	assert.Empty(t, out.Split, "the failover pass did not also split")
+	assert.Len(t, f.ctl.m.Ranges, 1)
+
+	// And the next pass, with the membership settled, does the split.
+	next := f.reconcile(t)
+	require.True(t, next.Changed)
+	assert.Equal(t, []string{"om"}, next.Split)
+	assert.Len(t, f.ctl.m.Ranges, 2)
+	assert.Equal(t, cluster.NodeID("n1"), f.ctl.m.Ranges[0].Owner,
+		"the promotion held; the split did not undo it")
+}
+
+// TestSplittingIsOffWithoutAWayToMeasure: a plane with no transport cannot ask
+// an owner anything, and guessing would split on numbers nobody produced.
+func TestSplittingIsOffWithoutAWayToMeasure(t *testing.T) {
+	ctl := &recorder{m: &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0"},
+	}}, state: metastore.StateReady}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: ctl.load,
+		Save: ctl.save,
+		Live: func() []cluster.NodeID { return []cluster.NodeID{"n0"} },
+	})
+	require.NoError(t, err)
+
+	out, err := c.Reconcile(t.Context())
+	require.NoError(t, err)
+	assert.False(t, out.Changed)
+	assert.Empty(t, ctl.acts)
+}
+
+// TestTwoBoundariesInOneRange: the plan is computed from one map, so two
+// boundaries can name the same range — and the first split invalidates the
+// second's view of it. The second is skipped rather than fatal, and the range is
+// measured again next pass.
+func TestTwoBoundariesInOneRange(t *testing.T) {
+	table := &sized{byStart: map[string]shardstore.Measurement{
+		"":   {Bytes: 9000, SplitAt: "om"},
+		"ot": {Bytes: 8000, SplitAt: "ow"},
+	}}
+
+	f := splitting(t, &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "ot", Owner: "n0"},
+		{Start: "ot", End: "", Owner: "n0"},
+	}}, table, "n0")
+
+	out := f.reconcile(t)
+	require.True(t, out.Changed)
+	assert.Equal(t, []string{"om", "ow"}, out.Split)
+	assert.Len(t, f.ctl.m.Ranges, 4)
+	require.NoError(t, f.ctl.m.Validate())
+}
+
+// TestABogusBoundaryIsSkippedNotFatal: the boundary arrives over the wire from
+// the range's owner, so it is a number this node did not compute and cannot
+// assume anything about.
+//
+// A peer that is buggy, mid-upgrade, or working from a map older than this one
+// can name a key that is already a boundary. Failing the pass would let one
+// such node stop the whole plane from ever splitting again; writing the map
+// anyway would publish a revision for a change that did not happen.
+func TestABogusBoundaryIsSkippedNotFatal(t *testing.T) {
+	// "ob" is already where the second range starts, so splitting there is a
+	// no-op the map surgery refuses.
+	table := &sized{byStart: map[string]shardstore.Measurement{
+		"":   {Bytes: 9000, SplitAt: "ob"},
+		"ob": {Bytes: 9000, SplitAt: "ob"},
+	}}
+
+	f := splitting(t, &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "ob", Owner: "n0"},
+		{Start: "ob", End: "", Owner: "n0"},
+	}}, table, "n0")
+
+	out, err := f.c.Reconcile(t.Context())
+	require.NoError(t, err, "one bad peer must not stop the plane from splitting")
+	assert.False(t, out.Changed)
+	assert.Empty(t, out.Split)
+	assert.Empty(t, f.ctl.acts, "no revision published for a change that did not happen")
+	assert.Len(t, f.ctl.m.Ranges, 2)
+
+	// And a good boundary alongside a bad one still lands.
+	table.byStart["ob"] = shardstore.Measurement{Bytes: 9000, SplitAt: "om"}
+
+	out = f.reconcile(t)
+	require.True(t, out.Changed)
+	assert.Equal(t, []string{"om"}, out.Split)
+	assert.Len(t, f.ctl.m.Ranges, 3)
+}
+
+// TestOneWriteForAWholePassOfSplits: every split is a map revision each node in
+// the cluster refetches, so a pass that published one per boundary would turn a
+// tuned partitioning into a burst of routing traffic.
+func TestOneWriteForAWholePassOfSplits(t *testing.T) {
+	table := &sized{byStart: map[string]shardstore.Measurement{
+		"":   {Bytes: 9000, SplitAt: "oam"},
+		"ob": {Bytes: 9000, SplitAt: "obm"},
+		"oc": {Bytes: 9000, SplitAt: "ocm"},
+	}}
+
+	f := splitting(t, &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "ob", Owner: "n0"},
+		{Start: "ob", End: "oc", Owner: "n0"},
+		{Start: "oc", End: "", Owner: "n0"},
+	}}, table, "n0")
+
+	out := f.reconcile(t)
+	require.True(t, out.Changed)
+	require.Len(t, out.Split, 3)
+
+	assert.Equal(t, []string{"save"}, f.ctl.acts,
+		"three boundaries, one published map")
+	assert.Len(t, f.ctl.m.Ranges, 6)
+}
