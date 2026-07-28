@@ -63,8 +63,15 @@ type Shard struct {
 	// rebuild rather than an object.
 	write *pebble.WriteOptions
 
-	mu    sync.RWMutex
-	owned []rangemap.Range
+	// ship sends what this shard applies to its ranges' followers. Nil is the
+	// unreplicated configuration.
+	ship Shipper
+
+	mu sync.RWMutex
+	// owned is what this shard serves; followed is what it replicates for
+	// another node and deliberately does not serve.
+	owned    []rangemap.Range
+	followed []rangemap.Range
 
 	locks [stripes]sync.Mutex
 }
@@ -241,6 +248,11 @@ func (s *Shard) Put(ctx context.Context, e metastore.Entry) error {
 		return errors.Wrap(err, "commit index entry")
 	}
 
+	// After the commit, never before: a follower must not be told about a
+	// write the owner has not made, or a failover could promote a replica
+	// holding something the disks never had.
+	s.shipTo(ctx, key, batch.Repr())
+
 	return nil
 }
 
@@ -283,6 +295,8 @@ func (s *Shard) Delete(ctx context.Context, bucket, key string) error {
 	if err := batch.Commit(s.write); err != nil {
 		return errors.Wrap(err, "commit index delete")
 	}
+
+	s.shipTo(ctx, encoded, batch.Repr())
 
 	return nil
 }
