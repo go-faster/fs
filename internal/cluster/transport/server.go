@@ -29,6 +29,7 @@ type Server struct {
 	// index answers page queries against this node's object index; nil serves
 	// 501, which is how a caller learns to read the sidecars instead.
 	index IndexFunc
+	shard ShardFunc
 }
 
 // ServerOption configures a Server.
@@ -67,6 +68,7 @@ func NewServer(store Store, secret Secret, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("GET /v1/names/{disk}/{prefix...}", s.list)
 	s.mux.HandleFunc("GET /v1/status", s.serveStatus)
 	s.mux.HandleFunc("GET /v1/index", s.serveIndex)
+	s.mux.HandleFunc("POST /v1/shard", s.serveShard)
 
 	return s
 }
