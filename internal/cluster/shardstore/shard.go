@@ -700,24 +700,36 @@ func (s *Shard) Reset(ctx context.Context) error {
 	return nil
 }
 
-// DropUnowned removes everything outside the served ranges.
+// DropUnowned removes the entries outside the served ranges, then rebuilds this
+// shard's counters from what is left.
 //
 // Separate from Adopt because it is not free: a range handed to another node
 // stops being served the moment the map says so, but reclaiming its space is
-// bulk work, and doing it inside a map change would make every ownership
-// change as slow as the data it moves.
+// bulk work, and doing it inside a map change would make every ownership change
+// as slow as the data it moves.
+//
+// # Only the object prefix is swept, and the counters are recomputed
+//
+// A shard's usage rows are keyed 'u' + bucket, which sorts above every object
+// key — so a sweep bounded at the end of the *usage* prefix deletes them, and a
+// shard that narrowed its ranges would report zero usage for buckets it still
+// serves. That is what this used to do.
+//
+// Sweeping only the object prefix fixes that half and leaves the other: the
+// counters still describe entries that have just been dropped. They cannot be
+// adjusted incrementally, because what was removed is exactly what is no longer
+// there to be counted. So they are rebuilt from the remaining entries — a scan
+// of what the shard holds, which is the same order of work as the drop it
+// follows, and this is already the bulk path.
 func (s *Shard) DropUnowned(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return errors.Wrap(err, "drop unowned ranges")
 	}
 
-	owned := s.Ranges()
-
-	// The gaps between served ranges, walked in key order. Everything outside
-	// the object and usage prefixes is this shard's own bookkeeping and stays.
+	// The gaps between served ranges, walked in key order.
 	var from []byte
 
-	for _, r := range owned {
+	for _, r := range s.Ranges() {
 		if r.Start != "" && (from == nil || bytes.Compare([]byte(r.Start), from) > 0) {
 			if err := s.dropBetween(from, []byte(r.Start)); err != nil {
 				return err
@@ -725,28 +737,37 @@ func (s *Shard) DropUnowned(ctx context.Context) error {
 		}
 
 		if r.End == "" {
-			return nil
+			from = nil
+
+			break
 		}
 
 		from = []byte(r.End)
 	}
 
-	return s.dropBetween(from, nil)
+	if from != nil || len(s.Ranges()) == 0 {
+		if err := s.dropBetween(from, nil); err != nil {
+			return err
+		}
+	}
+
+	return s.recount(ctx)
 }
 
-// dropBetween deletes [from, to), where nil bounds mean the ends of the space.
+// dropBetween deletes the object entries in [from, to), where nil bounds mean
+// the ends of the object prefix.
 func (s *Shard) dropBetween(from, to []byte) error {
+	objects := []byte{keyspace.Object}
+	objectsEnd := keyspace.UpperBound(objects)
+
 	lower := from
-	if lower == nil {
-		lower = []byte{0}
+	if lower == nil || bytes.Compare(lower, objects) < 0 {
+		lower = objects
 	}
 
 	upper := to
-	if upper == nil {
-		// Everything a shard stores lives under the object or usage prefix, so
-		// the sweep stops there rather than at the true end of the key space —
-		// which is where a shard's own bookkeeping lives.
-		upper = keyspace.UpperBound([]byte{keyspace.Usage})
+	if upper == nil || bytes.Compare(upper, objectsEnd) > 0 {
+		upper = objectsEnd
 	}
 
 	if bytes.Compare(lower, upper) >= 0 {
@@ -755,6 +776,75 @@ func (s *Shard) dropBetween(from, to []byte) error {
 
 	if err := s.db.DeleteRange(lower, upper, pebble.Sync); err != nil {
 		return errors.Wrap(err, "drop unowned range")
+	}
+
+	return nil
+}
+
+// recount rebuilds every usage row from the entries this shard still holds.
+//
+// Rows for buckets it no longer holds anything of are removed rather than
+// zeroed, so Buckets does not keep reporting a bucket this shard has nothing
+// in — which would make the cluster-wide bucket list include names no shard
+// can produce an object for.
+func (s *Shard) recount(ctx context.Context) error {
+	totals := make(map[string]metastore.Usage)
+
+	lower := []byte{keyspace.Object}
+
+	iter, err := s.db.NewIter(&pebble.IterOptions{
+		LowerBound: lower,
+		UpperBound: keyspace.UpperBound(lower),
+	})
+	if err != nil {
+		return errors.Wrap(err, "open shard iterator")
+	}
+
+	defer func() { _ = iter.Close() }()
+
+	for iter.First(); iter.Valid(); iter.Next() {
+		if err := ctx.Err(); err != nil {
+			return errors.Wrap(err, "recount usage")
+		}
+
+		var e metastore.Entry
+		if err := json.Unmarshal(iter.Value(), &e); err != nil {
+			continue
+		}
+
+		u := totals[e.Bucket]
+		u.Objects++
+		u.Bytes += e.Size
+		totals[e.Bucket] = u
+	}
+
+	if err := iter.Error(); err != nil {
+		return errors.Wrap(err, "recount usage")
+	}
+
+	batch := s.db.NewBatch()
+	defer func() { _ = batch.Close() }()
+
+	// Every existing row is cleared and only the recomputed ones written back,
+	// so a bucket that lost its last entry here leaves no row behind.
+	usage := []byte{keyspace.Usage}
+	if err := batch.DeleteRange(usage, keyspace.UpperBound(usage), nil); err != nil {
+		return errors.Wrap(err, "clear usage")
+	}
+
+	for bucket, u := range totals {
+		data, err := json.Marshal(u)
+		if err != nil {
+			return errors.Wrap(err, "marshal usage")
+		}
+
+		if err := batch.Set(keyspace.UsageKey(bucket), data, nil); err != nil {
+			return errors.Wrap(err, "stage usage")
+		}
+	}
+
+	if err := batch.Commit(pebble.Sync); err != nil {
+		return errors.Wrap(err, "commit usage")
 	}
 
 	return nil
