@@ -98,18 +98,29 @@ type RebuildReport struct {
 // The sidecars are read directly rather than through the listing path, for the
 // obvious reason: the store being rebuilt cannot be the source of truth for
 // rebuilding itself.
-func (c *Coordinator) RebuildMetadata(ctx context.Context, opts RebuildOptions) (*RebuildReport, error) {
-	if c.meta == nil || c.meta.Scope() != metastore.ScopeCluster {
+//
+// The target store is a parameter rather than the coordinator's own. A rebuild
+// is "walk the cluster and fill this", and which store that is belongs to the
+// caller — the elected runner knows, the coordinator does not need to. It also
+// keeps the dependency visible: a walk that silently filled whatever the
+// coordinator happened to hold would be a surprise the first time those two
+// were not the same.
+func (c *Coordinator) RebuildMetadata(
+	ctx context.Context,
+	store metastore.Store,
+	opts RebuildOptions,
+) (*RebuildReport, error) {
+	if store == nil || store.Scope() != metastore.ScopeCluster {
 		return nil, errors.New("clusterstore: a cluster-scope metastore is required to rebuild")
 	}
 
 	if opts.Resuming {
 		// Already emptied by whoever started this rebuild. Re-marking is
 		// harmless and covers a store that was somehow left ready.
-		if err := c.meta.MarkBuilding(ctx); err != nil {
+		if err := store.MarkBuilding(ctx); err != nil {
 			return nil, err
 		}
-	} else if err := c.meta.Reset(ctx); err != nil {
+	} else if err := store.Reset(ctx); err != nil {
 		return nil, err
 	}
 
@@ -148,7 +159,7 @@ func (c *Coordinator) RebuildMetadata(ctx context.Context, opts RebuildOptions) 
 				return report, err
 			}
 
-			if err := c.meta.Put(ctx, metastore.Entry{
+			if err := store.Put(ctx, metastore.Entry{
 				Bucket:     sc.Bucket,
 				Key:        sc.Key,
 				Size:       sc.Size,
@@ -193,7 +204,7 @@ func (c *Coordinator) RebuildMetadata(ctx context.Context, opts RebuildOptions) 
 	// Only now is the store worth reading. Marking ready before the walk
 	// finished would serve a listing that reports a fraction of the cluster as
 	// all of it — the one outcome worse than refusing to answer.
-	if err := c.meta.MarkReady(ctx); err != nil {
+	if err := store.MarkReady(ctx); err != nil {
 		return report, err
 	}
 

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/objindex"
 )
 
 // storeKeys drains the test bucket out of the store, so a rebuild can be
@@ -40,7 +41,7 @@ func TestRebuildFillsTheStoreFromTheDisks(t *testing.T) {
 
 	c.Flush()
 
-	report, err := c.RebuildMetadata(t.Context(), RebuildOptions{})
+	report, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, len(want), report.Objects)
@@ -66,7 +67,7 @@ func TestRebuildLeavesTheStoreUnreadableUntilItFinishes(t *testing.T) {
 
 	stop := assert.AnError
 
-	_, err := c.RebuildMetadata(t.Context(), RebuildOptions{
+	_, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{
 		Checkpoint: func(context.Context, RebuildCursor) error { return stop },
 	})
 	require.ErrorIs(t, err, stop)
@@ -107,7 +108,7 @@ func TestRebuildResumesWithoutDuplicatesOrGaps(t *testing.T) {
 		seen   int
 	)
 
-	_, err := c.RebuildMetadata(t.Context(), RebuildOptions{
+	_, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{
 		Checkpoint: func(_ context.Context, cur RebuildCursor) error { return nil },
 		OnObject: func(bucket, key string) {
 			seen++
@@ -122,7 +123,7 @@ func TestRebuildResumesWithoutDuplicatesOrGaps(t *testing.T) {
 	// Second runner: takes over from the cursor. It must not reset — doing so
 	// would discard the first runner's work and make every leadership change a
 	// restart.
-	report, err := c.RebuildMetadata(t.Context(), RebuildOptions{
+	report, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{
 		Resume:   cursor,
 		Resuming: true,
 	})
@@ -148,7 +149,7 @@ func TestRebuildResumingDoesNotEmptyTheStore(t *testing.T) {
 	// Pretend a previous runner had already indexed "a".
 	require.NoError(t, store.Put(t.Context(), metastore.Entry{Bucket: "b", Key: "a", Size: 16}))
 
-	_, err := c.RebuildMetadata(t.Context(), RebuildOptions{
+	_, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{
 		Resume:   RebuildCursor{Bucket: "b", Key: "a"},
 		Resuming: true,
 	})
@@ -172,7 +173,7 @@ func TestRebuildFromScratchEmptiesFirst(t *testing.T) {
 	// was not watching leaves behind.
 	require.NoError(t, store.Put(t.Context(), metastore.Entry{Bucket: "b", Key: "ghost.txt", Size: 1}))
 
-	_, err := c.RebuildMetadata(t.Context(), RebuildOptions{})
+	_, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"real.txt"}, storeKeys(t, store))
@@ -182,7 +183,7 @@ func TestRebuildFromScratchEmptiesFirst(t *testing.T) {
 // starts over and a cluster large enough to need this never finishes one.
 func TestRebuildCheckpointsProgress(t *testing.T) {
 	fc := newFakeCluster(3, 2)
-	c, _ := clusterCoordinator(t, fc)
+	c, store := clusterCoordinator(t, fc)
 
 	for i := range 3 {
 		mustPut(t, c, fmt.Sprintf("k%d", i), randBytes(16))
@@ -192,7 +193,7 @@ func TestRebuildCheckpointsProgress(t *testing.T) {
 
 	var cursors []RebuildCursor
 
-	_, err := c.RebuildMetadata(t.Context(), RebuildOptions{
+	_, err := c.RebuildMetadata(t.Context(), store, RebuildOptions{
 		Checkpoint: func(_ context.Context, cur RebuildCursor) error {
 			cursors = append(cursors, cur)
 
@@ -213,7 +214,16 @@ func TestRebuildRefusesWithoutAClusterScopeStore(t *testing.T) {
 	fc := newFakeCluster(3, 2)
 	c, _ := indexedCoordinator(t, fc)
 
-	_, err := c.RebuildMetadata(t.Context(), RebuildOptions{})
+	idx, err := objindex.Open(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+
+	// objindex reports ScopeLocal: a store describing one node cannot be the
+	// target of a walk that describes the cluster.
+	_, err = c.RebuildMetadata(t.Context(), idx, RebuildOptions{})
+	require.Error(t, err)
+
+	_, err = c.RebuildMetadata(t.Context(), nil, RebuildOptions{})
 	require.Error(t, err)
 }
 
