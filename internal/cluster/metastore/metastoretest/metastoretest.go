@@ -95,6 +95,8 @@ var suite = map[string]func(t *testing.T, store metastore.Store){
 	"State/MarkReadyAndBuilding":    testStateMarks,
 	"Reset/Empties":                 testResetEmpties,
 	"Context/CancelledDoesNotWrite": testCancelledContextDoesNotWrite,
+	"Locator/RoundTrips":            testLocatorRoundTrips,
+	"Locator/AbsentIsZero":          testLocatorAbsentIsZero,
 }
 
 // Entry builds a record; seq orders it against others for the same key. It is
@@ -560,4 +562,46 @@ func testCancelledContextDoesNotWrite(t *testing.T, store metastore.Store) {
 	usage, err := store.Usage(t.Context(), testBucket)
 	require.NoError(t, err)
 	assert.Zero(t, usage.Objects)
+}
+
+// testLocatorRoundTrips: the field is dead today, but a backend that silently
+// dropped it would be found only in E6, against a design that will have moved.
+// Round-tripping it now is what makes landing it early worth anything.
+func testLocatorRoundTrips(t *testing.T, store metastore.Store) {
+	want := metastore.Locator{Volume: 42, Offset: 1 << 37, Length: 4 << 20}
+
+	e := Entry(testBucket, testKey, 100, 1)
+	e.Locator = want
+	require.NoError(t, store.Put(t.Context(), e))
+
+	got, found, err := store.Get(t.Context(), testBucket, testKey)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, want, got.Locator)
+	assert.True(t, got.Locator.InVolume())
+
+	// The offset is past 2^32 on purpose: a backend that stored it in 32 bits
+	// would truncate rather than fail, and a truncated offset reads a valid
+	// record from the wrong place in the volume.
+	assert.Equal(t, uint64(1<<37), got.Locator.Offset)
+}
+
+// testLocatorAbsentIsZero: zero is the only representation of "not in a
+// volume", so no backend needs a separate presence flag — and every object that
+// exists today is in exactly that state.
+func testLocatorAbsentIsZero(t *testing.T, store metastore.Store) {
+	require.NoError(t, store.Put(t.Context(), Entry(testBucket, testKey, 100, 1)))
+
+	got, found, err := store.Get(t.Context(), testBucket, testKey)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Zero(t, got.Locator)
+	assert.False(t, got.Locator.InVolume())
+
+	// And it survives being written back, which is what a re-index does.
+	require.NoError(t, store.Put(t.Context(), got))
+
+	got, _, err = store.Get(t.Context(), testBucket, testKey)
+	require.NoError(t, err)
+	assert.Zero(t, got.Locator)
 }

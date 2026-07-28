@@ -49,7 +49,13 @@ var versionKey = []byte{prefixMeta, 'v'}
 // entryVersion stamps the shape of a stored entry. Bumping it makes the next
 // start discard what it finds and rebuild from the disks, which is what a
 // changed shape needs and what being pre-production makes affordable.
-const entryVersion = 2
+//
+// 3 added metastore.Entry.Locator. The field is absent from every stored entry
+// written at 2 and would decode as zero, which is the correct value — so the
+// bump is not strictly required to read them. It is taken anyway, because the
+// mechanism exists to make exactly this decision unnecessary to think about,
+// and an upgrade that rebuilds is cheaper than one that is subtly wrong.
+const entryVersion = 3
 
 // stripes is how many locks guard the read-modify-write behind an update. A
 // bucket's counters have to be adjusted with the entry that moves them, so
@@ -118,15 +124,8 @@ func Open(dir string, opts ...Option) (*Index, error) {
 		o(idx)
 	}
 
-	state, err := idx.state()
-	if err != nil {
-		_ = db.Close()
-
-		return nil, err
-	}
-
 	// Entries written in another shape cannot be read as this one, so they are
-	// not adopted: the index reports building and the node rebuilds it.
+	// not adopted: the stamp is corrected and the index rebuilt.
 	stored, err := idx.entryVersion()
 	if err != nil {
 		_ = db.Close()
@@ -140,18 +139,25 @@ func Open(dir string, opts ...Option) (*Index, error) {
 
 			return nil, err
 		}
-
-		state = metastore.StateBuilding
 	}
 
 	// Invalidate before serving a single write: from here on only an orderly
 	// Close can call the index ready.
-	if state == metastore.StateReady {
-		if err := idx.setState(metastore.StateBuilding); err != nil {
-			_ = db.Close()
+	//
+	// Unconditional, and that is the fix rather than the simplification. This
+	// used to skip the write when the index did not already read ready — which
+	// the version-mismatch branch had just arranged, in a local variable, on
+	// its way to concluding that a rebuild was owed. The persisted state
+	// therefore stayed *ready*, and a node upgraded across a format change
+	// adopted a stale-shaped index instead of rebuilding it: the version stamp
+	// made a rebuild less likely, not more.
+	//
+	// It had never mattered because the stamp had never been bumped. Bumping it
+	// for the locator field is what surfaced it.
+	if err := idx.setState(metastore.StateBuilding); err != nil {
+		_ = db.Close()
 
-			return nil, err
-		}
+		return nil, err
 	}
 
 	return idx, nil
