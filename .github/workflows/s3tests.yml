@@ -104,6 +104,18 @@ jobs:
             --json s3tests.json \
             --timeout 60s
 
+      - name: Show why the tests failed
+        if: failure()
+        run: |
+          # The run log names the failing tests but never says why: the detail
+          # is only in the report. That used to mean a flake cost a blind
+          # re-run — and the re-run then destroyed its own evidence, because it
+          # overwrote the artifact with a passing one. Print it here instead,
+          # where the log for this attempt is permanent.
+          jq -r 'select(.status == "failed" or .status == "error")
+                 | "\n=== \(.node_id) ===\n\(.output // "no output recorded")"' \
+            s3tests.json || true
+
       - name: Show server log on failure
         if: failure()
         run: tail -n 200 fs-server.log || true
@@ -112,7 +124,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: s3tests-reports
+          name: s3tests-reports-attempt-${{ github.run_attempt }}
           path: |
             s3tests.xml
             s3tests.json

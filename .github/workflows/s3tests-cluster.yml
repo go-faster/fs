@@ -105,6 +105,18 @@ jobs:
             --json s3tests-cluster.json \
             --timeout 60s
 
+      - name: Show why the tests failed
+        if: failure()
+        run: |
+          # The run log names the failing tests but never says why: the detail
+          # is only in the report. That used to mean a flake cost a blind
+          # re-run — and the re-run then destroyed its own evidence, because it
+          # overwrote the artifact with a passing one. Print it here instead,
+          # where the log for this attempt is permanent.
+          jq -r 'select(.status == "failed" or .status == "error")
+                 | "\n=== \(.node_id) ===\n\(.output // "no output recorded")"' \
+            s3tests-cluster.json || true
+
       - name: Collect node logs
         if: always()
         run: ./scripts/s3tests-cluster.sh logs > cluster-nodes.log 2>&1 || true
@@ -113,9 +125,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: s3tests-cluster-reports
+          name: s3tests-cluster-reports-attempt-${{ github.run_attempt }}
           path: |
             s3tests-cluster*.xml
+            s3tests-cluster*.json
             cluster-nodes.log
           if-no-files-found: ignore
 
