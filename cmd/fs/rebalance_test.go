@@ -71,7 +71,7 @@ func TestClusterRebalanceEndToEnd(t *testing.T) {
 	grp, grpCtx := errgroup.WithContext(t.Context())
 
 	nodeConfig := func(i int) Config {
-		addr := testFreeAddr(t)
+		addr := testNodeAddr
 
 		cfg := validClusterConfig()
 		cfg.Cluster.NodeID = "n" + strconv.Itoa(i)

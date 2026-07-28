@@ -202,11 +202,25 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
+		// rt already owns the object index, so this must go through rt.close()
+		// like every failure below it. Returning bare would leave an open
+		// database behind — which on Windows cannot even be deleted, the exact
+		// thing the registration comment above is about.
+		_ = rt.close()
+
 		return nil, errors.Wrap(err, "bind cluster listener")
 	}
 
 	rt.listener = listener
 	rt.addr = listener.Addr().String()
+
+	// A node told to advertise port 0 advertises the port it actually bound.
+	//
+	// Binding is what allocates it, so nothing above this line could have
+	// known it, and a registration carrying ":0" is one no peer can dial. It
+	// also removes the only reason a caller would have to pick a port itself
+	// and hope it is still free by the time this runs.
+	advertise := resolveAdvertisePort(cfg.ClusterAdvertiseAddr(), listener.Addr())
 
 	// Control plane: etcd client, this node's leased registration, and the
 	// watched topology.
@@ -261,7 +275,7 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		// already accepts it in place of the config value. Reading the field
 		// here registered an empty address for such a node — it started,
 		// reported healthy, and every peer failed to dial it.
-		Addr:  cfg.ClusterAdvertiseAddr(),
+		Addr:  advertise,
 		Rack:  cc.Rack,
 		Disks: disks,
 	}
@@ -620,4 +634,20 @@ func (rt *clusterRuntime) close() error {
 	})
 
 	return firstErr
+}
+
+// resolveAdvertisePort substitutes the bound port into an advertised address
+// whose port is 0, and leaves anything else exactly as configured.
+func resolveAdvertisePort(advertise string, bound net.Addr) string {
+	host, port, err := net.SplitHostPort(advertise)
+	if err != nil || port != "0" {
+		return advertise
+	}
+
+	_, actual, err := net.SplitHostPort(bound.String())
+	if err != nil {
+		return advertise
+	}
+
+	return net.JoinHostPort(host, actual)
 }

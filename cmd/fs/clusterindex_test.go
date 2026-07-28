@@ -27,7 +27,7 @@ const indexBucket = "photos"
 func indexNode(t *testing.T, endpoint, prefix, root string, index int) *clusterRuntime {
 	t.Helper()
 
-	addr := testFreeAddr(t)
+	addr := testNodeAddr
 
 	cfg := validClusterConfig()
 	cfg.Cluster.NodeID = "n" + strconv.Itoa(index)

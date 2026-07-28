@@ -24,7 +24,7 @@ func TestClusterSchemeCommand(t *testing.T) {
 	)
 
 	for i := range 3 {
-		addr := testFreeAddr(t)
+		addr := testNodeAddr
 
 		cfg := validClusterConfig()
 		cfg.Cluster.NodeID = "n" + strconv.Itoa(i)

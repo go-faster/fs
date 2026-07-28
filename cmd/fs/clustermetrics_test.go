@@ -16,7 +16,7 @@ func TestClusterMetrics(t *testing.T) {
 	endpoint := startTestEtcd(t)
 	lg := zaptest.NewLogger(t)
 
-	addr := testFreeAddr(t)
+	addr := testNodeAddr
 
 	cfg := validClusterConfig()
 	cfg.Cluster.Addr = addr
