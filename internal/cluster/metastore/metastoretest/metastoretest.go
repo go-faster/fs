@@ -82,10 +82,12 @@ var suite = map[string]func(t *testing.T, store metastore.Store){
 	"Scan/StopsOnCallbackError":     testScanStopsOnCallbackError,
 	"Scan/HonoursCancellation":      testScanHonoursCancellation,
 	"Scan/KeysWithSeparators":       testKeysWithSeparators,
+	"Scan/ByteOrder":                testScanIsByteOrdered,
 	"Buckets/Order":                 testBucketsOrder,
 	"Buckets/StopsOnCallbackError":  testBucketsStopsOnCallbackError,
 	"Buckets/HonoursCancellation":   testBucketsHonoursCancellation,
 	"Buckets/NameOutlivesIterator":  testBucketNameOutlivesIterator,
+	"Buckets/ByteOrder":             testBucketsAreByteOrdered,
 	"Verified/KeepsTheEntry":        testSetVerifiedKeepsTheEntry,
 	"Verified/SkipsUnknownObjects":  testSetVerifiedSkipsUnknownObjects,
 	"Coverage/TracksVerification":   testCoverage,
@@ -315,6 +317,43 @@ func testScanHonoursCancellation(t *testing.T, store metastore.Store) {
 
 // testKeysWithSeparators checks the key encoding holds up for keys containing
 // the delimiter S3 clients use, and for bucket names that prefix one another.
+// testScanIsByteOrdered pins the ordering S3 actually specifies: keys come back
+// in UTF-8 *binary* order, not in any locale's collation.
+//
+// The difference is not cosmetic and it is not rare. Byte order puts every
+// uppercase letter before every lowercase one, because 'Z' is 0x5A and 'a' is
+// 0x61; a typical language collation interleaves them, and most collations also
+// treat punctuation as secondary, so "a-1" and "a1" swap. A backend that stores
+// keys in a text column and inherits the database's default collation will pass
+// every other case in this suite and still hand an S3 client a listing in the
+// wrong order — and a paging cursor derived from that order then skips or
+// repeats keys rather than merely looking odd.
+//
+// Everything else in the tree already assumes this: diskstore walks fragments
+// lexicographically, multipart pads part numbers so lexicographic order is
+// numeric order, and the coordinator merges peer pages by byte comparison.
+func testScanIsByteOrdered(t *testing.T, store metastore.Store) {
+	// Chosen so byte order and a typical en_US collation disagree on every
+	// adjacent pair: case first, then digits against punctuation.
+	unsorted := []string{"a", "B", "a-1", "Z", "a1", "A"}
+	for _, key := range unsorted {
+		require.NoError(t, store.Put(t.Context(), Entry(testBucket, key, 1, 1)))
+	}
+
+	// Byte order: uppercase before lowercase; '-' (0x2D) before '1' (0x31).
+	assert.Equal(t, []string{"A", "B", "Z", "a", "a-1", "a1"}, keys(t, store, "", "", 0))
+}
+
+// testBucketsAreByteOrdered: same rule, same reason. A bucket listing is paged
+// by name, so the order has to be the one the cursor is compared in.
+func testBucketsAreByteOrdered(t *testing.T, store metastore.Store) {
+	for _, bucket := range []string{"alpha", "Beta", "Zulu", "aardvark"} {
+		require.NoError(t, store.Put(t.Context(), Entry(bucket, testKey, 1, 1)))
+	}
+
+	assert.Equal(t, []string{"Beta", "Zulu", "aardvark", "alpha"}, Buckets(t, store))
+}
+
 func testKeysWithSeparators(t *testing.T, store metastore.Store) {
 	require.NoError(t, store.Put(t.Context(), Entry(testBucket, "a/b/c.jpg", 1, 1)))
 	require.NoError(t, store.Put(t.Context(), Entry(testBucket, "a/b", 2, 1)))
