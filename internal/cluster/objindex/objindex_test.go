@@ -23,6 +23,21 @@ func open(t *testing.T) *objindex.Index {
 	return idx
 }
 
+// buckets drains the store's bucket stream into the slice the assertions want.
+func buckets(t *testing.T, idx *objindex.Index) []string {
+	t.Helper()
+
+	var out []string
+
+	require.NoError(t, idx.Buckets(t.Context(), func(bucket string) error {
+		out = append(out, bucket)
+
+		return nil
+	}))
+
+	return out
+}
+
 // entry builds a record; seq orders it against others for the same key.
 func entry(bucket, key string, size, seq int64) metastore.Entry {
 	return metastore.Entry{
@@ -240,13 +255,61 @@ func TestScanOrder(t *testing.T) {
 	assert.Equal(t, []string{"a.txt", "docs/one"}, collect("", "", 2))
 	assert.Empty(t, collect("", "z.txt", 0), "the cursor is exclusive")
 
-	buckets, err := idx.Buckets(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, []string{"other", "photos"}, buckets)
+	assert.Equal(t, []string{"other", "photos"}, buckets(t, idx))
 }
 
 // TestScanStopsOnCallbackError lets a reader stop early without draining the
 // bucket, which is what paging a listing needs.
+// TestBucketsStopsOnCallbackError: the reason Buckets streams is that nothing
+// bounds how many buckets an account holds, which is only worth anything if a
+// caller can stop early.
+func TestBucketsStopsOnCallbackError(t *testing.T) {
+	idx := open(t)
+
+	for _, bucket := range []string{"a", "b", "c"} {
+		require.NoError(t, idx.Put(t.Context(), entry(bucket, "k", 1, 1)))
+	}
+
+	stop := assert.AnError
+	seen := 0
+
+	err := idx.Buckets(t.Context(), func(string) error {
+		seen++
+
+		return stop
+	})
+
+	require.ErrorIs(t, err, stop)
+	assert.Equal(t, 1, seen)
+}
+
+// TestBucketsHonoursCancellation: same contract as Scan, and it matters for the
+// same reason — a caller that gave up must not leave the node walking.
+func TestBucketsHonoursCancellation(t *testing.T) {
+	idx := open(t)
+
+	require.NoError(t, idx.Put(t.Context(), entry("photos", "a.jpg", 1, 1)))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.ErrorIs(t, idx.Buckets(ctx, func(string) error { return nil }), context.Canceled)
+}
+
+// TestBucketNameOutlivesTheIterator: pebble's iter.Key() is only valid until the
+// next Next, so a name handed to fn has to be a copy. A caller that retains one
+// — which collecting into a slice is — would otherwise read whatever the
+// iterator's buffer holds by the time it looks.
+func TestBucketNameOutlivesTheIterator(t *testing.T) {
+	idx := open(t)
+
+	for _, bucket := range []string{"aaaaaaaaaaaa", "b", "cccccccc"} {
+		require.NoError(t, idx.Put(t.Context(), entry(bucket, "k", 1, 1)))
+	}
+
+	assert.Equal(t, []string{"aaaaaaaaaaaa", "b", "cccccccc"}, buckets(t, idx))
+}
+
 func TestScanStopsOnCallbackError(t *testing.T) {
 	idx := open(t)
 
@@ -332,9 +395,7 @@ func TestResetEmpties(t *testing.T) {
 	assert.Zero(t, usage.Objects)
 	assert.Zero(t, usage.Bytes)
 
-	buckets, err := idx.Buckets(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, buckets)
+	assert.Empty(t, buckets(t, idx))
 
 	state, err := idx.State(t.Context())
 	require.NoError(t, err)

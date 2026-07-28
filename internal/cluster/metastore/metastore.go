@@ -153,8 +153,17 @@ type Store interface {
 
 	// Usage returns a bucket's counters.
 	Usage(ctx context.Context, bucket string) (Usage, error)
-	// Buckets returns every bucket the store holds counters for, sorted.
-	Buckets(ctx context.Context) ([]string, error)
+	// Buckets calls fn for every bucket the store holds counters for, in name
+	// order, stopping when fn returns an error.
+	//
+	// It streams rather than returning a slice for the same reason Scan does:
+	// nothing in S3 bounds how many buckets an account holds, and a
+	// bucket-per-tenant deployment is an ordinary shape. A caller that wants
+	// them all can still collect them — and the two that do are better off
+	// deciding that explicitly, because materializing before the expensive
+	// part is what keeps a backend from holding an iterator open across a
+	// whole sweep.
+	Buckets(ctx context.Context, fn func(bucket string) error) error
 
 	// Scan calls fn for each of a bucket's objects whose key starts with prefix
 	// and sorts after `after`, in key order, stopping after limit entries or
