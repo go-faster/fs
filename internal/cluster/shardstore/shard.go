@@ -211,10 +211,31 @@ func (s *Shard) Put(ctx context.Context, e metastore.Entry) error {
 		return errors.Wrap(err, "put index entry")
 	}
 
-	key := keyspace.ObjectKey(e.Bucket, e.Key)
-	if !s.owns(key) {
+	if !s.owns(keyspace.ObjectKey(e.Bucket, e.Key)) {
 		return ErrNotOwned
 	}
+
+	return s.store(e, s.write, func(key, repr []byte) {
+		// After the commit, never before: a replica must not be told about a
+		// write the owner has not made, or a failover could promote one holding
+		// something the disks never had.
+		s.shipTo(ctx, key, repr)
+	})
+}
+
+// store is Put without the ownership check: the supersede rules, the counter
+// delta and the one batch that keeps them together.
+//
+// Separated so a backfill can use it. A learner is not the owner and Put would
+// refuse it, but everything after that check is exactly what a backfilled entry
+// needs — and reimplementing it would be reimplementing the ordering rule,
+// which is the one piece of this store that must not have a second copy.
+//
+// after runs with the committed batch, before it is closed. Only an owner
+// passes one: a learner storing a backfilled entry ships nothing, because it is
+// not the node anyone replicates from.
+func (s *Shard) store(e metastore.Entry, write *pebble.WriteOptions, after func(key, repr []byte)) error {
+	key := keyspace.ObjectKey(e.Bucket, e.Key)
 
 	l := s.lock(e.Bucket)
 	l.Lock()
@@ -259,14 +280,13 @@ func (s *Shard) Put(ctx context.Context, e metastore.Entry) error {
 	// One batch, so an entry and the counter it moves can never disagree —
 	// which is what makes this shard's share of a bucket exact without a
 	// recount.
-	if err := batch.Commit(s.write); err != nil {
+	if err := batch.Commit(write); err != nil {
 		return errors.Wrap(err, "commit index entry")
 	}
 
-	// After the commit, never before: a follower must not be told about a
-	// write the owner has not made, or a failover could promote a replica
-	// holding something the disks never had.
-	s.shipTo(ctx, key, batch.Repr())
+	if after != nil {
+		after(key, batch.Repr())
+	}
 
 	return nil
 }
