@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "go-faster/fs admin dashboard — access-key management with an Orval-generated typed API client.",
+  "description": "go-faster/fs admin dashboard — Gravity UI console over an Orval-generated typed API client.",
   "scripts": {
     "gen": "orval --config ./orval.config.ts",
     "dev": "vite",
@@ -13,6 +13,9 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@gravity-ui/icons": "^2.21.0",
+    "@gravity-ui/navigation": "^6.3.1",
+    "@gravity-ui/uikit": "^7.47.1",
     "@tanstack/react-query": "^5.62.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

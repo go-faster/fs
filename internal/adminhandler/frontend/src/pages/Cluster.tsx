@@ -1,222 +1,267 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { Alert, Button, Col, Flex, Label, Row, Text, useToaster } from "@gravity-ui/uikit";
+import type { ColProps } from "@gravity-ui/uikit";
 import {
   getGetMigrationStatusQueryKey,
   useApplyMigrations,
   useGetClusterStatus,
   useGetMigrationStatus,
 } from "../api/admin";
-import type { ClusterDisk, ClusterNode } from "../api/model";
-import { useToast } from "../components/toast";
+import type { ClusterDisk, ClusterNode, ClusterNodeLive, ClusterStatus } from "../api/model";
+import {
+  band,
+  Chip,
+  DRAIN_WATERMARK,
+  errText,
+  ErrorAlert,
+  KV,
+  Loading,
+  Mono,
+  Panel,
+  Rule,
+  UsageBar,
+  type Band,
+} from "../components/ui";
+import { fmtAge, fmtBytes, fmtNum } from "../lib/format";
+import { CLUSTER_POLL, MIGRATION_POLL } from "../lib/poll";
 
-// Binary byte units, matching the sizing docs (TiB/GiB, not TB/GB).
-function fmtBytes(n: number): string {
-  if (n <= 0) return "0 B";
-  const u = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
-  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
-  const v = n / 1024 ** i;
-  return `${i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
-}
+const HALF: ColProps["size"] = [12, { l: 6 }];
 
-// Fullness bands mirror the drain watermark (0.9) and the "high" threshold.
-type Band = "healthy" | "degraded" | "critical";
-function band(f: number): Band {
-  return f >= 0.9 ? "critical" : f >= 0.7 ? "degraded" : "healthy";
-}
-
-const DRAIN_MARK = 90; // % — the default fullness watermark.
-
-// drainLabel distinguishes a drain in progress from a finished one, and shows
-// how much of it is left. Weight only says the disk was taken out of placement;
-// has_data says whether its data has actually moved off, which is what makes
-// removing it safe, and bytes says how far along the move is.
+/**
+ * A drained disk is out of placement, but that is not the same as being safe to
+ * pull. Weight says placement stopped choosing it; `has_data` says whether its
+ * fragments have actually moved off, which is what makes removing it safe; and
+ * bytes says how far along the move is.
+ */
 function drainLabel(d: ClusterDisk): string {
   if (d.has_data === false) return "empty";
   if (d.bytes !== undefined) return `drain ${fmtBytes(d.bytes)}`;
-
   return "drain";
 }
 
 function drainTitle(d: ClusterDisk): string | undefined {
   if (d.data_error) return `Occupancy unknown: ${d.data_error}`;
-
   if (d.has_data === false) return "Drained: this disk holds no fragments.";
-
   if (d.has_data) {
     // Absent counters mean the node has not finished anchoring its index, not
     // that the disk is nearly empty — say which it is.
     return d.fragments === undefined
       ? "Draining: this disk still holds fragments (counting them)."
-      : `Draining: ${d.fragments.toLocaleString()} fragments left, ${fmtBytes(d.bytes ?? 0)}.`;
+      : `Draining: ${fmtNum(d.fragments)} fragments left, ${fmtBytes(d.bytes ?? 0)}.`;
   }
-
   return undefined;
 }
 
-function Disk({ d }: { d: ClusterDisk }) {
+/**
+ * One rung of the ladder: five grid cells, not a box. The rack owns the grid,
+ * so every disk under every node in the failure domain shares one set of
+ * columns and the occupancy bars line up straight down the page.
+ */
+function DiskRow({ d }: { d: ClusterDisk }) {
   const known = (d.total_bytes ?? 0) > 0;
   const drained = d.weight <= 0;
-  const f = d.fullness ?? 0;
-  const b = band(f);
+  const fullness = d.fullness ?? 0;
+  const b: Band = band(fullness);
 
-  const gauge = drained
-    ? "gauge gauge--drained"
-    : known
-      ? `gauge gauge--${b}`
-      : "gauge gauge--unknown";
+  const state = drained ? "drained" : known ? b : "unknown";
+  const percent = Math.round(fullness * 100);
 
   return (
-    <div className="disk">
-      <span className="disk__id">{d.id}</span>
+    <>
+      <span className="ladder__id">{d.id}</span>
       <div
-        className={gauge}
+        className={`meter meter_${state}`}
         role="meter"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={known ? Math.round(f * 100) : undefined}
-        aria-label={`disk ${d.id} ${known ? `${Math.round(f * 100)}% full` : "capacity unknown"}`}
+        aria-valuenow={known ? percent : undefined}
+        aria-label={`disk ${d.id} ${known ? `${percent}% full` : "capacity unknown"}`}
       >
         {known && !drained && (
-          <span
-            className="gauge__fill"
-            style={{ width: `${Math.max(f * 100, 1.5)}%` }}
-          />
+          // A disk with a sliver of data still gets a visible mark: an invisible
+          // bar reads as an empty disk, which is a different fact.
+          <span className="meter__fill" style={{ width: `${Math.max(fullness * 100, 1.5)}%` }} />
         )}
         {known && (
-          <span className="gauge__mark" style={{ left: `${DRAIN_MARK}%` }} />
+          <span
+            className="meter__mark"
+            style={{ insetInlineStart: `${DRAIN_WATERMARK * 100}%` }}
+          />
         )}
       </div>
-      <span className={`disk__pct ${known ? b : "muted"}`}>
-        {known ? `${Math.round(f * 100)}%` : "—"}
+      <span className={`ladder__num ${known ? `text-${b}` : "text-muted"}`}>
+        {known ? `${percent}%` : "—"}
       </span>
-      <span
-        className={`disk__w ${drained ? "drained" : ""}`}
-        title={drainTitle(d)}
-      >
+      <span className={`ladder__id ${drained ? "text-muted" : ""}`} title={drainTitle(d)}>
         {drained ? drainLabel(d) : `w${d.weight}`}
       </span>
-      <span className="disk__cap">
+      <span className="ladder__cap">
         {known
           ? `${fmtBytes((d.total_bytes ?? 0) - (d.free_bytes ?? 0))} / ${fmtBytes(d.total_bytes ?? 0)}`
           : "no data"}
       </span>
-    </div>
-  );
-}
-
-// NodeLive renders what only the node itself knows — its queues, runner and
-// scrub totals. A node that did not answer says so, with the reason: an empty
-// live row would otherwise read as a healthy, idle node.
-function NodeLive({ n }: { n: ClusterNode }) {
-  if (!n.live) {
-    return (
-      <span
-        className="chip warn"
-        title={n.live_error ?? "the node did not report its live state"}
-      >
-        not reporting
-      </span>
-    );
-  }
-
-  const l = n.live;
-  const rebalancing =
-    l.rebalance_state === "running" || l.rebalance_state === "waiting";
-
-  return (
-    <>
-      <span
-        className={`chip ${l.repair_queue_depth > 0 ? "on" : ""}`}
-        title="Objects with pending async replication/repair work on this node."
-      >
-        queue {l.repair_queue_depth}
-      </span>
-      {rebalancing && (
-        <span className="chip on">
-          {l.rebalance_state} · {l.rebalance_relocated}/{l.rebalance_objects}
-        </span>
-      )}
-      {l.rebuilt_fragments > 0 && (
-        <span
-          className="chip"
-          title="Fragments rebuilt by scrubs on this node."
-        >
-          rebuilt {l.rebuilt_fragments}
-        </span>
-      )}
-      {l.corrupt_replicas > 0 && (
-        <span
-          className="chip warn"
-          title="Replica payloads that failed checksum verification (bit-rot)."
-        >
-          corrupt {l.corrupt_replicas}
-        </span>
-      )}
-      {l.objects_held !== undefined && (
-        <span
-          className={`chip ${(l.never_verified ?? 0) > 0 ? "warn" : ""}`}
-          title={coverageTitle(l)}
-        >
-          {coverageLabel(l)}
-        </span>
-      )}
-      {l.ec_unverified && (
-        <span
-          className="chip warn"
-          title="The node's last scrub pass saw an EC set failing parity verification."
-        >
-          EC unverified
-        </span>
-      )}
-      {l.version && <span className="node__ver">{l.version}</span>}
     </>
   );
 }
 
-// coverageLabel says how stale this node's scrub coverage is. Counts of scrub
-// work say how busy the scrubber was; this says whether it is keeping up.
-function coverageLabel(l: NonNullable<ClusterNode["live"]>): string {
+/**
+ * How stale this node's scrub coverage is. Counts of scrub work say how busy
+ * the scrubber was; this says whether it is keeping up.
+ */
+function coverageLabel(l: ClusterNodeLive): string {
   const never = l.never_verified ?? 0;
-  if (never > 0) return `unverified ${never.toLocaleString()}`;
-
+  if (never > 0) return `unverified ${fmtNum(never)}`;
   if (!l.oldest_verified) return "unverified";
-
   return `verified ${fmtAge(l.oldest_verified)}`;
 }
 
-function coverageTitle(l: NonNullable<ClusterNode["live"]>): string {
-  const held = (l.objects_held ?? 0).toLocaleString();
+function coverageTitle(l: ClusterNodeLive): string {
+  const held = fmtNum(l.objects_held ?? 0);
   const never = l.never_verified ?? 0;
-
   if (never > 0) {
-    return `${never.toLocaleString()} of ${held} objects on this node have never been verified.`;
+    return `${fmtNum(never)} of ${held} objects on this node have never been verified.`;
   }
-
   return `All ${held} objects on this node have been verified since ${l.oldest_verified}.`;
 }
 
-// fmtAge renders how long ago something happened, which is what makes a cycle
-// falling behind visible: the age recedes.
-function fmtAge(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "just now";
+/**
+ * What only the node itself knows — its queues, runner and scrub totals. A node
+ * that did not answer says so, with the reason: an empty live row would
+ * otherwise read as a healthy, idle node.
+ */
+function NodeLive({ n }: { n: ClusterNode }) {
+  if (!n.live) {
+    return (
+      <Label
+        theme="warning"
+        size="xs"
+        title={n.live_error ?? "The node did not report its live state."}
+      >
+        not reporting
+      </Label>
+    );
+  }
 
-  const m = Math.floor(ms / 60000);
-  if (m < 60) return `${m}m ago`;
+  const l = n.live;
+  const rebalancing = l.rebalance_state === "running" || l.rebalance_state === "waiting";
 
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-
-  return `${Math.floor(h / 24)}d ago`;
+  return (
+    <>
+      <Label
+        theme={l.repair_queue_depth > 0 ? "info" : "unknown"}
+        size="xs"
+        title="Objects with pending async replication/repair work on this node."
+      >
+        queue {fmtNum(l.repair_queue_depth)}
+      </Label>
+      {rebalancing && (
+        <Label theme="info" size="xs">
+          {l.rebalance_state} · {fmtNum(l.rebalance_relocated)}/{fmtNum(l.rebalance_objects)}
+        </Label>
+      )}
+      {l.rebuilt_fragments > 0 && (
+        <Label theme="unknown" size="xs" title="Fragments rebuilt by scrubs on this node.">
+          rebuilt {fmtNum(l.rebuilt_fragments)}
+        </Label>
+      )}
+      {l.corrupt_replicas > 0 && (
+        <Label
+          theme="danger"
+          size="xs"
+          title="Replica payloads that failed checksum verification (bit-rot)."
+        >
+          corrupt {fmtNum(l.corrupt_replicas)}
+        </Label>
+      )}
+      {l.objects_held !== undefined && (
+        <Label
+          theme={(l.never_verified ?? 0) > 0 ? "warning" : "unknown"}
+          size="xs"
+          title={coverageTitle(l)}
+        >
+          {coverageLabel(l)}
+        </Label>
+      )}
+      {l.ec_unverified && (
+        <Label
+          theme="danger"
+          size="xs"
+          title="The node's last scrub pass saw an EC set failing parity verification."
+        >
+          EC unverified
+        </Label>
+      )}
+      {l.version && (
+        <Text variant="caption-2" color="hint" title="The binary this node is running.">
+          {l.version}
+        </Text>
+      )}
+    </>
+  );
 }
 
-function Rack({ id, nodes }: { id: string; nodes: ClusterNode[] }) {
+/**
+ * A failure domain, as placement actually counts them.
+ *
+ * `Node.FailureDomain()` (internal/cluster/topology.go) keys a node by its rack
+ * when it has one, and by the node itself when it does not — "an unlabeled node
+ * shares fate with nobody". So unlabeled nodes are not one domain between them;
+ * they are one domain each, and a copy landing on two of them is as spread as
+ * placement can make it. Drawing them as a single box would overstate the
+ * blast radius of losing one, which is the opposite of what this page is for.
+ */
+interface Domain {
+  /** Rack label, or undefined for the nodes that carry none. */
+  rack?: string;
+  nodes: ClusterNode[];
+}
+
+function groupByDomain(nodes: ClusterNode[]): Domain[] {
+  const racks = new Map<string, ClusterNode[]>();
+  const unlabeled: ClusterNode[] = [];
+
+  for (const n of nodes) {
+    if (n.rack) {
+      const bucket = racks.get(n.rack);
+      if (bucket) bucket.push(n);
+      else racks.set(n.rack, [n]);
+    } else {
+      unlabeled.push(n);
+    }
+  }
+
+  const out: Domain[] = [...racks.keys()]
+    .sort()
+    .map((rack) => ({ rack, nodes: racks.get(rack)! }));
+
+  // Kept in one panel rather than one per node: the grouping is presentational
+  // (they are still a domain each, which the caption says), and N identical
+  // panels would drown the racks that do carry a label.
+  if (unlabeled.length > 0) out.push({ nodes: unlabeled });
+
+  return out;
+}
+
+/** How many domains placement can spread across: one per rack, one per unlabeled node. */
+function countDomains(nodes: ClusterNode[]): number {
+  const racks = new Set<string>();
+  let unlabeled = 0;
+  for (const n of nodes) {
+    if (n.rack) racks.add(n.rack);
+    else unlabeled++;
+  }
+  return racks.size + unlabeled;
+}
+
+function DomainPanel({ domain }: { domain: Domain }) {
+  const { rack, nodes } = domain;
   let total = 0;
   let free = 0;
-  let diskN = 0;
+  let diskCount = 0;
 
   for (const n of nodes) {
     for (const d of n.disks) {
-      diskN++;
+      diskCount++;
       if ((d.total_bytes ?? 0) > 0) {
         total += d.total_bytes ?? 0;
         free += d.free_bytes ?? 0;
@@ -224,60 +269,84 @@ function Rack({ id, nodes }: { id: string; nodes: ClusterNode[] }) {
     }
   }
 
+  const disks = `${diskCount} ${diskCount === 1 ? "disk" : "disks"}`;
+
   return (
-    <section className="rack">
-      <header className="rack__head">
-        <span className="rack__id">{id}</span>
-        <span className="rack__meta">
-          {nodes.length} {nodes.length === 1 ? "node" : "nodes"} · {diskN}{" "}
-          {diskN === 1 ? "disk" : "disks"}
-        </span>
-        {total > 0 && (
-          <span className="rack__cap">
-            {fmtBytes(total - free)} / {fmtBytes(total)} used
-          </span>
-        )}
-      </header>
-      {nodes.map((n) => (
-        <div className="node" key={n.id}>
-          <div className="node__head">
-            <span className="node__id">{n.id}</span>
-            {n.addr && <span className="node__addr">{n.addr}</span>}
-            <span className="node__live">
+    <Panel
+      title={rack ? <Mono>{rack}</Mono> : "No rack label"}
+      sub={
+        rack
+          ? `${nodes.length} ${nodes.length === 1 ? "node" : "nodes"} · ${disks}`
+          : `${nodes.length} ${nodes.length === 1 ? "node, its" : "nodes, each its"} own domain · ${disks}`
+      }
+      actions={
+        total > 0 ? (
+          <Text variant="code-inline-1" color="secondary">
+            {fmtBytes(total - free)} / {fmtBytes(total)}
+          </Text>
+        ) : undefined
+      }
+      scroll
+    >
+      {/* Node headers and disk rungs are siblings in one grid, not nested
+          boxes — that is what keeps the columns aligned across every node. */}
+      <div className="ladder">
+        {nodes.flatMap((n) => [
+          <div className="ladder__node" key={n.id}>
+            <Mono>{n.id}</Mono>
+            {n.addr && (
+              <Text variant="caption-2" color="secondary">
+                {n.addr}
+              </Text>
+            )}
+            <Flex gap={1} wrap alignItems="center">
               <NodeLive n={n} />
-            </span>
-          </div>
-          {n.disks.map((d) => (
-            <Disk d={d} key={d.id} />
-          ))}
-        </div>
-      ))}
-    </section>
+            </Flex>
+          </div>,
+          ...(n.disks.length === 0
+            ? [
+                <Text key={`${n.id}-empty`} className="ladder__span" variant="body-1" color="hint">
+                  This node registered no disks.
+                </Text>,
+              ]
+            : n.disks.map((d) => <DiskRow key={`${n.id}/${d.id}`} d={d} />)),
+        ])}
+      </div>
+    </Panel>
   );
 }
 
-// Migrations is the schema panel: where the cluster's schema stands against
-// this binary's, and — once every node runs the new binary — the control that
-// applies what is pending, cluster-wide under the migrate election.
+/**
+ * Where the cluster's schema stands against this binary's, and — once every
+ * node runs the new binary — the control that applies what is pending,
+ * cluster-wide under the migrate election.
+ */
 function Migrations() {
   const qc = useQueryClient();
-  const toast = useToast();
-  const q = useGetMigrationStatus({ query: { refetchInterval: 10000 } });
+  const toaster = useToaster();
+  const q = useGetMigrationStatus({ query: { refetchInterval: MIGRATION_POLL } });
 
   const apply = useApplyMigrations({
     mutation: {
       onSuccess: (st) => {
-        toast.notify(
-          st.last_applied?.length
-            ? `Migrated to schema v${st.cluster_schema_version}`
-            : "Nothing to migrate",
-          "success",
-        );
-        void qc.invalidateQueries({
-          queryKey: getGetMigrationStatusQueryKey(),
+        toaster.add({
+          name: "apply-migrations",
+          theme: "success",
+          title: st.last_applied?.length ? "Schema migrated" : "Nothing to migrate",
+          content: st.last_applied?.length
+            ? `The cluster is now at schema v${st.cluster_schema_version}.`
+            : "The cluster was already at this binary's schema version.",
         });
+        void qc.invalidateQueries({ queryKey: getGetMigrationStatusQueryKey() });
       },
-      onError: (err) => toast.notify(err.error_message, "error"),
+      onError: (err) =>
+        toaster.add({
+          name: "apply-migrations",
+          theme: "danger",
+          title: "Migration failed",
+          content: errText(err),
+          autoHiding: false,
+        }),
     },
   });
 
@@ -287,191 +356,227 @@ function Migrations() {
   const joined = m.cluster_schema_version > 0;
 
   return (
-    <>
-      <div className="section-title">Schema</div>
-      <div className="card">
-        <h2>
-          Migrations
-          <span className="sub">
-            cluster v{joined ? m.cluster_schema_version : "—"} · binary v
-            {m.binary_schema_version}
-          </span>
-        </h2>
-
-        {m.up_to_date ? (
-          <p className="muted-note">
-            Every schema migration this binary knows about has been applied.
-          </p>
-        ) : !joined ? (
-          <p className="muted-note">
-            No schema version is recorded yet — no node has joined this cluster.
-          </p>
-        ) : (
-          <>
-            <p className="muted-note">
-              {m.pending.length} pending{" "}
-              {m.pending.length === 1 ? "migration" : "migrations"}. Apply once
-              a rolling upgrade has replaced every node's binary; until then the
-              cluster keeps operating at its current schema.
-            </p>
-            <ul className="migrations">
-              {m.pending.map((p) => (
-                <li key={p.version}>
-                  <span className="chip">v{p.version}</span> {p.description}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        {m.last_error && <div className="err-box">{m.last_error}</div>}
-
-        <div className="actions" style={{ marginTop: "14px" }}>
-          <button
-            type="button"
-            className="primary"
+    <Flex direction="column" gap={3}>
+      <Rule>Schema</Rule>
+      <Panel
+        title="Migrations"
+        sub={`cluster v${joined ? m.cluster_schema_version : "—"} · binary v${m.binary_schema_version}`}
+        actions={
+          <Button
+            view="action"
             onClick={() => apply.mutate()}
-            disabled={m.running || apply.isPending || m.pending.length === 0}
+            loading={m.running || apply.isPending}
+            disabled={m.pending.length === 0}
           >
-            {m.running || apply.isPending ? "Migrating…" : "Apply migrations"}
-          </button>
-        </div>
-      </div>
-    </>
+            Apply migrations
+          </Button>
+        }
+      >
+        <Flex direction="column" gap={4}>
+          {m.up_to_date ? (
+            <Text variant="body-1" color="secondary">
+              Every schema migration this binary knows about has been applied.
+            </Text>
+          ) : !joined ? (
+            <Text variant="body-1" color="secondary">
+              No schema version is recorded yet — no node has joined this cluster.
+            </Text>
+          ) : (
+            <>
+              <Text variant="body-1" color="secondary">
+                {m.pending.length} pending {m.pending.length === 1 ? "migration" : "migrations"}.
+                Apply once a rolling upgrade has replaced every node's binary; until then the
+                cluster keeps operating at its current schema.
+              </Text>
+              <Flex direction="column" gap={2}>
+                {m.pending.map((p) => (
+                  <Flex key={p.version} alignItems="baseline" gap={2}>
+                    <Label theme="info" size="xs">
+                      v{p.version}
+                    </Label>
+                    <Text variant="body-1">{p.description}</Text>
+                  </Flex>
+                ))}
+              </Flex>
+            </>
+          )}
+
+          {m.last_error && (
+            <Alert
+              theme="danger"
+              view="outlined"
+              title="The last migration run failed"
+              message={m.last_error}
+            />
+          )}
+        </Flex>
+      </Panel>
+    </Flex>
+  );
+}
+
+/** The one-line verdict, then the specific concerns that qualify it. */
+function StatusPills({ c, nearFull }: { c: ClusterStatus; nearFull: number }) {
+  const schemaSkew = c.schema_version !== c.binary_schema_version;
+  const degraded = c.nodes_not_reporting > 0;
+
+  return (
+    <Flex gap={2} wrap alignItems="center">
+      <Label theme={degraded ? "warning" : "success"}>
+        {degraded ? "Degraded" : "Operational"}
+      </Label>
+
+      {c.nodes_not_reporting > 0 && (
+        <Label
+          theme="warning"
+          title="Nodes that did not answer the live-state request: unreachable, or running a binary that does not serve it. Their capacity and placement still come from the control plane."
+        >
+          {c.nodes_not_reporting} of {c.node_count} not reporting
+        </Label>
+      )}
+
+      {nearFull > 0 && (
+        <Label
+          theme="danger"
+          title="Disks at or above the 0.9 drain watermark. Add capacity, or lower a full disk's weight."
+        >
+          {nearFull} {nearFull === 1 ? "disk" : "disks"} over 90%
+        </Label>
+      )}
+
+      {schemaSkew ? (
+        <Label
+          theme="warning"
+          title="The cluster's schema differs from this binary's — an upgrade is in progress, or a node is behind."
+        >
+          schema v{c.schema_version} → v{c.binary_schema_version}
+        </Label>
+      ) : (
+        <Chip>schema v{c.schema_version}</Chip>
+      )}
+
+      <Chip on={c.rebalance_running}>
+        {c.rebalance_running ? "rebalancing" : "rebalance idle"}
+      </Chip>
+    </Flex>
   );
 }
 
 export default function Cluster() {
-  const q = useGetClusterStatus({ query: { refetchInterval: 5000 } });
+  const q = useGetClusterStatus({ query: { refetchInterval: CLUSTER_POLL } });
 
-  if (q.isLoading) return <div className="empty">Loading cluster status…</div>;
-  if (q.error) return <div className="err-box">{q.error.error_message}</div>;
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorAlert error={q.error} what="cluster status" />;
 
   const c = q.data;
   if (!c) return null;
 
   if (c.state === "disabled") {
     return (
-      <>
-        <div className="section-title">Cluster</div>
-        <div className="notice">
-          <h2>Cluster mode is off</h2>
-          <p>
-            This instance serves a single filesystem backend. Cluster status —
-            nodes, disks and placement — appears here when it runs with{" "}
-            <code>storage.type: cluster</code>.
-          </p>
-        </div>
-      </>
+      <Flex direction="column" gap={3}>
+        <Rule>Cluster</Rule>
+        <Panel title="Cluster mode is off" sub="single filesystem backend">
+          <Text variant="body-1" color="secondary">
+            This instance serves one filesystem backend. Nodes, disks and placement appear here
+            when it runs with <Mono>storage.type: cluster</Mono>.
+          </Text>
+        </Panel>
+      </Flex>
     );
   }
 
-  // Group nodes by failure domain (rack); compute the worst disk for the
-  // overall health pill and the aggregate fill for the capacity bar.
-  const byRack: Record<string, ClusterNode[]> = {};
-  for (const n of c.nodes) (byRack[n.rack || "unlabeled"] ??= []).push(n);
-  const rackIds = Object.keys(byRack).sort();
+  // Placement's whole job is to spread a scheme across failure domains, so this
+  // is the grouping the page leads with.
+  const domains = groupByDomain(c.nodes);
+  const domainCount = countDomains(c.nodes);
 
-  const usedFrac = c.total_bytes > 0 ? 1 - c.free_bytes / c.total_bytes : 0;
-  const usedBand = band(usedFrac);
-  // Count disks past the drain watermark — a capacity concern distinct from
-  // the cluster's availability, so it rides its own alert rather than flipping
-  // the operational pill.
+  const usedRatio = c.total_bytes > 0 ? 1 - c.free_bytes / c.total_bytes : 0;
+
+  // Disks past the drain watermark are a capacity concern distinct from the
+  // cluster's availability, so they ride their own pill rather than flipping
+  // the operational verdict.
   let nearFull = 0;
-  for (const n of c.nodes)
-    for (const d of n.disks)
-      if ((d.total_bytes ?? 0) > 0 && (d.fullness ?? 0) >= 0.9) nearFull++;
-  const schemaSkew = c.schema_version !== c.binary_schema_version;
+  for (const n of c.nodes) {
+    for (const d of n.disks) {
+      if ((d.total_bytes ?? 0) > 0 && (d.fullness ?? 0) >= DRAIN_WATERMARK) nearFull++;
+    }
+  }
+
+  const cursor =
+    c.rebalance_running && c.rebalance_cursor_bucket
+      ? `${c.rebalance_cursor_bucket}/${c.rebalance_cursor_key ?? ""}`
+      : null;
 
   return (
-    <>
-      <div className="cluster-head">
-        <span className="pill healthy">Operational</span>
-        {nearFull > 0 && (
-          <span
-            className="pill critical"
-            title="Disks at or above the 0.9 drain watermark. Add capacity or lower a full disk's weight."
-          >
-            {nearFull} {nearFull === 1 ? "disk" : "disks"} over 90%
-          </span>
-        )}
-        {c.nodes_not_reporting > 0 && (
-          <span
-            className="pill degraded"
-            title="Nodes that did not answer the live-state request: unreachable, or running a binary that does not serve it. Their capacity and placement still come from the control plane."
-          >
-            {c.nodes_not_reporting} of {c.node_count} not reporting
-          </span>
-        )}
-        {schemaSkew ? (
-          <span
-            className="pill degraded"
-            title="The cluster's schema differs from this binary's — an upgrade is in progress or a node is behind."
-          >
-            schema v{c.schema_version} → v{c.binary_schema_version}
-          </span>
-        ) : (
-          <span className="chip">schema v{c.schema_version}</span>
-        )}
-        <span className={`chip ${c.rebalance_running ? "on" : ""}`}>
-          {c.rebalance_running ? "rebalancing" : "rebalance idle"}
-          {c.rebalance_running && c.rebalance_cursor_bucket
-            ? ` · at ${c.rebalance_cursor_bucket}/${c.rebalance_cursor_key ?? ""}`
-            : ""}
-        </span>
-      </div>
+    <Flex direction="column" gap={5}>
+      <StatusPills c={c} nearFull={nearFull} />
 
-      <div className="readout">
-        <div>
-          <div className="n">{c.node_count}</div>
-          <div className="l">Nodes</div>
-        </div>
-        <div>
-          <div className="n">{c.disk_count}</div>
-          <div className="l">Disks</div>
-        </div>
-        <div>
-          <div className="n">{rackIds.length}</div>
-          <div className="l">Failure domains</div>
-        </div>
-        <div style={{ flexGrow: 2 }}>
-          <div className="n">
-            {fmtBytes(c.total_bytes - c.free_bytes)}{" "}
-            <small>/ {fmtBytes(c.total_bytes)}</small>
-          </div>
-          <div className="l">Capacity used</div>
-          <div className={`capbar ${usedBand}`}>
-            <span style={{ width: `${Math.max(usedFrac * 100, 0.5)}%` }} />
-          </div>
-        </div>
-        <div>
-          <div className="n">{Math.round(c.placement_skew * 100)}%</div>
-          <div
-            className="l"
-            title="Max minus min disk fullness across the cluster."
-          >
-            Placement skew
-          </div>
-        </div>
-        <div>
-          <div className={`n ${c.repair_queue_depth > 0 ? "degraded" : ""}`}>
-            {c.repair_queue_depth}
-          </div>
-          <div
-            className="l"
-            title="Objects with pending async replication/repair work, summed over the nodes that reported."
-          >
-            Repair queue
-          </div>
-        </div>
-      </div>
+      {/* The ladder leads. Where the data sits and how full each disk is are
+          what this page exists to answer; the aggregates below are the
+          footnotes to it, not the other way round. */}
+      <Flex direction="column" gap={3}>
+        <Rule>Failure domains</Rule>
+        {domains.map((d) => (
+          <DomainPanel domain={d} key={d.rack ?? " unlabeled"} />
+        ))}
+      </Flex>
 
-      <div className="section-title">Failure domains</div>
-      {rackIds.map((id) => (
-        <Rack id={id} nodes={byRack[id]} key={id} />
-      ))}
+      {/* The aggregates are footnotes to the ladder, so they get one card, not
+          two: a pair of half-width boxes gave a three-row list the same weight
+          as the thing the page is about, and stretched its dotted leaders
+          across the window to fill the space. */}
+      <Flex direction="column" gap={3}>
+        <Rule>Totals</Rule>
+        <Panel>
+          <Row space="4" spaceRow="4">
+            <Col size={HALF}>
+              <Flex direction="column" gap={4}>
+                <UsageBar
+                  label="cluster fill"
+                  value={c.total_bytes > 0 ? `${Math.round(usedRatio * 100)}%` : "not reported"}
+                  ratio={usedRatio}
+                />
+                <KV
+                  rows={[
+                    ["used", <Mono>{fmtBytes(c.total_bytes - c.free_bytes)}</Mono>],
+                    ["free", <Mono>{fmtBytes(c.free_bytes)}</Mono>],
+                    ["total", <Mono>{fmtBytes(c.total_bytes)}</Mono>],
+                  ]}
+                />
+              </Flex>
+            </Col>
+
+            <Col size={HALF}>
+              {/* Node count and repair queue live on the tape above, on every
+                  route. What is left here is what the tape cannot say. */}
+              <KV
+                rows={[
+                  [
+                    "disks",
+                    <Mono>{`${fmtNum(c.disk_count)} across ${domainCount} failure ${
+                      domainCount === 1 ? "domain" : "domains"
+                    }`}</Mono>,
+                  ],
+                  [
+                    // Max minus min disk fullness: how unevenly the cluster is
+                    // filled, which is what the rebalancer exists to shrink.
+                    "skew",
+                    <Mono>{`${Math.round(c.placement_skew * 100)}% fullest to emptiest disk`}</Mono>,
+                  ],
+                  [
+                    "rebalance",
+                    <Mono>
+                      {cursor ? `at ${cursor}` : c.rebalance_running ? "running" : "idle"}
+                    </Mono>,
+                  ],
+                ]}
+              />
+            </Col>
+          </Row>
+        </Panel>
+      </Flex>
 
       <Migrations />
-    </>
+    </Flex>
   );
 }
