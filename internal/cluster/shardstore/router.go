@@ -100,6 +100,12 @@ type Router struct {
 	// component least able to absorb it.
 	refresh singleflight.Group
 
+	// onRefresh is told about every map the router adopts, so whatever depends
+	// on the partitioning is reconfigured from the same load that routing uses.
+	// Two independent loads could disagree, and a shard serving ranges the
+	// router no longer routes to it is exactly the split nothing would notice.
+	onRefresh func(*rangemap.Map)
+
 	mu sync.RWMutex
 	m  *rangemap.Map
 	// want is the highest revision any peer has told us about. The cache is
@@ -109,6 +115,14 @@ type Router struct {
 
 // NewRouter returns a router that loads on first use.
 func NewRouter(load Loader) *Router { return &Router{load: load} }
+
+// OnRefresh registers a callback for every map the router adopts.
+//
+// Set once, before the router is used. It exists so a node's shard is
+// configured from the same load that routing is: a shard serving ranges the
+// router no longer routes to it would answer for keys nobody asks it about,
+// and keep answering, with nothing to notice.
+func (r *Router) OnRefresh(fn func(*rangemap.Map)) { r.onRefresh = fn }
 
 // Map returns the cached map, or nil if nothing has been loaded. For admin
 // surfaces and metrics; routing goes through Route.
@@ -201,6 +215,21 @@ func (r *Router) Do(ctx context.Context, key string, fn func(Target) error) erro
 	return fn(target)
 }
 
+// Reload loads the map now, whatever the cache holds, and returns it.
+//
+// For the two paths that must act on a change rather than wait for traffic to
+// notice one: a node starting up with no map at all, and a node that has just
+// been told the partitioning changed. Ordinary routing never calls this — it
+// refreshes when a peer reports the cache is behind, which is what keeps steady
+// state free of map traffic.
+//
+// Forced loads collapse with each other but never with a lazy one, so a caller
+// that asks for a fresh map cannot be handed the result of a flight that
+// started before the change it is reacting to.
+func (r *Router) Reload(ctx context.Context) (*rangemap.Map, error) {
+	return r.fetch(ctx, "reload")
+}
+
 // current returns the cached map, reloading when it is missing or behind what
 // a peer has reported.
 func (r *Router) current(ctx context.Context) (*rangemap.Map, error) {
@@ -212,15 +241,23 @@ func (r *Router) current(ctx context.Context) (*rangemap.Map, error) {
 		return m, nil
 	}
 
-	loaded, err, _ := r.refresh.Do("map", func() (any, error) {
-		// Re-checked inside the flight: a concurrent caller may have already
-		// loaded what this one is about to ask for.
-		r.mu.RLock()
-		m, want := r.m, r.want
-		r.mu.RUnlock()
+	return r.fetch(ctx, "map")
+}
 
-		if m != nil && m.Revision >= want {
-			return m, nil
+// fetch loads the map under a singleflight key and adopts it if it is newer.
+func (r *Router) fetch(ctx context.Context, flight string) (*rangemap.Map, error) {
+	loaded, err, _ := r.refresh.Do(flight, func() (any, error) {
+		// Re-checked inside the flight: a concurrent caller may have already
+		// loaded what this one is about to ask for. Skipped for a forced load,
+		// which exists precisely to distrust the cache.
+		if flight == "map" {
+			r.mu.RLock()
+			m, want := r.m, r.want
+			r.mu.RUnlock()
+
+			if m != nil && m.Revision >= want {
+				return m, nil
+			}
 		}
 
 		fresh, err := r.load(ctx)
@@ -231,12 +268,22 @@ func (r *Router) current(ctx context.Context) (*rangemap.Map, error) {
 		r.mu.Lock()
 		// Only ever move forward. Two flights can overlap around a refresh,
 		// and adopting an older map would undo the newer one.
+		adopted := false
+
 		if r.m == nil || fresh.Revision > r.m.Revision {
 			r.m = fresh
+			adopted = true
 		}
 
-		m = r.m
+		m := r.m
 		r.mu.Unlock()
+
+		// Outside the lock: a callback reconfigures a shard, which takes its
+		// own locks, and holding this one across that is how two locks acquire
+		// an order nobody chose.
+		if adopted && r.onRefresh != nil {
+			r.onRefresh(m)
+		}
 
 		return m, nil
 	})

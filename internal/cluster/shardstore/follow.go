@@ -37,6 +37,19 @@ func WithShipper(fn Shipper) ShardOption {
 	return func(s *Shard) { s.ship = fn }
 }
 
+// SetShipper installs the shipper after construction.
+//
+// Needed because shipping requires a way to reach other nodes, which requires
+// the map, which the shard knows nothing about — so the wiring that has both
+// cannot exist until after the shard does. Called once, before the shard takes
+// writes; guarded anyway, because "before any writes" is an assumption about a
+// caller rather than something enforced here.
+func (s *Shard) SetShipper(fn Shipper) {
+	s.mu.Lock()
+	s.ship = fn
+	s.mu.Unlock()
+}
+
 // Follow sets the ranges this shard replicates for another node.
 //
 // Separate from Adopt, and the distinction is load-bearing: a followed range is
@@ -52,6 +65,25 @@ func (s *Shard) Follow(ranges []rangemap.Range) {
 	s.mu.Unlock()
 }
 
+// Configure sets what this shard serves and what it replicates, together.
+//
+// Together rather than as an Adopt followed by a Follow, because between those
+// two the shard would be running on half of one map and half of another. The
+// half that matters is promotion: a node that has just taken over a range would
+// briefly both own it and follow it, and the deposed owner is exactly the node
+// most likely to still be shipping batches for it.
+func (s *Shard) Configure(owned, followed []rangemap.Range) {
+	o := make([]rangemap.Range, len(owned))
+	copy(o, owned)
+
+	f := make([]rangemap.Range, len(followed))
+	copy(f, followed)
+
+	s.mu.Lock()
+	s.owned, s.followed = o, f
+	s.mu.Unlock()
+}
+
 // Following returns the ranges this shard replicates, in key order.
 func (s *Shard) Following() []rangemap.Range {
 	s.mu.RLock()
@@ -63,10 +95,27 @@ func (s *Shard) Following() []rangemap.Range {
 	return out
 }
 
-// follows reports whether this shard replicates exactly this range.
-func (s *Shard) follows(r rangemap.Range) bool {
+// replicates reports whether this shard may replay a batch for a range: it is
+// in the followed set, and it is not one this shard owns.
+//
+// The second half is the split-brain guard, and it is the case that actually
+// happens. A node promoted into a range is the authority for it; the node it
+// was promoted over is the one most likely to still be shipping batches for
+// that range, working from the map it had before it went away. Applying one
+// would write a deposed owner's state into a range this node is answering for
+// — the only way this plane could serve something no owner ever committed.
+//
+// Owning wins over following whatever the map says, because a map that lists a
+// node as both is itself the mistake.
+func (s *Shard) replicates(r rangemap.Range) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	for _, o := range s.owned {
+		if o.Start == r.Start && o.End == r.End {
+			return false
+		}
+	}
 
 	for _, f := range s.followed {
 		if f.Start == r.Start && f.End == r.End {
@@ -88,7 +137,7 @@ func (s *Shard) ApplyBatch(ctx context.Context, r rangemap.Range, repr []byte) e
 		return errors.Wrap(err, "apply batch")
 	}
 
-	if !s.follows(r) {
+	if !s.replicates(r) {
 		return ErrNotFollowed
 	}
 
@@ -117,7 +166,11 @@ func (s *Shard) ApplyBatch(ctx context.Context, r rangemap.Range, repr []byte) e
 // range with no followers ships nothing, which is the R=1 configuration: legal,
 // and it means a lost owner costs a rebuild rather than a promotion.
 func (s *Shard) shipTo(ctx context.Context, key, repr []byte) {
-	if s.ship == nil {
+	s.mu.RLock()
+	ship := s.ship
+	s.mu.RUnlock()
+
+	if ship == nil {
 		return
 	}
 
@@ -126,7 +179,7 @@ func (s *Shard) shipTo(ctx context.Context, key, repr []byte) {
 		return
 	}
 
-	s.ship(ctx, r, repr)
+	ship(ctx, r, repr)
 }
 
 // rangeFor returns the served range holding an encoded key.
