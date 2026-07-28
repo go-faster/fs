@@ -56,3 +56,12 @@ s3tests/functional/test_s3.py::test_sse_s3_default_upload_1b
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_1kb
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_1mb
 s3tests/functional/test_s3.py::test_sse_s3_default_upload_8mb
+
+# --- Client-visible checksums on clusterstore (2) ----------------------------
+#
+# storagefs verifies and reports x-amz-checksum-* now; clusterstore does not,
+# so it still stores a wrong digest and answers 200. The coordinator has to
+# digest the body as it fragments, alongside the ETag it already computes
+# there. #120.
+s3tests/functional/test_s3.py::test_object_checksum_crc64nvme
+s3tests/functional/test_s3.py::test_object_checksum_sha256

@@ -68,6 +68,7 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	writeSSE(w, resp.ServerSideEncryption)
+	writeChecksum(w, r, resp.ChecksumAlgorithm, resp.Checksum, resp.ChecksumType)
 	writeVersionID(w, resp.VersionID)
 
 	// S3 reports how many tags an object carries so a client can tell "no tags"

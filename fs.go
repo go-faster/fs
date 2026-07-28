@@ -235,6 +235,17 @@ type PutObjectRequest struct {
 	// would leave corrupt content readable in the window between.
 	ContentMD5 string
 
+	// ChecksumAlgorithm names the client-visible checksum to compute over the
+	// body ("SHA256", "CRC32", ...). Empty computes none.
+	//
+	// This is a second checksum, distinct from ContentMD5 and from the ETag:
+	// the client chose it, sent it, and expects it back unchanged.
+	ChecksumAlgorithm string
+	// Checksum is the base64 digest the client claims the body has. When set,
+	// the backend must compare it against what it actually received and refuse
+	// the write with ErrBadDigest before the object becomes visible.
+	Checksum string
+
 	// ServerSideEncryption asks for the object to be encrypted at rest, and
 	// carries the algorithm ("AES256"). Empty stores the body as-is.
 	//
@@ -250,6 +261,10 @@ type PutObjectRequest struct {
 // PutObjectResponse reports the stored object's ETag.
 type PutObjectResponse struct {
 	ETag string
+	// ChecksumAlgorithm and Checksum echo the client-visible checksum stored
+	// with the object.
+	ChecksumAlgorithm string
+	Checksum          string
 	// ServerSideEncryption echoes the algorithm the object was encrypted
 	// with, empty when it was stored in the clear.
 	ServerSideEncryption string
@@ -278,6 +293,14 @@ type GetObjectResponse struct {
 	// object stored in the clear. Size is always the plaintext size, so a
 	// client never learns the on-disk size.
 	ServerSideEncryption string
+
+	// ChecksumAlgorithm and Checksum carry the client-visible checksum stored
+	// with the object, reported only when the request asks for it. ChecksumType
+	// distinguishes a multipart COMPOSITE value — a digest of the part digests
+	// — from a FULL_OBJECT one.
+	ChecksumAlgorithm string
+	Checksum          string
+	ChecksumType      string
 }
 
 // MultipartUpload represents an in-progress multipart upload.

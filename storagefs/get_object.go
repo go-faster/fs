@@ -74,6 +74,9 @@ func (s *Storage) GetObject(ctx context.Context, bucket, key string) (*fs.GetObj
 		resp.ETag = sc.ETag
 		resp.Metadata = sc.metadata()
 		resp.TagCount = len(sc.Tags)
+		resp.ChecksumAlgorithm = sc.ChecksumAlgorithm
+		resp.Checksum = sc.ClientChecksum
+		resp.ChecksumType = sc.ChecksumType
 	}
 
 	// An encrypted body is served through a decrypting reader, and reports the
