@@ -222,6 +222,17 @@ func TestPlaneServesTheWholeKeyspaceFromEveryNode(t *testing.T) {
 	}
 }
 
+// planeNodes turns bare node IDs into topology members with no rack, which is
+// what most of these tests want: every node its own failure domain.
+func planeNodes(ids ...cluster.NodeID) []cluster.Node {
+	out := make([]cluster.Node, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, cluster.Node{ID: id})
+	}
+
+	return out
+}
+
 // shardBuckets is what one shard holds, ignoring routing.
 func shardBuckets(t *testing.T, s *shardstore.Shard) []string {
 	t.Helper()
@@ -467,7 +478,7 @@ func TestInitializeLeavesALivePartitioningAlone(t *testing.T) {
 	ctl := &control{}
 	nodes := []cluster.NodeID{"n0", "n1", "n2"}
 
-	created, err := shardstore.Initialize(t.Context(), ctl.load, ctl.save, 6, nodes)
+	created, err := shardstore.Initialize(t.Context(), ctl.load, ctl.save, 6, planeNodes(nodes...), 1)
 	require.NoError(t, err)
 	require.True(t, created)
 
@@ -475,7 +486,7 @@ func TestInitializeLeavesALivePartitioningAlone(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, first.Validate())
 
-	created, err = shardstore.Initialize(t.Context(), ctl.load, ctl.save, 6, nodes)
+	created, err = shardstore.Initialize(t.Context(), ctl.load, ctl.save, 6, planeNodes(nodes...), 1)
 	require.NoError(t, err)
 	assert.False(t, created)
 
@@ -492,7 +503,7 @@ func TestInitializeRefusesToGuessFromAFailedRead(t *testing.T) {
 	ctl := &control{fail: errors.New("etcd is unreachable")}
 
 	created, err := shardstore.Initialize(t.Context(), ctl.load, ctl.save, 6,
-		[]cluster.NodeID{"n0"})
+		planeNodes("n0"), 1)
 	require.Error(t, err)
 	assert.False(t, created)
 

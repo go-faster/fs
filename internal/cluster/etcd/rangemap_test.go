@@ -67,7 +67,7 @@ func TestRangeMapIsReturnedSorted(t *testing.T) {
 	client := startEtcd(t)
 	cfg := etcd.Config{Prefix: "/test", TTL: 2}
 
-	m, err := rangemap.Initial(16, []cluster.NodeID{"n0", "n1", "n2"})
+	m, err := rangemap.Initial(16, []cluster.Node{{ID: "n0"}, {ID: "n1"}, {ID: "n2"}}, 2)
 	require.NoError(t, err)
 	require.NoError(t, etcd.SaveRangeMap(t.Context(), client, cfg, m))
 

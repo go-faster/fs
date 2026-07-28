@@ -75,7 +75,7 @@ func remotePlane(t testing.TB, m *rangemap.Map) *shardstore.Store {
 func presplitMap(t testing.TB, ranges int, nodes ...cluster.NodeID) *rangemap.Map {
 	t.Helper()
 
-	m, err := rangemap.Initial(ranges, nodes)
+	m, err := rangemap.Initial(ranges, planeNodes(nodes...), 1)
 	require.NoError(t, err)
 
 	m.Revision = 1

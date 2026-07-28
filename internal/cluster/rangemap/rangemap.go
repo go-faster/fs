@@ -177,8 +177,8 @@ const (
 	splitHigh = 'z'
 )
 
-// Initial builds a map of n ranges over the whole key space, assigned round
-// robin across nodes.
+// Initial builds a map of n ranges over the whole key space, owned round robin
+// across nodes, each with replicas-1 followers placed away from its owner.
 //
 // The boundaries are a **presplit**, and a crude one: they spread evenly across
 // the byte band bucket names start in, because with no data there is nothing
@@ -190,7 +190,7 @@ const (
 // optimization: it is what turns this into a partition that reflects the data.
 // Until then, a cluster whose ranges are badly balanced is behaving as
 // designed, and the fix is E4 rather than a cleverer guess here.
-func Initial(n int, nodes []cluster.NodeID) (*Map, error) {
+func Initial(n int, nodes []cluster.Node, replicas int) (*Map, error) {
 	if n < 1 {
 		return nil, errors.Errorf("range count %d must be at least 1", n)
 	}
@@ -199,10 +199,19 @@ func Initial(n int, nodes []cluster.NodeID) (*Map, error) {
 		return nil, errors.New("no nodes to own ranges")
 	}
 
+	if replicas < 1 {
+		return nil, errors.Errorf("replica count %d must be at least 1", replicas)
+	}
+
 	ranges := make([]Range, 0, n)
 
 	for i := range n {
-		r := Range{Owner: nodes[i%len(nodes)]}
+		owner := i % len(nodes)
+
+		r := Range{
+			Owner:     nodes[owner].ID,
+			Followers: followersFor(nodes, owner, replicas-1),
+		}
 
 		if i > 0 {
 			r.Start = boundary(i, n)
@@ -221,6 +230,87 @@ func Initial(n int, nodes []cluster.NodeID) (*Map, error) {
 	}
 
 	return m, nil
+}
+
+// followersFor picks want replicas for the range owned by nodes[owner].
+//
+// # Why followers are placed at all
+//
+// A range with no follower costs a cluster-wide walk of every disk when its
+// owner is lost — the new owner starts empty, and nothing short of rebuilding
+// makes it right. A range with one costs a metadata write. Handing a fresh
+// plane no followers would make every node reboot the expensive kind of
+// failure, so replicas=1 is a configuration rather than a default.
+//
+// # Distinct racks first
+//
+// A follower in the owner's rack survives the owner and not the rack, which is
+// the failure the label exists to describe. So the ring is walked twice: once
+// taking only nodes whose failure domain nothing has yet, then again filling
+// from whatever is left. A cluster too small to spread degrades to same-rack
+// replicas rather than to none — a follower that shares a rack still covers
+// every single-node failure, which is most of them.
+//
+// A node with no rack is its own failure domain, per cluster.Node: two unlabeled
+// nodes do not share one. Treating them as if they did would make the first
+// pass skip every unlabeled node, so the followers on a cluster that never set
+// the label would be whichever nodes happen to carry one — the opposite of
+// spreading.
+//
+// # Walking the ring rather than hashing
+//
+// Rendezvous hashing exists to keep placement stable as membership changes, and
+// nothing here re-places on a membership change: failover moves a range to a
+// follower it already has. What is wanted instead is evenness, which offsetting
+// around the node list gives exactly.
+func followersFor(nodes []cluster.Node, owner, want int) []cluster.NodeID {
+	if want <= 0 {
+		return nil
+	}
+
+	// The walk starts one past the owner and stops before wrapping onto it, so
+	// the owner is never a candidate and `used` need not exclude it. Its
+	// failure domain does have to be excluded, which is the point of the first
+	// pass.
+	used := make(map[cluster.NodeID]bool, want)
+	domains := map[string]bool{domainOf(nodes[owner]): true}
+
+	var out []cluster.NodeID
+
+	for pass := range 2 {
+		for step := 1; step < len(nodes) && len(out) < want; step++ {
+			c := nodes[(owner+step)%len(nodes)]
+
+			if used[c.ID] {
+				continue
+			}
+
+			if pass == 0 && domains[domainOf(c)] {
+				continue
+			}
+
+			used[c.ID] = true
+			domains[domainOf(c)] = true
+
+			out = append(out, c.ID)
+		}
+
+		if len(out) >= want {
+			break
+		}
+	}
+
+	return out
+}
+
+// domainOf is a node's failure domain: its rack, or the node itself when it has
+// no rack label — an unlabeled node shares fate with nobody.
+func domainOf(n cluster.Node) string {
+	if n.Rack == "" {
+		return "node:" + string(n.ID)
+	}
+
+	return "rack:" + n.Rack
 }
 
 // boundary is the i-th of n split points across the bucket-name band.
