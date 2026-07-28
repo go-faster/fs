@@ -42,6 +42,13 @@ const (
 	ShardOpReset    = "reset"
 	// ShardOpApply replays an owner's committed batch on a follower.
 	ShardOpApply = "apply"
+	// ShardOpMeasure reports a range's size and where it would divide.
+	//
+	// Asked of the owner, because the owner is the only node that holds the
+	// range — a controller deciding splits from its own shard would be
+	// measuring whichever ranges it happens to own and calling that the
+	// cluster.
+	ShardOpMeasure = "measure"
 )
 
 // ShardRequest is one operation against a peer's shard.
@@ -90,6 +97,13 @@ type ShardResponse struct {
 	Buckets  []string            `json:"buckets,omitempty"`
 	Usage    *metastore.Usage    `json:"usage,omitempty"`
 	Coverage *metastore.Coverage `json:"coverage,omitempty"`
+
+	// Bytes is a range's estimated size, for ShardOpMeasure.
+	Bytes uint64 `json:"bytes,omitempty"`
+	// SplitAt is where the range would divide, empty when the owner found no
+	// point — a range with nothing in it, or one whose boundary is already
+	// deeper than the search can reach.
+	SplitAt string `json:"split_at,omitempty"`
 }
 
 // ErrUnknownShardOp reports an operation the peer does not implement.

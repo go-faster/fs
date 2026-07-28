@@ -112,6 +112,27 @@ func Serve(shard *Shard) transport.ShardFunc {
 
 			return transport.ShardResponse{}, err
 
+		case transport.ShardOpMeasure:
+			if req.Range == nil {
+				return transport.ShardResponse{}, errors.New("measure without a range")
+			}
+
+			size, err := shard.RangeSize(*req.Range)
+			if err != nil {
+				return transport.ShardResponse{}, err
+			}
+
+			// The split point is asked for alongside the size rather than in a
+			// second round trip. They are read from the same table metadata, and
+			// a controller that had the size would ask for the point next
+			// anyway — on a map that may have changed in between.
+			at, _, err := shard.SplitPoint(*req.Range)
+			if err != nil {
+				return transport.ShardResponse{}, err
+			}
+
+			return transport.ShardResponse{Bytes: size.Bytes, SplitAt: at}, nil
+
 		case transport.ShardOpReset:
 			return transport.ShardResponse{}, shard.Reset(ctx)
 
@@ -320,6 +341,16 @@ func (p *Peer) Coverage(ctx context.Context) (metastore.Coverage, error) {
 	}
 
 	return *resp.Coverage, nil
+}
+
+// Measure implements Backend.
+func (p *Peer) Measure(ctx context.Context, r rangemap.Range) (Measurement, error) {
+	resp, err := p.call(ctx, transport.ShardRequest{Op: transport.ShardOpMeasure, Range: &r})
+	if err != nil {
+		return Measurement{}, err
+	}
+
+	return Measurement{Bytes: resp.Bytes, SplitAt: resp.SplitAt}, nil
 }
 
 // Reset implements Backend.
