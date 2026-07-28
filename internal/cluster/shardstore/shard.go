@@ -134,6 +134,21 @@ func (s *Shard) Close() error {
 	return err
 }
 
+// Flush makes everything written so far visible to the size estimates.
+//
+// Needed because those read table metadata, and data still in the memtable is
+// data pebble cannot account for. In a running node this is not called at all —
+// the estimates are advisory and a range that looks smaller than it is simply
+// splits a little later — but a test that writes and immediately measures is
+// otherwise measuring nothing.
+func (s *Shard) Flush() error {
+	if err := s.db.Flush(); err != nil {
+		return errors.Wrap(err, "flush shard")
+	}
+
+	return nil
+}
+
 // Adopt sets the ranges this shard serves.
 //
 // Called after every map change. It replaces rather than merges, because a
