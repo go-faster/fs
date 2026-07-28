@@ -69,6 +69,24 @@ func (p *Plane) Store() *Store { return p.store }
 // Shard returns this node's shard.
 func (p *Plane) Shard() *Shard { return p.shard }
 
+// Measure asks a range's owner what it holds and where it would divide.
+//
+// Routed rather than answered locally, because the owner is the only node that
+// holds the range — a controller measuring its own shard would be measuring
+// whichever ranges it happens to own and calling that the cluster.
+func (p *Plane) Measure(
+	ctx context.Context,
+	node cluster.NodeID,
+	r rangemap.Range,
+) (Measurement, error) {
+	backend, err := p.resolve(ctx, node)
+	if err != nil {
+		return Measurement{}, err
+	}
+
+	return backend.Measure(ctx, r)
+}
+
 // Router returns this node's routing, for admin surfaces and metrics.
 func (p *Plane) Router() *Router { return p.router }
 
