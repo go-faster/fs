@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-faster/errors"
 
@@ -59,6 +60,11 @@ func (c *Coordinator) ListPage(
 	if err != nil {
 		return nil, nil, false, err
 	}
+
+	// Counted once the source opened, so a page that fell back to the walk is
+	// not counted as one a store served — which would make the ratio look
+	// better exactly when the store is failing.
+	c.listingPages.Add(1)
 
 	var (
 		prefixes []string
@@ -152,6 +158,30 @@ func foldKey(key, prefix, delimiter string) (string, bool) {
 	return prefix + rest[:idx+len(delimiter)], true
 }
 
+// ListingStats is what listings have cost this node.
+//
+// The ratio is the number worth watching, and it is what makes the two scopes
+// comparable rather than merely described: Queries/Pages is ~1 under cluster
+// scope and ~N under the merge, where N is the node count. An operator does not
+// have to know which scope is configured to see which one they are getting, and
+// a cluster-scope deployment whose ratio drifts above 1 has a listing that has
+// quietly started fanning out.
+type ListingStats struct {
+	// Pages is how many listing pages were served from a metadata store.
+	Pages int64
+	// Queries is how many store queries or peer index RPCs those pages cost.
+	Queries int64
+}
+
+// ListingStats reports what listings have cost. Pages served from the sidecar
+// walk are not counted — they did not consult a store.
+func (c *Coordinator) ListingStats() ListingStats {
+	return ListingStats{
+		Pages:   c.listingPages.Load(),
+		Queries: c.listingQueries.Load(),
+	}
+}
+
 // entrySource yields a bucket's entries in key order, already resolved to one
 // record per key.
 //
@@ -177,10 +207,10 @@ type entrySource interface {
 // from the nodes.
 func (c *Coordinator) openEntrySource(ctx context.Context, bucket, prefix, after string) (entrySource, error) {
 	if c.meta != nil && c.meta.Scope() == metastore.ScopeCluster {
-		return newScanSource(ctx, c.meta, bucket, prefix, after)
+		return newScanSource(ctx, c.meta, bucket, prefix, after, &c.listingQueries)
 	}
 
-	streams, err := c.openIndexStreams(ctx, c.topo.Topology(), bucket, prefix, after)
+	streams, err := c.openIndexStreams(ctx, c.topo.Topology(), bucket, prefix, after, &c.listingQueries)
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +229,7 @@ var _ entrySource = (*mergeSource)(nil)
 // indexStream is one node's page of the merge.
 type indexStream struct {
 	peer    indexPeer
+	queries *atomic.Int64
 	query   transport.IndexQuery
 	entries []transport.IndexEntry
 	pos     int
@@ -208,7 +239,12 @@ type indexStream struct {
 
 // openIndexStreams asks every node for its first page, refusing the whole
 // listing if any node's index is not ready.
-func (c *Coordinator) openIndexStreams(ctx context.Context, topo *cluster.Topology, bucket, prefix, after string) ([]*indexStream, error) {
+func (c *Coordinator) openIndexStreams(
+	ctx context.Context,
+	topo *cluster.Topology,
+	bucket, prefix, after string,
+	queries *atomic.Int64,
+) ([]*indexStream, error) {
 	type result struct {
 		stream *indexStream
 		err    error
@@ -237,7 +273,8 @@ func (c *Coordinator) openIndexStreams(ctx context.Context, topo *cluster.Topolo
 			}
 
 			stream := &indexStream{
-				peer: ip,
+				peer:    ip,
+				queries: queries,
 				query: transport.IndexQuery{
 					Bucket: bucket,
 					Prefix: prefix,
@@ -245,6 +282,8 @@ func (c *Coordinator) openIndexStreams(ctx context.Context, topo *cluster.Topolo
 					Limit:  indexFetch,
 				},
 			}
+
+			queries.Add(1)
 
 			page, err := ip.IndexPage(ctx, stream.query)
 			if err != nil {
@@ -296,6 +335,8 @@ func (s *indexStream) refill(ctx context.Context) error {
 	if s.pos < len(s.entries) || s.drained {
 		return nil
 	}
+
+	s.queries.Add(1)
 
 	page, err := s.peer.IndexPage(ctx, s.query)
 	if err != nil {

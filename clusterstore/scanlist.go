@@ -2,6 +2,7 @@ package clusterstore
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/transport"
@@ -39,6 +40,10 @@ type scanSource struct {
 	// entries are consumed and jumps ahead when a group is skipped.
 	after string
 
+	// queries counts the store queries this listing cost, for the metric that
+	// makes "one query per page" observable rather than merely asserted.
+	queries *atomic.Int64
+
 	buf []transport.IndexEntry
 	pos int
 	// drained reports that the store has nothing after what is buffered.
@@ -57,6 +62,7 @@ func newScanSource(
 	ctx context.Context,
 	store metastore.Store,
 	bucket, prefix, after string,
+	queries *atomic.Int64,
 ) (*scanSource, error) {
 	state, err := store.State(ctx)
 	if err != nil {
@@ -69,7 +75,13 @@ func newScanSource(
 		return nil, ErrIndexUnavailable
 	}
 
-	return &scanSource{store: store, bucket: bucket, prefix: prefix, after: after}, nil
+	return &scanSource{
+		store:   store,
+		bucket:  bucket,
+		prefix:  prefix,
+		after:   after,
+		queries: queries,
+	}, nil
 }
 
 // refill runs one query when the buffer is empty.
@@ -83,6 +95,8 @@ func (s *scanSource) refill(ctx context.Context) error {
 
 	s.buf = s.buf[:0]
 	s.pos = 0
+
+	s.queries.Add(1)
 
 	err := s.store.Scan(ctx, s.bucket, s.prefix, s.after, scanFetch,
 		func(e metastore.Entry) error {

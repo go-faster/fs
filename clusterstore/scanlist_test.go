@@ -226,9 +226,82 @@ func TestClusterScopePagesTheWholeBucket(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-// TestClusterScopeIssuesOneQueryPerPage is the acceptance criterion, measured
-// through the listing rather than at the store: a page of a plain listing costs
-// exactly one Scan, where the merge path costs one RPC per node.
+// TestListingStatsMakeTheScopesComparable is the acceptance criterion as an
+// operator sees it. Queries per page is ~1 under cluster scope and ~N under the
+// merge, where N is the node count — so the ratio says which one you are
+// getting without knowing which one was configured, and a cluster-scope
+// deployment whose ratio drifts above 1 has a listing that has quietly started
+// fanning out.
+func TestListingStatsMakeTheScopesComparable(t *testing.T) {
+	const nodes = 3
+
+	t.Run("cluster scope", func(t *testing.T) {
+		fc := newFakeCluster(nodes, 2)
+		c, _ := clusterCoordinator(t, fc)
+
+		for _, key := range []string{"a", "b", "c", "d"} {
+			mustPut(t, c, key, randBytes(16))
+		}
+
+		c.Flush()
+
+		before := c.ListingStats()
+
+		_, _, _, err := c.ListPage(t.Context(), "b", "", "", "", 2)
+		require.NoError(t, err)
+
+		got := c.ListingStats()
+		assert.Equal(t, int64(1), got.Pages-before.Pages)
+		assert.Equal(t, int64(1), got.Queries-before.Queries,
+			"one page, one query, whatever the cluster size")
+	})
+
+	t.Run("merge scope", func(t *testing.T) {
+		fc := newFakeCluster(nodes, 2)
+		c, _ := indexedCoordinator(t, fc)
+
+		for _, key := range []string{"a", "b", "c", "d"} {
+			mustPut(t, c, key, randBytes(16))
+		}
+
+		c.Flush()
+
+		before := c.ListingStats()
+
+		_, _, _, err := c.ListPage(t.Context(), "b", "", "", "", 2)
+		require.NoError(t, err)
+
+		got := c.ListingStats()
+		assert.Equal(t, int64(1), got.Pages-before.Pages)
+		assert.Equal(t, int64(nodes), got.Queries-before.Queries,
+			"the merge asks every node, which is the cost cluster scope removes")
+	})
+}
+
+// TestFallbackPagesAreNotCounted: a page that could not be served from a store
+// must not be counted as one that was, or the ratio improves exactly when the
+// store is failing — the moment it most needs to be trusted.
+func TestFallbackPagesAreNotCounted(t *testing.T) {
+	fc := newFakeCluster(3, 2)
+	c, store := clusterCoordinator(t, fc)
+
+	mustPut(t, c, "a.txt", randBytes(16))
+	c.Flush()
+
+	require.NoError(t, store.MarkBuilding(t.Context()))
+
+	before := c.ListingStats()
+
+	objects, _, _, err := c.ListPage(t.Context(), "b", "", "", "", 0)
+	require.ErrorIs(t, err, ErrIndexUnavailable)
+	require.Empty(t, objects)
+
+	assert.Equal(t, before, c.ListingStats(), "a refused page cost no query and served none")
+}
+
+// TestClusterScopeIssuesOneQueryPerPage is the same criterion at the store,
+// across the shapes a page can take: a plain listing costs exactly one Scan,
+// where the merge path costs one RPC per node.
 func TestClusterScopeIssuesOneQueryPerPage(t *testing.T) {
 	fc := newFakeCluster(3, 2)
 	c, store := clusterCoordinator(t, fc)
