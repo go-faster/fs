@@ -583,11 +583,11 @@ func (i *Index) Scan(
 	return nil
 }
 
-// Buckets implements metastore.Store, returning every bucket the index holds
-// counters for, sorted.
-func (i *Index) Buckets(ctx context.Context) ([]string, error) {
+// Buckets implements metastore.Store, in key order because the usage prefix is
+// stored that way.
+func (i *Index) Buckets(ctx context.Context, fn func(bucket string) error) error {
 	if err := ctx.Err(); err != nil {
-		return nil, errors.Wrap(err, "scan buckets")
+		return errors.Wrap(err, "scan buckets")
 	}
 
 	lower := []byte{prefixUsage}
@@ -597,26 +597,28 @@ func (i *Index) Buckets(ctx context.Context) ([]string, error) {
 		UpperBound: upperBound(lower),
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "open index iterator")
+		return errors.Wrap(err, "open index iterator")
 	}
 
 	defer func() { _ = iter.Close() }()
 
-	var out []string
-
 	for iter.First(); iter.Valid(); iter.Next() {
 		if err := ctx.Err(); err != nil {
-			return nil, errors.Wrap(err, "scan buckets")
+			return errors.Wrap(err, "scan buckets")
 		}
 
-		out = append(out, string(iter.Key()[1:]))
+		// The key is 'u' + bucket, and iter.Key() is only valid until the next
+		// Next — so the name is copied before fn can retain it.
+		if err := fn(string(iter.Key()[1:])); err != nil {
+			return err
+		}
 	}
 
 	if err := iter.Error(); err != nil {
-		return nil, errors.Wrap(err, "scan buckets")
+		return errors.Wrap(err, "scan buckets")
 	}
 
-	return out, nil
+	return nil
 }
 
 // Reset implements metastore.Store, for a rebuild that must not inherit stale
@@ -721,8 +723,19 @@ func (i *Index) SetVerified(ctx context.Context, records []metastore.Verificatio
 func (i *Index) Coverage(ctx context.Context) (metastore.Coverage, error) {
 	var cov metastore.Coverage
 
-	buckets, err := i.Buckets(ctx)
-	if err != nil {
+	// Collected rather than swept inline, deliberately. Scanning each bucket
+	// from inside the Buckets callback would hold the usage-prefix iterator
+	// open across every object in the index, pinning the SSTables underneath it
+	// against compaction for the length of the whole sweep. The bucket names
+	// are the small part; materializing them first is what keeps the long part
+	// iterator-free.
+	var buckets []string
+
+	if err := i.Buckets(ctx, func(bucket string) error {
+		buckets = append(buckets, bucket)
+
+		return nil
+	}); err != nil {
 		return metastore.Coverage{}, err
 	}
 
