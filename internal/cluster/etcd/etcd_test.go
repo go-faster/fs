@@ -22,8 +22,38 @@ import (
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
+// etcdStartAttempts is how many times startEtcd will re-pick ports.
+//
+// Ports are chosen by binding, closing, and handing etcd the address, which is a
+// race — etcd wants its URLs in its config before anything binds, so there is no
+// version of this that has no window. CI loses it: the jobs are parallel and
+// every one of them wants ephemeral ports.
+//
+// Retrying makes the window irrelevant instead of narrower. Three attempts turn
+// a per-start failure probability into its cube, which for a race this narrow is
+// far below the rate at which anything else in the suite fails.
+const etcdStartAttempts = 3
+
 // startEtcd runs an in-process single-node etcd and returns a client for it.
 func startEtcd(t *testing.T) *clientv3.Client {
+	t.Helper()
+
+	for attempt := range etcdStartAttempts {
+		client, ok := tryStartEtcd(t, attempt == etcdStartAttempts-1)
+		if ok {
+			return client
+		}
+	}
+
+	t.Fatal("etcd never started")
+
+	return nil
+}
+
+// tryStartEtcd makes one attempt. It reports failure rather than failing the
+// test unless this is the last attempt, where a real error is more useful than
+// "never started".
+func tryStartEtcd(t *testing.T, last bool) (*clientv3.Client, bool) {
 	t.Helper()
 
 	cfg := embed.NewConfig()
@@ -39,7 +69,18 @@ func startEtcd(t *testing.T) *clientv3.Client {
 	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
 
 	srv, err := embed.StartEtcd(cfg)
-	require.NoError(t, err)
+	if err != nil {
+		if last {
+			require.NoError(t, err)
+		}
+
+		// Almost always "address already in use": something took one of the
+		// ports between the probe and the start. Another set is all it needs.
+		t.Logf("etcd start attempt failed, retrying with fresh ports: %v", err)
+
+		return nil, false
+	}
+
 	t.Cleanup(srv.Close)
 
 	select {
@@ -55,7 +96,7 @@ func startEtcd(t *testing.T) *clientv3.Client {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	return client
+	return client, true
 }
 
 // freeAddr reserves a localhost port.
