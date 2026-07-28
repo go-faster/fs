@@ -115,7 +115,11 @@ func (p *Plane) apply(m *rangemap.Map) {
 	for _, r := range m.Ranges {
 		// Owning wins: a map that named this node both owner and follower of one
 		// range would have it replaying its own writes from someone else.
-		if r.Owner != p.self && slices.Contains(r.Followers, p.self) {
+		//
+		// Learners are held the same way followers are — the shard serves
+		// neither — because holding is what receiving the log means. What
+		// separates them is promotion, which reads the map rather than this.
+		if r.Owner != p.self && r.Replicates(p.self) {
 			followed = append(followed, r)
 		}
 	}
@@ -152,7 +156,7 @@ func (p *Plane) shipToFollowers(ctx context.Context, r rangemap.Range, repr []by
 		return
 	}
 
-	for _, node := range r.Followers {
+	for _, node := range append(slices.Clone(r.Followers), r.Learners...) {
 		if node == p.self {
 			continue
 		}

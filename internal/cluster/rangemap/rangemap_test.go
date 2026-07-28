@@ -521,3 +521,62 @@ func TestMergeRefusesWhatIsNotABoundary(t *testing.T) {
 	_, err = m.Merge("oO-definitely-not-a-boundary")
 	require.ErrorContains(t, err, "not a range boundary")
 }
+
+// TestANodeIsNotBothFollowerAndLearner: whichever list is read first would win,
+// which is a coin toss between a correct promotion and one that serves a
+// half-copied range.
+func TestANodeIsNotBothFollowerAndLearner(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n1"},
+		Learners:  []cluster.NodeID{"n1"},
+	}}}
+
+	require.ErrorContains(t, m.Validate(), "both a follower and a learner")
+}
+
+// TestAnOwnerIsNotItsOwnLearner: an owner backfilling itself from itself is a
+// shape nothing downstream would know what to do with.
+func TestAnOwnerIsNotItsOwnLearner(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Learners: []cluster.NodeID{"n0"},
+	}}}
+
+	require.ErrorContains(t, m.Validate(), "names its owner")
+}
+
+// TestReplicatesCoversBoth: the shipping side asks who receives the log, and
+// both do. The promotion side asks about followers alone, and that asymmetry is
+// the whole point of having two lists.
+func TestReplicatesCoversBoth(t *testing.T) {
+	r := rangemap.Range{
+		Owner:     "n0",
+		Followers: []cluster.NodeID{"n1"},
+		Learners:  []cluster.NodeID{"n2"},
+	}
+
+	assert.True(t, r.Replicates("n1"))
+	assert.True(t, r.Replicates("n2"))
+	assert.False(t, r.Replicates("n3"))
+	assert.False(t, r.Replicates("n0"), "an owner does not replicate its own range")
+}
+
+// TestSplitCarriesLearners: both halves of a split are still being copied to
+// whoever was copying the whole, since a split moves nothing and the backfill
+// is unaffected by where the boundary now is.
+func TestSplitCarriesLearners(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n1"},
+		Learners:  []cluster.NodeID{"n2"},
+	}}}
+	require.NoError(t, m.Validate())
+
+	split, err := m.Split("om")
+	require.NoError(t, err)
+
+	for i, r := range split.Ranges {
+		assert.Equal(t, []cluster.NodeID{"n2"}, r.Learners, "half %d", i)
+	}
+}

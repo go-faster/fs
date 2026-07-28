@@ -198,3 +198,34 @@ func TestShippingHappensAfterTheCommit(t *testing.T) {
 
 	assert.True(t, visible, "the owner already holds the write by the time it ships")
 }
+
+// TestLearnerReceivesTheLog: a learner is being backfilled, and the log is what
+// keeps it current for everything written meanwhile.
+//
+// Without this a backfill copies a moving target and receives none of the
+// changes, finishing with the range as it was when the copy started — which is
+// a replica that looks complete and is not. A range whose only recipient is a
+// learner still ships, which is exactly the state a move begins in.
+func TestLearnerReceivesTheLog(t *testing.T) {
+	learning := rangemap.Range{
+		Start: "", End: "", Owner: "n0", Learners: []cluster.NodeID{"n1"},
+	}
+
+	learner := openShard(t)
+	learner.Follow([]rangemap.Range{learning})
+
+	owner, err := shardstore.OpenShard(t.TempDir(),
+		shardstore.WithShipper(ordered(t, learner.ApplyBatch)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = owner.Close() })
+
+	owner.Adopt([]rangemap.Range{learning})
+
+	require.NoError(t, owner.Put(t.Context(), entry("photos", "a.jpg", 100, 1)))
+	require.NoError(t, owner.Put(t.Context(), entry("photos", "b.jpg", 250, 1)))
+
+	// Inspected by adopting, since a learner serves nothing — the same as a
+	// follower, and for the same reason.
+	learner.Adopt([]rangemap.Range{learning})
+	assert.Equal(t, []string{"a.jpg", "b.jpg"}, scanKeys(t, learner, "photos"))
+}

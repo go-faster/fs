@@ -48,6 +48,30 @@ type Range struct {
 	// is legal and means a lost owner costs a rebuild rather than a promotion
 	// — see the sizing note in findings/SHARDED-PEBBLE.md §9.
 	Followers []cluster.NodeID `json:"followers,omitempty"`
+
+	// Learners receive the owner's log but must never be promoted.
+	//
+	// A node becomes a learner when a range is being moved to it: it is being
+	// backfilled with what the range already held, and the log keeps it current
+	// for everything written meanwhile. Until the backfill finishes it holds
+	// *some* of the range, which is the one state that must not be served —
+	// a promoted learner answers "no such object" for every key the backfill
+	// has not reached, and nothing would report it, because a partial range is
+	// a range that simply says no.
+	//
+	// So the distinction is not bookkeeping. A follower is a node that can take
+	// over; a learner is a node that is on its way to becoming one. Failover
+	// reads Followers and never this.
+	Learners []cluster.NodeID `json:"learners,omitempty"`
+}
+
+// Replicates reports whether a node receives this range's log, as a follower or
+// as a learner.
+//
+// The shipping side asks this; the promotion side asks about Followers alone.
+// That asymmetry is the whole point of having two lists.
+func (r Range) Replicates(node cluster.NodeID) bool {
+	return slices.Contains(r.Followers, node) || slices.Contains(r.Learners, node)
 }
 
 // Contains reports whether a key falls in this range.
@@ -141,6 +165,23 @@ func (m *Map) Validate() error {
 	for i, r := range m.Ranges {
 		if r.Owner == "" {
 			return errors.Errorf("range %d [%q,%q) has no owner", i, r.Start, r.End)
+		}
+
+		// A node cannot be both, and the difference decides whether failover may
+		// promote it. Listed as both, whichever list is read first wins — which
+		// is a coin toss between a correct promotion and one that serves a
+		// half-copied range.
+		for _, l := range r.Learners {
+			if l == r.Owner {
+				return errors.Errorf(
+					"range %d [%q,%q) names its owner %s as a learner", i, r.Start, r.End, l)
+			}
+
+			if slices.Contains(r.Followers, l) {
+				return errors.Errorf(
+					"range %d [%q,%q) names %s as both a follower and a learner",
+					i, r.Start, r.End, l)
+			}
 		}
 
 		if r.End != "" && r.Start >= r.End {
@@ -445,6 +486,9 @@ func (m *Map) Merge(at string) (*Map, error) {
 	// half holds only one half, and calling it a follower of the whole would
 	// have a promotion serve the part it never received as empty.
 	merged.Followers = intersect(left.Followers, right.Followers)
+	// A node learning only one half has been backfilled with only one half, and
+	// the merged range is not what it was told to copy.
+	merged.Learners = intersect(left.Learners, right.Learners)
 
 	out.Ranges = append(out.Ranges, merged)
 	out.Ranges = append(out.Ranges, m.Ranges[i+1:]...)

@@ -175,7 +175,11 @@ func (s *Shard) shipTo(ctx context.Context, key, repr []byte) {
 	}
 
 	r, ok := s.rangeFor(key)
-	if !ok || len(r.Followers) == 0 {
+	// Learners count. A learner is being backfilled and the log is what keeps
+	// it current for everything written meanwhile — a backfill that copied a
+	// moving target and received none of the changes would finish holding the
+	// range as it was when the copy started.
+	if !ok || (len(r.Followers) == 0 && len(r.Learners) == 0) {
 		return
 	}
 

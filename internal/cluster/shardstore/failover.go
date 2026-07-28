@@ -119,6 +119,10 @@ func ReassignWith(
 			continue
 		}
 
+		// Followers alone, never Learners. A learner is mid-backfill: it holds
+		// some of the range, and a promoted learner answers "no such object"
+		// for every key the backfill has not reached — which nothing would
+		// report, because a partial range is a range that simply says no.
 		promoted, promotable := firstLive(r.Followers, live)
 
 		if hold != nil && hold(r, promotable) {
@@ -136,6 +140,7 @@ func ReassignWith(
 			// R is re-replication — a data move — and deliberately not decided
 			// here, where nothing is moved.
 			next.Followers = withoutNode(r.Followers, promoted)
+			next.Learners = withoutNode(r.Learners, promoted)
 
 			load[promoted]++
 
@@ -143,6 +148,10 @@ func ReassignWith(
 		} else {
 			next.Owner = leastLoaded(live, load)
 			next.Followers = withoutNode(r.Followers, next.Owner)
+			// A learner handed the range as an orphan is now its owner, and an
+			// owner learning from itself is the one shape Validate refuses.
+			// What it holds is still partial — that is what Orphaned means.
+			next.Learners = withoutNode(r.Learners, next.Owner)
 
 			load[next.Owner]++
 
