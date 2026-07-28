@@ -282,6 +282,57 @@ func TestDropUnownedReclaimsTheSpace(t *testing.T) {
 	assert.False(t, found, "released data is dropped, not hidden")
 }
 
+// TestDropUnownedKeepsCountersForWhatItStillServes is the bug this replaced.
+//
+// A shard's usage rows are keyed 'u' + bucket, which sorts above every object
+// key — so a sweep bounded at the end of the usage prefix deleted them all, and
+// a shard that narrowed its ranges reported *zero* usage for buckets it was
+// still serving. The objects were still there and still listed; only the
+// counters were gone, which is the kind of wrong that reads as an accounting
+// bug somewhere else entirely.
+func TestDropUnownedKeepsCountersForWhatItStillServes(t *testing.T) {
+	s := openShard(t, whole)
+
+	require.NoError(t, s.Put(t.Context(), entry("apples", "a", 100, 1)))
+
+	s.Adopt([]rangemap.Range{{Start: "", End: "om", Owner: "n0"}})
+	require.NoError(t, s.DropUnowned(t.Context()))
+
+	usage, err := s.Usage(t.Context(), "apples")
+	require.NoError(t, err)
+	assert.Equal(t, metastore.Usage{Objects: 1, Bytes: 100}, usage,
+		"a bucket this shard still serves must still be counted")
+}
+
+// TestDropUnownedRecountsWhatItReleased is the other half. Sweeping the entries
+// without rebuilding the counters would leave them describing objects that are
+// no longer there — too high, and by an amount nothing records.
+func TestDropUnownedRecountsWhatItReleased(t *testing.T) {
+	s := openShard(t, whole)
+
+	require.NoError(t, s.Put(t.Context(), entry("apples", "a", 100, 1)))
+	require.NoError(t, s.Put(t.Context(), entry("zebras", "a", 250, 1)))
+
+	s.Adopt([]rangemap.Range{{Start: "", End: "om", Owner: "n0"}})
+	require.NoError(t, s.DropUnowned(t.Context()))
+
+	usage, err := s.Usage(t.Context(), "zebras")
+	require.NoError(t, err)
+	assert.Zero(t, usage.Objects, "a released bucket is no longer counted here")
+
+	// And it stops being reported as a bucket at all, or the cluster-wide list
+	// would name a bucket no shard can produce an object for.
+	var buckets []string
+
+	require.NoError(t, s.Buckets(t.Context(), func(b string) error {
+		buckets = append(buckets, b)
+
+		return nil
+	}))
+
+	assert.Equal(t, []string{"apples"}, buckets)
+}
+
 // TestResetEmptiesTheShard: a rebuild that only added would keep entries for
 // objects deleted while nothing was watching.
 func TestResetEmptiesTheShard(t *testing.T) {
