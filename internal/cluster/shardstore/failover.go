@@ -17,6 +17,11 @@ type Reassignment struct {
 	// Promoted are the ranges whose owner was gone and whose follower took
 	// over. These are cheap: the follower already holds what the owner held.
 	Promoted []rangemap.Range
+	// Held are the ranges whose owner was gone but which a caller's veto kept
+	// where they are — see ReassignWith. Nobody serves them until the owner
+	// returns or the hold lifts, which for the no-follower case is the cheaper
+	// of the two bad options.
+	Held []rangemap.Range
 	// Orphaned are the ranges whose owner was gone with no live follower to
 	// promote. They have been assigned to a node anyway — a range with no owner
 	// is a key nothing serves — but that node holds **nothing** for them.
@@ -59,6 +64,27 @@ type Reassignment struct {
 // is a cluster walk, and which one a failure costs is decided entirely by
 // whether a follower was there.
 func Reassign(m *rangemap.Map, live []cluster.NodeID) (Reassignment, error) {
+	return ReassignWith(m, live, nil)
+}
+
+// ReassignWith is Reassign with a veto: hold reports the ranges to leave where
+// they are even though their owner is gone.
+//
+// It exists because "the owner is gone" is not one question. A range with a
+// live follower fails over for the cost of a metadata write; a range without
+// one costs a cluster-wide walk of every disk. Those two do not deserve the
+// same patience, and nothing here knows how long anyone has been gone — that
+// is the caller's to decide, and the Controller's grace periods are what it
+// decides it with.
+//
+// A held range is not served by anyone until its owner returns or the hold
+// lifts. That is the price, and it is deliberate: for the expensive case,
+// unavailable-for-now beats rebuilt-because-a-node-rebooted.
+func ReassignWith(
+	m *rangemap.Map,
+	live []cluster.NodeID,
+	hold func(r rangemap.Range, promotable bool) bool,
+) (Reassignment, error) {
 	if m == nil {
 		return Reassignment{}, errors.New("no range map to reassign")
 	}
@@ -93,9 +119,18 @@ func Reassign(m *rangemap.Map, live []cluster.NodeID) (Reassignment, error) {
 			continue
 		}
 
+		promoted, promotable := firstLive(r.Followers, live)
+
+		if hold != nil && hold(r, promotable) {
+			out.Map.Ranges = append(out.Map.Ranges, r)
+			out.Held = append(out.Held, r)
+
+			continue
+		}
+
 		next := r
 
-		if promoted, ok := firstLive(r.Followers, live); ok {
+		if promotable {
 			next.Owner = promoted
 			// The promoted node is no longer one of its own followers. Restoring
 			// R is re-replication — a data move — and deliberately not decided
