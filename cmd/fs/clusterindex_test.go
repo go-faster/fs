@@ -456,3 +456,69 @@ func (rt *clusterRuntime) nodeStatusNow(t *testing.T) transport.NodeStatus {
 
 	return st
 }
+
+// TestCleanRestartAdoptsTheIndex is the cost this is really about.
+//
+// A node that closed cleanly holds an index that already describes its disks.
+// Re-deriving it means streaming every name on every disk and reading every
+// commit record — the exact walk the index exists to remove — and the node is
+// excluded from listing merges while it runs, so a rolling restart puts the
+// whole cluster on the sidecar-walk fallback for the duration.
+//
+// It used to happen on every restart, because Open records the index as
+// building before serving a write and that overwrite was the only record of how
+// the last process ended.
+func TestCleanRestartAdoptsTheIndex(t *testing.T) {
+	const prefix = "/fs-adopt"
+
+	endpoint := startTestEtcd(t)
+
+	// Roots are kept so one node can be restarted onto its own data, which is
+	// the whole point — a fresh root would have nothing to adopt.
+	roots := []string{t.TempDir(), t.TempDir(), t.TempDir()}
+
+	grp, grpCtx := errgroup.WithContext(t.Context())
+
+	nodes := make([]*clusterRuntime, len(roots))
+	for i := range nodes {
+		nodes[i] = indexNode(t, endpoint, prefix, roots[i], i)
+
+		grp.Go(func() error { return nodes[i].Serve(grpCtx) })
+	}
+
+	require.Eventually(t, func() bool {
+		return nodes[0].coord.Topology().DiskCount() == len(roots)
+	}, 15*time.Second, 20*time.Millisecond, "topology must converge")
+
+	require.NoError(t, nodes[0].Storage.CreateBucket(t.Context(), indexBucket))
+	putObjects(t, nodes[0], 32, "a.txt", "b.txt")
+
+	nodes[0].RunObjectIndex(t.Context())
+	require.Equal(t, []string{"a.txt", "b.txt"}, indexedKeys(t, nodes[0]))
+
+	// A clean shutdown, which is what makes the index trustworthy.
+	require.NoError(t, nodes[0].close())
+
+	restarted := indexNode(t, endpoint, prefix, roots[0], 0)
+	require.True(t, restarted.indexAdopted, "a clean close must be adoptable")
+
+	// Wrapped to count the walk, not merely its result. Asserting only that the
+	// index ends up ready and correct passes either way — a rebuild produces
+	// exactly that, which is the point of a rebuild. Reset is what a walk does
+	// first and adoption never does, so counting it is the difference between
+	// testing the outcome and testing the cost.
+	counted := &countingStore{Store: restarted.index}
+	restarted.index = counted
+
+	restarted.RunObjectIndex(t.Context())
+
+	assert.Zero(t, counted.count(),
+		"an adopted index must not be re-derived; the walk is what it exists to avoid")
+
+	// Usable without a walk, and still holding what the disks hold.
+	state, err := restarted.index.State(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, metastore.StateReady, state,
+		"an adopted index must be marked ready, or the node stays out of every listing")
+	assert.Equal(t, []string{"a.txt", "b.txt"}, indexedKeys(t, restarted))
+}

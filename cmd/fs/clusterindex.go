@@ -272,17 +272,19 @@ func (rt *clusterRuntime) RunObjectIndex(ctx context.Context) {
 		return
 	}
 
-	state, err := rt.index.State(ctx)
-	if err != nil {
-		rt.lg.Warn("Object index state unreadable; rebuilding", zap.Error(err))
+	if rt.indexAdopted {
+		// The previous process closed cleanly, so the entries are trustworthy
+		// and the walk below would re-derive what is already there. Marking
+		// ready is not optional: Open leaves every index building so that a
+		// crash schedules a rebuild, and a node that adopts without saying so
+		// stays excluded from listing merges for as long as it runs.
+		if err := rt.index.MarkReady(ctx); err != nil {
+			rt.lg.Warn("Adopting the object index failed; rebuilding instead", zap.Error(err))
+		} else {
+			rt.lg.Info("Object index adopted from a clean shutdown")
 
-		state = metastore.StateBuilding
-	}
-
-	if state == metastore.StateReady {
-		rt.lg.Debug("Object index adopted from a clean shutdown")
-
-		return
+			return
+		}
 	}
 
 	if err := rt.buildObjectIndex(ctx); err != nil {
