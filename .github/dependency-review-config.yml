@@ -6,16 +6,6 @@ allow_licenses:
   - 'BSD-2-Clause'
   - 'BSD-3-Clause'
   - 'Apache-2.0'
-  # OSI-approved and materially identical to BSD-2-Clause: use, copy, modify
-  # and distribute for any purpose, with the notice retained and no warranty.
-  # It arrives with the PostgreSQL metadata backend — github.com/jackc/pgerrcode
-  # publishes the server's own error-code table and is dual-marked
-  # "MIT AND PostgreSQL" — and it is the license PostgreSQL itself ships under,
-  # so anything speaking that protocol is likely to bring it.
-  - 'PostgreSQL'
-# First-party Go packages: BSD-3-Clause plus the standard Go patent grant,
-# which scancode reports as an unrecognized LicenseRef. Exempt from the
-# license allowlist (some, e.g. x/net, also report no detectable license).
 allow_dependencies_licenses:
   - 'pkg:golang/golang.org/x/crypto'
   - 'pkg:golang/golang.org/x/exp'

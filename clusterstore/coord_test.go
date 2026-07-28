@@ -32,17 +32,51 @@ type trackingStore struct {
 
 	mu    sync.Mutex
 	names map[string]struct{}
+
+	// committed and deleted stand in for diskstore.CommitObserver, which is how
+	// the real write path feeds a metadata store: every record that lands on a
+	// node's disks is reported, whichever node's coordinator issued the write.
+	// Tests that need a store kept current by the writes themselves — rather
+	// than filled afterwards — install these.
+	committed func(disk cluster.DiskID, name string, data []byte)
+	deleted   func(disk cluster.DiskID, name string, data []byte)
 }
 
 func newTrackingStore() *trackingStore {
 	return &trackingStore{MemStore: transport.NewMemStore(), names: make(map[string]struct{})}
 }
 
+// observe installs the commit hooks. Called before the cluster takes writes.
+func (s *trackingStore) observe(
+	committed, deleted func(disk cluster.DiskID, name string, data []byte),
+) {
+	s.committed, s.deleted = committed, deleted
+}
+
+// record reads a stored record back, for handing to an observer.
+func (s *trackingStore) record(disk cluster.DiskID, name string) []byte {
+	rc, _, err := s.Open(context.Background(), disk, name)
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = rc.Close() }()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil
+	}
+
+	return data
+}
+
 type trackingWriter struct {
 	io.WriteCloser
 
-	s   *trackingStore
-	key string
+	s    *trackingStore
+	disk cluster.DiskID
+	name string
+	key  string
 }
 
 func (w trackingWriter) Close() error {
@@ -52,7 +86,12 @@ func (w trackingWriter) Close() error {
 
 	w.s.mu.Lock()
 	w.s.names[w.key] = struct{}{}
+	observer := w.s.committed
 	w.s.mu.Unlock()
+
+	if observer != nil {
+		observer(w.disk, w.name, w.s.record(w.disk, w.name))
+	}
 
 	return nil
 }
@@ -63,10 +102,27 @@ func (s *trackingStore) Create(ctx context.Context, disk cluster.DiskID, name st
 		return nil, err
 	}
 
-	return trackingWriter{WriteCloser: w, s: s, key: string(disk) + "\x00" + name}, nil
+	return trackingWriter{
+		WriteCloser: w,
+		s:           s,
+		disk:        disk,
+		name:        name,
+		key:         string(disk) + "\x00" + name,
+	}, nil
 }
 
 func (s *trackingStore) Delete(ctx context.Context, disk cluster.DiskID, name string) error {
+	// Read before removing: an observer needs to know *what* went away, and
+	// after the delete there is nothing left to tell it.
+	s.mu.Lock()
+	observer := s.deleted
+	s.mu.Unlock()
+
+	var data []byte
+	if observer != nil {
+		data = s.record(disk, name)
+	}
+
 	if err := s.MemStore.Delete(ctx, disk, name); err != nil {
 		return err
 	}
@@ -74,6 +130,10 @@ func (s *trackingStore) Delete(ctx context.Context, disk cluster.DiskID, name st
 	s.mu.Lock()
 	delete(s.names, string(disk)+"\x00"+name)
 	s.mu.Unlock()
+
+	if observer != nil && data != nil {
+		observer(disk, name, data)
+	}
 
 	return nil
 }

@@ -12,8 +12,8 @@ import (
 )
 
 // TestConformance runs the shared metastore.Store suite. Everything a caller
-// may rely on lives there, so that the PostgreSQL backend and this one are
-// held to one contract rather than to whichever tests each grew.
+// may rely on lives there, so that every backend is held to one contract rather
+// than to whichever tests each grew.
 func TestConformance(t *testing.T) {
 	metastoretest.Run(t, func(t testing.TB) metastore.Store { return open(t) })
 }
