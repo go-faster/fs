@@ -31,7 +31,7 @@ func newPlane(t testing.TB, ranges int, nodes ...cluster.NodeID) *planeCluster {
 		nodes = []cluster.NodeID{"n0"}
 	}
 
-	m, err := rangemap.Initial(ranges, nodes)
+	m, err := rangemap.Initial(ranges, planeNodes(nodes...), 1)
 	require.NoError(t, err)
 
 	m.Revision = 1

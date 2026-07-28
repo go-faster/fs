@@ -176,7 +176,8 @@ func Initialize(
 	load Loader,
 	save func(context.Context, *rangemap.Map) error,
 	ranges int,
-	nodes []cluster.NodeID,
+	nodes []cluster.Node,
+	replicas int,
 ) (created bool, err error) {
 	// A load failure is not "there is no map". Treating it as one would have a
 	// node that could not reach etcd repartition a live cluster from scratch,
@@ -190,7 +191,7 @@ func Initialize(
 		return false, nil
 	}
 
-	m, err := rangemap.Initial(ranges, nodes)
+	m, err := rangemap.Initial(ranges, nodes, replicas)
 	if err != nil {
 		return false, err
 	}
