@@ -100,7 +100,52 @@ type Entry struct {
 	// VerifiedAt is when the scrub last checked this object's payload. Zero
 	// means never, which is how a sweep finds what to do first.
 	VerifiedAt time.Time `json:"verified_at,omitzero"`
+	// Locator says where the object's bytes are when they are not a set of
+	// per-object fragments. Zero — the only representation of absent — means
+	// the file-per-object layout, which is every object today and the default
+	// for buckets that never opt into aggregated volumes.
+	//
+	// Nothing reads or writes it yet. It exists now so that adding it is not a
+	// migration later: it is a field on a pre-production format today and a
+	// schema change across 10¹¹ rows once the metadata plane holds them. See
+	// Locator.
+	Locator Locator `json:"locator,omitzero"`
 }
+
+// Locator addresses a record inside an aggregated volume: which volume, where
+// in it, and how long.
+//
+// It is the shape Haystack's index record has had since 2010 — (key, offset,
+// size) against a named volume — and it is deliberately not the shape Ambry
+// uses. Ambry embeds the partition id inside the blob id, so a get needs no
+// lookup at all; that option is closed to an S3 store, whose keys are
+// caller-chosen and must be enumerable in order. Carrying the locator as a
+// field is the price of being an object store rather than a blob store.
+//
+// The widths are chosen so none of them has to be revisited:
+//
+//   - Volume is 64-bit because it is free and permanent. The exabyte target is
+//     ~10⁷ volumes; 32 bits would do and would then be a format change the
+//     first time someone shrank the volume size.
+//   - Offset is 64-bit because a 100 GiB volume needs 37 of them, so 32 is not
+//     merely tight, it is wrong.
+//   - Length is 32-bit because a record is bounded by the inline threshold
+//     (4 MiB, 22 bits); an object above it is never inside a volume.
+type Locator struct {
+	// Volume is the volume holding the record. Volume IDs are allocated from
+	// 1, so zero means "not in a volume" and no separate presence flag is
+	// needed in any backend — which also makes "round-trips as zero" and "is
+	// absent" the same test.
+	Volume uint64 `json:"volume,omitempty"`
+	// Offset is where the record starts in the volume.
+	Offset uint64 `json:"offset,omitempty"`
+	// Length is the record's payload length.
+	Length uint32 `json:"length,omitempty"`
+}
+
+// InVolume reports whether the entry's bytes live inside an aggregated volume
+// rather than in per-object fragments.
+func (l Locator) InVolume() bool { return l.Volume != 0 }
 
 // Supersedes reports whether e is newer than other, by the same total order
 // the sidecars use: sequence first, then write time, then the generation
