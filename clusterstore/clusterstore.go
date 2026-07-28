@@ -26,6 +26,7 @@ package clusterstore
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-faster/errors"
 
@@ -116,6 +117,12 @@ type Coordinator struct {
 	usage     UsageObserver
 	keyring   *sse.Keyring
 	meta      metastore.Store
+
+	// listingPages and listingQueries back ListingStats: how many pages a store
+	// served and what they cost. Their ratio is what makes the two scopes
+	// comparable at a glance.
+	listingPages   atomic.Int64
+	listingQueries atomic.Int64
 
 	// epochs remembers recent topology snapshots so reads, deletes and repair
 	// can reach fragments still sitting at a previous epoch's placement.

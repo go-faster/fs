@@ -40,6 +40,8 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		corrupt     metric.Int64ObservableCounter
 		converted   metric.Int64ObservableCounter
 		ecUnverif   metric.Int64ObservableGauge
+		listPages   metric.Int64ObservableCounter
+		listQueries metric.Int64ObservableCounter
 	)
 
 	instruments := []struct {
@@ -82,6 +84,14 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		{&swept, "fs.cluster.repair.swept_stale", "Stale names retired by scrubs on this node."},
 		{&corrupt, "fs.cluster.repair.corrupt_replicas", "Replica payloads that failed checksum verification (bit-rot)."},
 		{&converted, "fs.cluster.repair.converted_objects", "Objects rewritten to their bucket's current scheme."},
+		// The pair, not either alone. Queries divided by pages is ~1 when a
+		// cluster-scope store serves the listing and ~N when it is merged from
+		// N nodes, so the ratio says which one a deployment is getting without
+		// the operator having to know which is configured — and a cluster-scope
+		// cluster whose ratio drifts above 1 has a listing that has quietly
+		// started fanning out.
+		{&listPages, "fs.cluster.listing.pages", "Listing pages this node served from a metadata store (pages that fell back to the sidecar walk are not counted)."},
+		{&listQueries, "fs.cluster.listing.queries", "Store queries and peer index RPCs those pages cost."},
 	}
 
 	for _, ins := range counters {
@@ -170,6 +180,10 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		o.ObserveInt64(rebObjects, int64(st.Objects))
 		o.ObserveInt64(rebMoved, int64(st.Relocated))
 		o.ObserveInt64(rebFailed, int64(st.Failed))
+
+		listing := rt.coord.ListingStats()
+		o.ObserveInt64(listPages, listing.Pages)
+		o.ObserveInt64(listQueries, listing.Queries)
 
 		o.ObserveInt64(scrubPasses, rt.scrub.passes.Load())
 		o.ObserveInt64(scrubObj, rt.scrub.objects.Load())
