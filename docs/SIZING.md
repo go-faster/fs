@@ -298,3 +298,30 @@ node has indexed its disks.
 An unreachable node does **not** force the fallback. Every object is indexed by
 each node holding a copy of it, so a listing stays complete while every object
 has one reachable holder — the same availability bound reads already have.
+
+### That bound is a property of per-node indexes
+
+Everything above describes the indexes this binary builds today: each node
+indexes what its own disks hold, and a listing merges across nodes. That is the
+only configuration a release currently ships, so the bound above is the bound
+you get.
+
+It is worth naming as a *scoped* property rather than a general one, because the
+alternative is being built. A **cluster-scope** metadata store holds one row per
+object for the whole cluster, which makes a listing page one range scan instead
+of a merge of one scan per node — and moves the availability bound with it:
+
+- A listing then depends on **the store** being reachable, not on every object
+  having a reachable holder. That is a different set, and under some
+  configurations a smaller one.
+- An unreachable node still does not force the fallback, because the store does
+  not care which node holds a copy. What the unreachable node costs is the
+  *data* behind those keys, which is the read path's bound and unchanged.
+- Correctness does not move. A store that is unreachable, or still building,
+  refuses rather than answering short, and the listing falls back to the
+  sidecar walk — the same slower, always-right path described above.
+
+So the trade is that cluster scope makes the fast path cheaper and its
+availability narrower, and the fallback is what keeps a narrower fast path from
+being a worse guarantee. When cluster scope becomes a supported configuration
+this section will state its bound directly rather than by contrast.
