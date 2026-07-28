@@ -182,3 +182,63 @@ func TestPromotionPrefersEarlierFollowers(t *testing.T) {
 	assert.EqualValues(t, "n2", got.Map.Ranges[0].Owner)
 	require.Len(t, got.Promoted, 1, "a live follower further down the list is still a promotion")
 }
+
+// TestALearnerIsNeverPromoted is the safety property the whole learner concept
+// exists for, and the reason a move can be built on top of failover at all.
+//
+// A learner is mid-backfill: it holds *some* of the range. Promoting it answers
+// "no such object" for every key the backfill has not reached — and nothing
+// reports that, because a partial range is a range that simply says no. So it
+// must be less eligible than an empty node, which at least gets rebuilt.
+func TestALearnerIsNeverPromoted(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Learners: []cluster.NodeID{"n1"}},
+	}}
+	require.NoError(t, m.Validate())
+
+	out, err := shardstore.Reassign(m, []cluster.NodeID{"n1", "n2"})
+	require.NoError(t, err)
+
+	require.Empty(t, out.Promoted, "a learner is not a promotion candidate")
+	require.Len(t, out.Orphaned, 1,
+		"with only a learner available this is the expensive case, and saying so is the point")
+}
+
+// TestAFollowerBeatsALearner: given both, the follower wins — it is current,
+// and the learner is not yet.
+func TestAFollowerBeatsALearner(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n2"},
+		Learners:  []cluster.NodeID{"n1"},
+	}}}
+	require.NoError(t, m.Validate())
+
+	out, err := shardstore.Reassign(m, []cluster.NodeID{"n1", "n2"})
+	require.NoError(t, err)
+
+	require.Len(t, out.Promoted, 1)
+	assert.Equal(t, cluster.NodeID("n2"), out.Map.Ranges[0].Owner)
+	assert.Equal(t, []cluster.NodeID{"n1"}, out.Map.Ranges[0].Learners,
+		"the move in flight is not canceled by a failover it was not part of")
+}
+
+// TestAPromotedNodeStopsLearning: a node that becomes the owner cannot also be
+// listed as learning from itself, which Validate refuses — so the reassignment
+// has to take it out of both lists.
+func TestAPromotedNodeStopsLearning(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Learners: []cluster.NodeID{"n1"},
+	}}}
+	require.NoError(t, m.Validate())
+
+	// Only the learner is alive, so it takes the range as an orphan.
+	out, err := shardstore.Reassign(m, []cluster.NodeID{"n1"})
+	require.NoError(t, err)
+	require.NoError(t, out.Map.Validate())
+
+	assert.Equal(t, cluster.NodeID("n1"), out.Map.Ranges[0].Owner)
+	assert.Empty(t, out.Map.Ranges[0].Learners)
+	assert.Len(t, out.Orphaned, 1, "what it holds is still partial, which is what orphaned means")
+}

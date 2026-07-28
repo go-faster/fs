@@ -513,3 +513,29 @@ func TestInitializeRefusesToGuessFromAFailedRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, m, "nothing was written")
 }
+
+// TestPlaneHoldsALearnerRange: a learner is configured from the map exactly as a
+// follower is — it holds the range and serves nothing — because holding is what
+// receiving the log means.
+//
+// What separates the two is promotion, which reads Followers and never this.
+// A node that did not hold its learner ranges would receive the owner's batches
+// and refuse every one of them, so a move could never make progress.
+func TestPlaneHoldsALearnerRange(t *testing.T) {
+	c := newCluster(t, "n0", "n1")
+	c.ctl.publish(t, rangemap.Range{
+		Start: "", End: "", Owner: "n0", Learners: []cluster.NodeID{"n1"},
+	})
+	c.refreshAll(t)
+
+	require.Len(t, c.nodes["n1"].shard.Following(), 1,
+		"a learner holds the range it is being backfilled with")
+	assert.Empty(t, c.nodes["n1"].shard.Ranges(), "and serves none of it")
+
+	require.NoError(t, c.store("n0").Put(t.Context(), entry("photos", "a.jpg", 100, 1)))
+
+	// The batch was accepted rather than refused, which is what lets a backfill
+	// keep up with writes arriving while it runs.
+	c.nodes["n1"].shard.Adopt(c.nodes["n1"].shard.Following())
+	assert.Equal(t, []string{"a.jpg"}, scanKeys(t, c.nodes["n1"].shard, "photos"))
+}
