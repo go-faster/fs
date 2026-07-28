@@ -458,6 +458,68 @@ func (s *Shard) Scan(
 	return nil
 }
 
+// ScanRange serves one range's share of a bucket, in key order.
+//
+// The Store drives listings this way rather than calling Scan once per owner,
+// and the reason is ordering. A node can own range 1 and range 3 while another
+// owns range 2; asking each owner for its whole share would return keys from 1
+// and 3 together, and concatenating that with 2 puts the page out of order. A
+// k-way merge would fix it and cost a comparison per key. Walking the ranges in
+// order and asking each owner for exactly one of them costs nothing and cannot
+// be got wrong.
+//
+// The range must be one this shard serves; anything else is ErrNotOwned, so a
+// stale map cannot quietly produce a page with a hole in it.
+func (s *Shard) ScanRange(
+	ctx context.Context,
+	r rangemap.Range,
+	bucket, prefix, after string,
+	limit int,
+	fn func(metastore.Entry) error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "scan index")
+	}
+
+	if !s.serves(r) {
+		return ErrNotOwned
+	}
+
+	lower := keyspace.BucketPrefix(bucket)
+	if prefix != "" {
+		lower = append(lower, prefix...)
+	}
+
+	upper := keyspace.UpperBound(lower)
+
+	start := lower
+	if after != "" {
+		if candidate := append(keyspace.BucketPrefix(bucket), after...); bytes.Compare(candidate, lower) >= 0 {
+			start = append(candidate, 0)
+		}
+	}
+
+	count := 0
+
+	_, err := s.scanRange(ctx, r, start, upper, limit, &count, fn)
+
+	return err
+}
+
+// serves reports whether this shard was told to serve exactly this range.
+func (s *Shard) serves(r rangemap.Range) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, owned := range s.owned {
+		if owned.Start == r.Start && owned.End == r.End {
+			return true
+		}
+	}
+
+	return false
+}
+
 // scanRange serves the part of [start, upper) that falls inside r.
 func (s *Shard) scanRange(
 	ctx context.Context,
