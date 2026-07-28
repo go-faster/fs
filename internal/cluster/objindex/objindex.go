@@ -1,4 +1,5 @@
-// Package objindex is a node's local index of the objects it holds.
+// Package objindex is the pebble-backed, node-local implementation of
+// metastore.Store.
 //
 // It exists because the only cluster-wide record of an object is its sidecar,
 // so every question about the object set — list this bucket, how many objects
@@ -12,20 +13,23 @@
 // interpretable on its own and repair needs no external state. Losing this
 // index costs a rebuild from those same disks and nothing else, which is why
 // it can be kept fast and unsynced — see Open.
+//
+// Its scope is one node: it describes what this node's disks hold, so a
+// cluster-wide answer is a merge across nodes. See metastore.Scope.
 package objindex
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"hash/fnv"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/go-faster/errors"
 
-	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 )
 
 // Key prefixes. One byte each, so a scan of one kind never sees another.
@@ -47,67 +51,6 @@ var versionKey = []byte{prefixMeta, 'v'}
 // changed shape needs and what being pre-production makes affordable.
 const entryVersion = 2
 
-// State is what the index believes about itself.
-type State uint8
-
-const (
-	// StateBuilding means the index is not usable: it was never built, or the
-	// last process did not close it and anything written since its last flush
-	// may be missing. Either way a full rebuild is owed.
-	StateBuilding State = iota
-	// StateReady means a build completed and every process since handed the
-	// index over cleanly.
-	StateReady
-)
-
-// Entry is one object as this node holds it.
-type Entry struct {
-	Bucket string `json:"bucket"`
-	Key    string `json:"key"`
-	Size   int64  `json:"size"`
-	ETag   string `json:"etag,omitempty"`
-	// Modified, Seq and Generation carry the sidecar's ordering stamps, so the
-	// index can tell a newer record from an older one arriving late — a
-	// rebalance copying a superseded generation, say — and refuse to go
-	// backwards.
-	Modified   time.Time `json:"modified"`
-	Seq        int64     `json:"seq,omitempty"`
-	Generation string    `json:"generation,omitempty"`
-	// Disk is where the newest record was seen. A node can hold copies of one
-	// object on two disks under different epochs; the index keeps one entry
-	// per object, naming the disk the winning record came from.
-	Disk cluster.DiskID `json:"disk,omitempty"`
-	// OwnerID and OwnerName are the principal recorded on the object. A V1
-	// listing renders them, so an index that dropped them would quietly change
-	// what an S3 client sees.
-	OwnerID   string `json:"owner_id,omitempty"`
-	OwnerName string `json:"owner_name,omitempty"`
-	// VerifiedAt is when the scrub last checked this object's payload. Zero
-	// means never, which is how a sweep finds what to do first.
-	VerifiedAt time.Time `json:"verified_at,omitzero"`
-}
-
-// supersedes reports whether e is newer than other, by the same total order
-// the sidecars use: sequence first, then write time, then the generation
-// stamp as a deterministic tie-break.
-func (e Entry) supersedes(other Entry) bool {
-	if e.Seq != other.Seq {
-		return e.Seq > other.Seq
-	}
-
-	if !e.Modified.Equal(other.Modified) {
-		return e.Modified.After(other.Modified)
-	}
-
-	return e.Generation > other.Generation
-}
-
-// Usage is what a bucket holds on this node.
-type Usage struct {
-	Objects int64 `json:"objects"`
-	Bytes   int64 `json:"bytes"`
-}
-
 // stripes is how many locks guard the read-modify-write behind an update. A
 // bucket's counters have to be adjusted with the entry that moves them, so
 // updates to one bucket serialize; different buckets do not contend.
@@ -124,6 +67,8 @@ type Index struct {
 	// one that is never behind an acknowledged write. See WithSyncWrites.
 	write *pebble.WriteOptions
 }
+
+var _ metastore.Store = (*Index)(nil)
 
 // Option configures an Index.
 type Option func(*Index)
@@ -173,7 +118,7 @@ func Open(dir string, opts ...Option) (*Index, error) {
 		o(idx)
 	}
 
-	state, err := idx.State()
+	state, err := idx.state()
 	if err != nil {
 		_ = db.Close()
 
@@ -196,13 +141,13 @@ func Open(dir string, opts ...Option) (*Index, error) {
 			return nil, err
 		}
 
-		state = StateBuilding
+		state = metastore.StateBuilding
 	}
 
 	// Invalidate before serving a single write: from here on only an orderly
 	// Close can call the index ready.
-	if state == StateReady {
-		if err := idx.setState(StateBuilding); err != nil {
+	if state == metastore.StateReady {
+		if err := idx.setState(metastore.StateBuilding); err != nil {
 			_ = db.Close()
 
 			return nil, err
@@ -212,13 +157,17 @@ func Open(dir string, opts ...Option) (*Index, error) {
 	return idx, nil
 }
 
-// Close records the index as ready and closes it. An index that is not closed
-// is not damaged — it is rebuilt.
+// Scope implements metastore.Store: this index describes one node's holdings,
+// so a cluster-wide answer is a merge across nodes.
+func (i *Index) Scope() metastore.Scope { return metastore.ScopeLocal }
+
+// Close implements metastore.Store. It records the index as ready and closes
+// it; an index that is not closed is not damaged — it is rebuilt.
 func (i *Index) Close() error {
 	var err error
 
 	i.once.Do(func() {
-		if serr := i.setState(StateReady); serr != nil {
+		if serr := i.setState(metastore.StateReady); serr != nil {
 			err = serr
 		}
 
@@ -230,36 +179,56 @@ func (i *Index) Close() error {
 	return err
 }
 
-// Dir is where the index lives.
+// Dir is where the index lives. It is not part of metastore.Store: a store
+// backed by anything other than a local database has no directory to name.
 func (i *Index) Dir() string { return i.dir }
 
-// State reports whether the index can be trusted.
-func (i *Index) State() (State, error) {
+// State implements metastore.Store.
+func (i *Index) State(ctx context.Context) (metastore.State, error) {
+	if err := ctx.Err(); err != nil {
+		return metastore.StateBuilding, errors.Wrap(err, "read index state")
+	}
+
+	return i.state()
+}
+
+func (i *Index) state() (metastore.State, error) {
 	value, closer, err := i.db.Get(stateKey)
 	if errors.Is(err, pebble.ErrNotFound) {
-		return StateBuilding, nil
+		return metastore.StateBuilding, nil
 	}
 
 	if err != nil {
-		return StateBuilding, errors.Wrap(err, "read index state")
+		return metastore.StateBuilding, errors.Wrap(err, "read index state")
 	}
 
 	defer func() { _ = closer.Close() }()
 
-	if len(value) == 1 && value[0] == byte(StateReady) {
-		return StateReady, nil
+	if len(value) == 1 && value[0] == byte(metastore.StateReady) {
+		return metastore.StateReady, nil
 	}
 
-	return StateBuilding, nil
+	return metastore.StateBuilding, nil
 }
 
-// MarkReady records that a build finished. Close records it too; this is for a
-// build that completes while the process keeps running.
-func (i *Index) MarkReady() error { return i.setState(StateReady) }
+// MarkReady implements metastore.Store. Close records readiness too; this is
+// for a build that completes while the process keeps running.
+func (i *Index) MarkReady(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "write index state")
+	}
 
-// MarkBuilding records that the index is being rebuilt and must not be
-// trusted until it is not.
-func (i *Index) MarkBuilding() error { return i.setState(StateBuilding) }
+	return i.setState(metastore.StateReady)
+}
+
+// MarkBuilding implements metastore.Store.
+func (i *Index) MarkBuilding(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "write index state")
+	}
+
+	return i.setState(metastore.StateBuilding)
+}
 
 // entryVersion reports the format of the stored entries; a missing marker
 // reads as version zero, which never matches and so rebuilds.
@@ -294,7 +263,7 @@ func (i *Index) setEntryVersion(v int) error {
 	return nil
 }
 
-func (i *Index) setState(s State) error {
+func (i *Index) setState(s metastore.State) error {
 	if err := i.db.Set(stateKey, []byte{byte(s)}, pebble.Sync); err != nil {
 		return errors.Wrap(err, "write index state")
 	}
@@ -360,13 +329,18 @@ func (i *Index) lock(bucket string) *sync.Mutex {
 	return &i.mu[h.Sum32()%stripes]
 }
 
-// Put records an object, adjusting the bucket's counters by what it displaces.
+// Put implements metastore.Store, adjusting the bucket's counters by what the
+// record displaces.
 //
 // A record that does not supersede the stored one is dropped: an older sidecar
 // can arrive after a newer one — a rebalance copying a superseded generation,
 // a repair completing late — and letting it win would resurrect a stale size
 // in both the entry and the counters.
-func (i *Index) Put(e Entry) error {
+func (i *Index) Put(ctx context.Context, e metastore.Entry) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "put index entry")
+	}
+
 	l := i.lock(e.Bucket)
 	l.Lock()
 	defer l.Unlock()
@@ -376,7 +350,7 @@ func (i *Index) Put(e Entry) error {
 		return err
 	}
 
-	if found && !e.supersedes(prev) {
+	if found && !e.Supersedes(prev) {
 		return nil
 	}
 
@@ -386,9 +360,9 @@ func (i *Index) Put(e Entry) error {
 		e.VerifiedAt = prev.VerifiedAt
 	}
 
-	delta := Usage{Objects: 1, Bytes: e.Size}
+	delta := metastore.Usage{Objects: 1, Bytes: e.Size}
 	if found {
-		delta = Usage{Bytes: e.Size - prev.Size}
+		delta = metastore.Usage{Bytes: e.Size - prev.Size}
 	}
 
 	data, err := json.Marshal(e)
@@ -416,9 +390,13 @@ func (i *Index) Put(e Entry) error {
 	return nil
 }
 
-// Delete removes an object and takes its bytes back out of the bucket's
-// counters. Removing what is not there is not an error.
-func (i *Index) Delete(bucket, key string) error {
+// Delete implements metastore.Store. Removing what is not there is not an
+// error.
+func (i *Index) Delete(ctx context.Context, bucket, key string) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "delete index entry")
+	}
+
 	l := i.lock(bucket)
 	l.Lock()
 	defer l.Unlock()
@@ -439,7 +417,7 @@ func (i *Index) Delete(bucket, key string) error {
 		return errors.Wrap(err, "stage index delete")
 	}
 
-	if err := i.stageUsage(batch, bucket, Usage{Objects: -1, Bytes: -prev.Size}); err != nil {
+	if err := i.stageUsage(batch, bucket, metastore.Usage{Objects: -1, Bytes: -prev.Size}); err != nil {
 		return err
 	}
 
@@ -452,8 +430,8 @@ func (i *Index) Delete(bucket, key string) error {
 
 // stageUsage folds a delta into the bucket's counters within batch. The caller
 // holds the bucket's stripe, so the read cannot race another update.
-func (i *Index) stageUsage(batch *pebble.Batch, bucket string, delta Usage) error {
-	usage, err := i.Usage(bucket)
+func (i *Index) stageUsage(batch *pebble.Batch, bucket string, delta metastore.Usage) error {
+	usage, err := i.usage(bucket)
 	if err != nil {
 		return err
 	}
@@ -473,58 +451,84 @@ func (i *Index) stageUsage(batch *pebble.Batch, bucket string, delta Usage) erro
 	return nil
 }
 
-// Get returns one object's entry.
-func (i *Index) Get(bucket, key string) (Entry, bool, error) { return i.get(bucket, key) }
+// Get implements metastore.Store.
+func (i *Index) Get(ctx context.Context, bucket, key string) (metastore.Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return metastore.Entry{}, false, errors.Wrap(err, "read index entry")
+	}
 
-func (i *Index) get(bucket, key string) (Entry, bool, error) {
+	return i.get(bucket, key)
+}
+
+func (i *Index) get(bucket, key string) (metastore.Entry, bool, error) {
 	value, closer, err := i.db.Get(objectKey(bucket, key))
 	if errors.Is(err, pebble.ErrNotFound) {
-		return Entry{}, false, nil
+		return metastore.Entry{}, false, nil
 	}
 
 	if err != nil {
-		return Entry{}, false, errors.Wrap(err, "read index entry")
+		return metastore.Entry{}, false, errors.Wrap(err, "read index entry")
 	}
 
 	defer func() { _ = closer.Close() }()
 
-	var e Entry
+	var e metastore.Entry
 	if err := json.Unmarshal(value, &e); err != nil {
-		return Entry{}, false, errors.Wrap(err, "unmarshal index entry")
+		return metastore.Entry{}, false, errors.Wrap(err, "unmarshal index entry")
 	}
 
 	return e, true, nil
 }
 
-// Usage returns a bucket's counters as this node holds them.
-func (i *Index) Usage(bucket string) (Usage, error) {
+// Usage implements metastore.Store, returning a bucket's counters as this node
+// holds them.
+func (i *Index) Usage(ctx context.Context, bucket string) (metastore.Usage, error) {
+	if err := ctx.Err(); err != nil {
+		return metastore.Usage{}, errors.Wrap(err, "read usage")
+	}
+
+	return i.usage(bucket)
+}
+
+func (i *Index) usage(bucket string) (metastore.Usage, error) {
 	value, closer, err := i.db.Get(usageKey(bucket))
 	if errors.Is(err, pebble.ErrNotFound) {
-		return Usage{}, nil
+		return metastore.Usage{}, nil
 	}
 
 	if err != nil {
-		return Usage{}, errors.Wrap(err, "read usage")
+		return metastore.Usage{}, errors.Wrap(err, "read usage")
 	}
 
 	defer func() { _ = closer.Close() }()
 
-	var u Usage
+	var u metastore.Usage
 	if err := json.Unmarshal(value, &u); err != nil {
-		return Usage{}, errors.Wrap(err, "unmarshal usage")
+		return metastore.Usage{}, errors.Wrap(err, "unmarshal usage")
 	}
 
 	return u, nil
 }
 
-// Scan calls fn for each of a bucket's objects whose key starts with prefix
-// and sorts after `after`, in key order, stopping after limit entries or when
-// fn returns an error.
+// Scan implements metastore.Store.
 //
 // This is the shape a listing needs and the reason for the whole package: the
 // answer costs what the page contains rather than what the bucket holds.
-// Nothing reads it yet — the listing path arrives with the peer RPC.
-func (i *Index) Scan(bucket, prefix, after string, limit int, fn func(Entry) error) error {
+//
+// Cancellation is checked once per entry rather than once per call. A scan with
+// no limit walks the bucket, so a caller that gave up — a listing whose client
+// disconnected, a coverage pass whose node is shutting down — would otherwise
+// keep a node reading to the end of a disk on nobody's behalf.
+func (i *Index) Scan(
+	ctx context.Context,
+	bucket, prefix, after string,
+	limit int,
+	fn func(metastore.Entry) error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "scan index")
+	}
+
 	lower := bucketPrefix(bucket)
 	if prefix != "" {
 		lower = append(lower, prefix...)
@@ -555,7 +559,11 @@ func (i *Index) Scan(bucket, prefix, after string, limit int, fn func(Entry) err
 			return nil
 		}
 
-		var e Entry
+		if err := ctx.Err(); err != nil {
+			return errors.Wrap(err, "scan index")
+		}
+
+		var e metastore.Entry
 		if err := json.Unmarshal(iter.Value(), &e); err != nil {
 			// One unreadable entry must not end a listing; a rebuild fixes it.
 			continue
@@ -575,8 +583,13 @@ func (i *Index) Scan(bucket, prefix, after string, limit int, fn func(Entry) err
 	return nil
 }
 
-// Buckets returns every bucket the index holds counters for, sorted.
-func (i *Index) Buckets() ([]string, error) {
+// Buckets implements metastore.Store, returning every bucket the index holds
+// counters for, sorted.
+func (i *Index) Buckets(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Wrap(err, "scan buckets")
+	}
+
 	lower := []byte{prefixUsage}
 
 	iter, err := i.db.NewIter(&pebble.IterOptions{
@@ -592,6 +605,10 @@ func (i *Index) Buckets() ([]string, error) {
 	var out []string
 
 	for iter.First(); iter.Valid(); iter.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Wrap(err, "scan buckets")
+		}
+
 		out = append(out, string(iter.Key()[1:]))
 	}
 
@@ -602,11 +619,11 @@ func (i *Index) Buckets() ([]string, error) {
 	return out, nil
 }
 
-// Reset empties the index, for a rebuild that must not inherit stale entries —
-// an object deleted while the index was not watching leaves one behind, and
-// nothing in a rebuild would otherwise remove it.
-func (i *Index) Reset() error {
-	if err := i.MarkBuilding(); err != nil {
+// Reset implements metastore.Store, for a rebuild that must not inherit stale
+// entries — an object deleted while the index was not watching leaves one
+// behind, and nothing in a rebuild would otherwise remove it.
+func (i *Index) Reset(ctx context.Context) error {
+	if err := i.MarkBuilding(ctx); err != nil {
 		return err
 	}
 
@@ -623,14 +640,7 @@ func (i *Index) Reset() error {
 // DefaultDir is where a node keeps its index, given the storage root.
 func DefaultDir(root string) string { return filepath.Join(root, "cluster", "index") }
 
-// Verification is one object's verification stamp.
-type Verification struct {
-	Bucket string
-	Key    string
-	At     time.Time
-}
-
-// SetVerified records when the scrub last checked these objects.
+// SetVerified implements metastore.Store.
 //
 // Verification is written apart from the entry itself because only the scrub
 // knows it and only the write path knows the rest: an object re-indexed by a
@@ -640,11 +650,19 @@ type Verification struct {
 // Objects the index does not hold are skipped rather than created. The index
 // records what this node holds; a stamp for something it does not hold would
 // be an entry with no object behind it.
-func (i *Index) SetVerified(records []Verification) error {
+func (i *Index) SetVerified(ctx context.Context, records []metastore.Verification) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, "record verification")
+	}
+
 	batch := i.db.NewBatch()
 	defer func() { _ = batch.Close() }()
 
 	for _, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return errors.Wrap(err, "record verification")
+		}
+
 		l := i.lock(rec.Bucket)
 		l.Lock()
 
@@ -690,20 +708,8 @@ func (i *Index) SetVerified(records []Verification) error {
 	return nil
 }
 
-// Coverage is how well the scrub is keeping up with what a node holds.
-type Coverage struct {
-	// Objects is how many the node holds.
-	Objects int64
-	// Never is how many have not been verified once. A node that has never
-	// completed a cycle reports them all.
-	Never int64
-	// Oldest is the least recent verification among those that have one. With
-	// Never at zero it is the honest age of the node's coverage: every object
-	// has been checked at least since then.
-	Oldest time.Time
-}
-
-// Coverage scans the index and reports how stale the node's verification is.
+// Coverage implements metastore.Store, reporting how stale this node's
+// verification is.
 //
 // This is the number worth watching, and the one nothing could answer before:
 // counters of scrub work done say how busy the scrubber was, not whether it
@@ -712,16 +718,16 @@ type Coverage struct {
 //
 // It reads index entries only — no disk, no network — so it costs a local scan
 // rather than the walk it reports on.
-func (i *Index) Coverage() (Coverage, error) {
-	var cov Coverage
+func (i *Index) Coverage(ctx context.Context) (metastore.Coverage, error) {
+	var cov metastore.Coverage
 
-	buckets, err := i.Buckets()
+	buckets, err := i.Buckets(ctx)
 	if err != nil {
-		return Coverage{}, err
+		return metastore.Coverage{}, err
 	}
 
 	for _, bucket := range buckets {
-		err := i.Scan(bucket, "", "", 0, func(e Entry) error {
+		err := i.Scan(ctx, bucket, "", "", 0, func(e metastore.Entry) error {
 			cov.Objects++
 
 			if e.VerifiedAt.IsZero() {
@@ -737,7 +743,7 @@ func (i *Index) Coverage() (Coverage, error) {
 			return nil
 		})
 		if err != nil {
-			return Coverage{}, err
+			return metastore.Coverage{}, err
 		}
 	}
 

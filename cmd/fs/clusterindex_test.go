@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/etcd"
-	"github.com/go-faster/fs/internal/cluster/objindex"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/transport"
 )
 
@@ -54,7 +54,7 @@ func indexedKeys(t *testing.T, rt *clusterRuntime) []string {
 
 	var keys []string
 
-	require.NoError(t, rt.index.Scan(indexBucket, "", "", 0, func(e objindex.Entry) error {
+	require.NoError(t, rt.index.Scan(t.Context(), indexBucket, "", "", 0, func(e metastore.Entry) error {
 		keys = append(keys, e.Key)
 
 		return nil
@@ -158,7 +158,7 @@ func TestObjectIndexFollowsTheWritePath(t *testing.T) {
 	nodes[0].coord.Flush()
 
 	for _, rt := range nodes {
-		entry, found, err := rt.index.Get("photos", "a.jpg")
+		entry, found, err := rt.index.Get(t.Context(), "photos", "a.jpg")
 		require.NoError(t, err)
 
 		if !found {
@@ -172,7 +172,7 @@ func TestObjectIndexFollowsTheWritePath(t *testing.T) {
 	require.NoError(t, storage.DeleteObject(t.Context(), "photos", "b.jpg"))
 
 	for _, rt := range nodes {
-		_, found, err := rt.index.Get("photos", "b.jpg")
+		_, found, err := rt.index.Get(t.Context(), "photos", "b.jpg")
 		require.NoError(t, err)
 		assert.False(t, found, "node %s still indexes a deleted object", rt.nodeID)
 	}
@@ -194,30 +194,30 @@ func TestObjectIndexRebuildsFromDisks(t *testing.T) {
 	held := indexedKeys(t, rt)
 	require.NotEmpty(t, held, "this node must hold something to rebuild")
 
-	before, err := rt.index.Usage("photos")
+	before, err := rt.index.Usage(t.Context(), "photos")
 	require.NoError(t, err)
 
 	// Wipe the index behind the node's back — a corrupt or discarded index,
 	// which is exactly what a rebuild exists for.
-	require.NoError(t, rt.index.Reset())
+	require.NoError(t, rt.index.Reset(t.Context()))
 	require.Empty(t, indexedKeys(t, rt))
 
-	state, err := rt.index.State()
+	state, err := rt.index.State(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, objindex.StateBuilding, state)
+	require.Equal(t, metastore.StateBuilding, state)
 
 	// The startup path finds it unusable and rebuilds from the disks.
 	rt.RunObjectIndex(t.Context())
 
 	assert.Equal(t, held, indexedKeys(t, rt), "the rebuild reproduces what the disks hold")
 
-	after, err := rt.index.Usage("photos")
+	after, err := rt.index.Usage(t.Context(), "photos")
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "and the counters it carries")
 
-	state, err = rt.index.State()
+	state, err = rt.index.State(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, objindex.StateReady, state, "a completed build makes it usable")
+	assert.Equal(t, metastore.StateReady, state, "a completed build makes it usable")
 }
 
 // TestObjectIndexSkipsUnreadableRecords: one bad record must not abandon a
@@ -295,8 +295,8 @@ func TestListingServedFromTheIndex(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		for _, node := range nodes {
-			state, err := node.index.State()
-			if err != nil || state != objindex.StateReady {
+			state, err := node.index.State(t.Context())
+			if err != nil || state != metastore.StateReady {
 				return false
 			}
 		}
@@ -411,7 +411,7 @@ func TestScrubCoverageEndToEnd(t *testing.T) {
 		node.RunObjectIndex(t.Context())
 	}
 
-	cov, err := rt.index.Coverage()
+	cov, err := rt.index.Coverage(t.Context())
 	require.NoError(t, err)
 	require.Positive(t, cov.Objects, "the node must hold something")
 	assert.Equal(t, cov.Objects, cov.Never, "nothing has been verified yet")
@@ -422,7 +422,7 @@ func TestScrubCoverageEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Positive(t, report.Objects)
 
-	cov, err = rt.index.Coverage()
+	cov, err = rt.index.Coverage(t.Context())
 	require.NoError(t, err)
 	assert.Zero(t, cov.Never, "a completed pass leaves nothing unverified")
 	assert.False(t, cov.Oldest.IsZero(), "and the coverage has an age")
