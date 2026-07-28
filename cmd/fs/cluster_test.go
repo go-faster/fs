@@ -70,8 +70,34 @@ func TestClusterConfigValidation(t *testing.T) {
 	}
 }
 
+// etcdStartAttempts is how many times startTestEtcd will re-pick ports.
+//
+// Ports come from testFreeAddr, which binds, closes, and hands the address on —
+// a race, and unavoidably so: etcd wants its URLs in its config before anything
+// binds, so unlike a node listener there is no port-0 form of this. Retrying
+// makes the window irrelevant rather than narrower.
+const etcdStartAttempts = 3
+
 // startTestEtcd runs an in-process etcd for the wiring test.
 func startTestEtcd(t *testing.T) string {
+	t.Helper()
+
+	for attempt := range etcdStartAttempts {
+		endpoint, ok := tryStartTestEtcd(t, attempt == etcdStartAttempts-1)
+		if ok {
+			return endpoint
+		}
+	}
+
+	t.Fatal("etcd never started")
+
+	return ""
+}
+
+// tryStartTestEtcd makes one attempt, reporting failure rather than failing the
+// test until the last one — where the real error is more useful than "never
+// started".
+func tryStartTestEtcd(t *testing.T, last bool) (string, bool) {
 	t.Helper()
 
 	cfg := embed.NewConfig()
@@ -87,7 +113,18 @@ func startTestEtcd(t *testing.T) string {
 	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
 
 	srv, err := embed.StartEtcd(cfg)
-	require.NoError(t, err)
+	if err != nil {
+		if last {
+			require.NoError(t, err)
+		}
+
+		// Almost always "address already in use": something took one of the
+		// ports between the probe and the start. Another set is all it needs.
+		t.Logf("etcd start attempt failed, retrying with fresh ports: %v", err)
+
+		return "", false
+	}
+
 	t.Cleanup(srv.Close)
 
 	select {
@@ -96,7 +133,7 @@ func startTestEtcd(t *testing.T) string {
 		t.Fatal("etcd did not become ready")
 	}
 
-	return clientURL.String()
+	return clientURL.String(), true
 }
 
 // testNodeAddr is what a node under test binds to.
