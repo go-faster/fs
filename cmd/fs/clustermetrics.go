@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/go-faster/fs/internal/adminhandler"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 )
 
 // RegisterMetrics exports the ROADMAP Phase 9 cluster metrics: per-disk
@@ -40,6 +41,10 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		corrupt     metric.Int64ObservableCounter
 		converted   metric.Int64ObservableCounter
 		ecUnverif   metric.Int64ObservableGauge
+		planeRev    metric.Int64ObservableGauge
+		planeOwned  metric.Int64ObservableGauge
+		planeFollow metric.Int64ObservableGauge
+		planeReady  metric.Int64ObservableGauge
 		listPages   metric.Int64ObservableCounter
 		listQueries metric.Int64ObservableCounter
 	)
@@ -60,6 +65,22 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		{&rebMoved, "fs.cluster.rebalance.relocated", "Objects changed by this node's current or last rebalance run.", unitObjects},
 		{&rebFailed, "fs.cluster.rebalance.failed", "Objects that failed in this node's current or last rebalance run.", unitObjects},
 		{&ecUnverif, "fs.cluster.scrub.ec_unverified", "1 when the last scrub pass saw an EC set failing parity verification.", "1"},
+		// The sharded metadata plane. Registered always and observed only on a
+		// node that runs one: a gauge reading zero owned ranges is a node that
+		// lost its share, which is worth paging on, and a node that never had
+		// one must not look like it.
+		//
+		// The revision is the number that says whether a node's routing has
+		// caught up. Nodes disagreeing about it for more than a moment is a map
+		// change some node never noticed, which is the split lazy routing trades
+		// a watch for.
+		{&planeRev, "fs.cluster.plane.revision", "Range map revision this node is routing by.", "1"},
+		{&planeOwned, "fs.cluster.plane.ranges.owned", "Ranges this node serves.", "{range}"},
+		{&planeFollow, "fs.cluster.plane.ranges.followed", "Ranges this node replicates for another node.", "{range}"},
+		// Building means every listing in the cluster is walking sidecars: the
+		// difference between the plane working and the plane merely being
+		// configured.
+		{&planeReady, "fs.cluster.plane.ready", "1 when the metadata plane is ready, 0 while it is building.", "1"},
 	}
 
 	for _, ins := range instruments {
@@ -180,6 +201,22 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		o.ObserveInt64(rebObjects, int64(st.Objects))
 		o.ObserveInt64(rebMoved, int64(st.Relocated))
 		o.ObserveInt64(rebFailed, int64(st.Failed))
+
+		if rt.metaPlane != nil {
+			o.ObserveInt64(planeOwned, int64(len(rt.metaPlane.shard.Ranges())))
+			o.ObserveInt64(planeFollow, int64(len(rt.metaPlane.shard.Following())))
+
+			if m := rt.metaPlane.plane.Router().Map(); m != nil {
+				o.ObserveInt64(planeRev, m.Revision)
+			}
+
+			ready := int64(0)
+			if state, err := rt.metaPlane.state.State(ctx); err == nil && state == metastore.StateReady {
+				ready = 1
+			}
+
+			o.ObserveInt64(planeReady, ready)
+		}
 
 		listing := rt.coord.ListingStats()
 		o.ObserveInt64(listPages, listing.Pages)

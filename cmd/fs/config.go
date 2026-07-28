@@ -260,6 +260,69 @@ type ClusterConfig struct {
 
 	// Rebalance tunes the automatic rebalancer.
 	Rebalance RebalanceConfig `yaml:"rebalance,omitempty"`
+
+	// Metadata configures the sharded metadata plane.
+	Metadata MetadataConfig `yaml:"metadata,omitempty"`
+}
+
+// Metadata plane defaults.
+const (
+	// DefaultMetadataRanges is how many ranges a plane is presplit into.
+	//
+	// Comfortably more than the nodes of any cluster small enough not to have
+	// been tuned, because ranges are the unit failover moves: a plane with one
+	// range per node moves a whole node's metadata at once, where a plane with
+	// several moves a fraction of it and spreads the promotions.
+	DefaultMetadataRanges = 64
+
+	// DefaultMetadataReplicas is how many copies of each range exist, owner
+	// included.
+	//
+	// Two rather than three. The store is derived — the sidecars on disk are
+	// the commit point — so a replica is not protecting data, only the cost of
+	// getting it back. One follower already turns the common failure into a
+	// metadata write; a second buys the case where an owner and its follower
+	// are lost together, at the price of shipping every batch twice.
+	DefaultMetadataReplicas = 2
+)
+
+// MetadataConfig configures the sharded metadata plane: one pebble shard per
+// node, partitioned by key range, serving cluster-scope listings.
+//
+// Off by default. The plane is derived, so turning it on costs a rebuild and
+// turning it off costs nothing — a node with it disabled keeps the per-node
+// index and the listing merge, which is what every release so far has run.
+type MetadataConfig struct {
+	// Sharded turns the plane on.
+	Sharded bool `yaml:"sharded,omitempty"`
+
+	// Ranges is how many ranges the key space is presplit into when the plane
+	// is first partitioned (default DefaultMetadataRanges). Ignored afterwards:
+	// re-partitioning a live cluster would move every range at once.
+	Ranges int `yaml:"ranges,omitempty"`
+
+	// Replicas is how many nodes hold each range, owner included (default
+	// DefaultMetadataReplicas). 1 means no followers, so every lost owner costs
+	// a cluster-wide rebuild rather than a promotion.
+	Replicas int `yaml:"replicas,omitempty"`
+}
+
+// MetadataRanges is the configured presplit count, or the default.
+func (c *Config) MetadataRanges() int {
+	if c.Cluster.Metadata.Ranges > 0 {
+		return c.Cluster.Metadata.Ranges
+	}
+
+	return DefaultMetadataRanges
+}
+
+// MetadataReplicas is the configured replica count, or the default.
+func (c *Config) MetadataReplicas() int {
+	if c.Cluster.Metadata.Replicas > 0 {
+		return c.Cluster.Metadata.Replicas
+	}
+
+	return DefaultMetadataReplicas
 }
 
 // RebalanceConfig tunes automatic rebalancing: on a settled membership change
@@ -460,6 +523,10 @@ func (c *Config) validateCluster() error {
 
 	if cc.Rebalance.Settle < 0 || cc.Rebalance.Cooldown < 0 {
 		return errors.New("cluster.rebalance.settle and .cooldown must not be negative")
+	}
+
+	if cc.Metadata.Ranges < 0 || cc.Metadata.Replicas < 0 {
+		return errors.New("cluster.metadata.ranges and .replicas cannot be negative")
 	}
 
 	if w := cc.Rebalance.FullWatermark; w < 0 || w > 1 {

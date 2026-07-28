@@ -42,6 +42,7 @@ type clusterRuntime struct {
 	lg        *zap.Logger
 	closers   []func() error
 	coord     *clusterstore.Coordinator
+	metaPlane *metadataPlane
 	nodeID    cluster.NodeID
 	schemeID  string
 	// version and started stamp the live state this node reports to peers.
@@ -317,9 +318,59 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		return nil, errors.Wrap(err, "server-side encryption")
 	}
 
+	peers := clusterstore.NewHTTPPeers(rt.nodeID, store, secret, peerHTTPClient(0)).
+		WithLocalIndex(rt.indexPages)
+
+	// The cluster-scope metadata plane, when it is turned on. Off, the node
+	// keeps the per-node index and the listing merge, which is what every
+	// release so far has run.
+	meta := metastore.Store(index)
+
+	if cc.Metadata.Sharded {
+		plane, err := openMetadataPlane(ctx, planeDeps{
+			self:     rt.nodeID,
+			root:     absRoot,
+			client:   client,
+			etcdCfg:  etcdCfg,
+			topology: source.Topology,
+			peers:    peers,
+		})
+		if err != nil {
+			_ = listener.Close()
+			_ = rt.close()
+
+			return nil, err
+		}
+
+		rt.metaPlane = plane
+		rt.closers = append(rt.closers, plane.Close)
+
+		meta = plane.Store()
+
+		// Records land in the plane rather than in this node's own index, so
+		// an entry reaches the shard that owns its key instead of the node
+		// whose disk happens to hold the object.
+		indexer.redirect(meta)
+
+		// And the index it stopped writing to is no longer a description of
+		// anything. Marked building so that turning the plane back off cannot
+		// silently serve listings from a store that has been ignored since the
+		// day it was bypassed — it costs a rebuild, which is the honest price.
+		if err := index.MarkBuilding(ctx); err != nil {
+			_ = listener.Close()
+			_ = rt.close()
+
+			return nil, errors.Wrap(err, "retire the local object index")
+		}
+
+		lg.Info("Sharded metadata plane enabled",
+			zap.Int("ranges", cfg.MetadataRanges()),
+			zap.Int("replicas", cfg.MetadataReplicas()))
+	}
+
 	coord, err := clusterstore.New(clusterstore.Config{
 		Topology: source,
-		Peers:    clusterstore.NewHTTPPeers(rt.nodeID, store, secret, peerHTTPClient(0)).WithLocalIndex(rt.indexPages),
+		Peers:    peers,
 		Scheme:   func(string) scheme.Scheme { return defaultScheme },
 		OnAsyncError: func(bucket, key string, err error) {
 			lg.Warn("Async replication remainder failed (repair will complete it)",
@@ -327,13 +378,11 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		},
 		Usage:   rt.usage,
 		Keyring: keyring,
-		// The node's own store. objindex reports ScopeLocal, so today this
-		// changes nothing — the listing still merges across nodes and usage
-		// still sums per-node counters, both asserted by
-		// TestLocalScopeStoreChangesNothing. It is wired now so the seam is
-		// real: a cluster-scope store takes its place without another change
-		// here.
-		Metastore: index,
+		// Either the node's own index — ScopeLocal, so listings merge across
+		// nodes and usage sums per-node counters — or the sharded plane, which
+		// reports ScopeCluster and answers a listing with one scan. The seam
+		// was built for exactly this substitution; nothing else here changes.
+		Metastore: meta,
 	})
 	if err != nil {
 		_ = listener.Close()
@@ -383,8 +432,10 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// cluster-wide view.
 	rt.server = &http.Server{
 		Handler: instrumentPeerHandler(transport.NewServer(store, secret,
-			transport.WithStatus(rt.nodeStatus),
-			transport.WithIndex(rt.indexPages),
+			append(peerServerOptions(rt),
+				transport.WithStatus(rt.nodeStatus),
+				transport.WithIndex(rt.indexPages),
+			)...,
 		)),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Seed the peer-request contexts with this node's logger. Without it
