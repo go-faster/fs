@@ -307,6 +307,13 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 		},
 		Usage:   rt.usage,
 		Keyring: keyring,
+		// The node's own store. objindex reports ScopeLocal, so today this
+		// changes nothing — the listing still merges across nodes and usage
+		// still sums per-node counters, both asserted by
+		// TestLocalScopeStoreChangesNothing. It is wired now so the seam is
+		// real: a cluster-scope store takes its place without another change
+		// here.
+		Metastore: index,
 	})
 	if err != nil {
 		_ = listener.Close()
