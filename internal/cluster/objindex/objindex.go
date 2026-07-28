@@ -30,21 +30,15 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs/internal/cluster/metastore"
-)
-
-// Key prefixes. One byte each, so a scan of one kind never sees another.
-const (
-	prefixObject = 'o'
-	prefixUsage  = 'u'
-	prefixMeta   = 'm'
+	"github.com/go-faster/fs/internal/cluster/metastore/keyspace"
 )
 
 // stateKey holds whether the index was handed over cleanly by the last
 // process.
-var stateKey = []byte{prefixMeta, 's'}
+var stateKey = []byte{keyspace.Meta, 's'}
 
 // versionKey holds the entry format the stored entries were written with.
-var versionKey = []byte{prefixMeta, 'v'}
+var versionKey = []byte{keyspace.Meta, 'v'}
 
 // entryVersion stamps the shape of a stored entry. Bumping it makes the next
 // start discard what it finds and rebuild from the disks, which is what a
@@ -314,56 +308,6 @@ func (i *Index) setState(s metastore.State) error {
 	return nil
 }
 
-// objectKey is 'o' + bucket + NUL + key, so a scan of a bucket's objects is a
-// range scan in key order. NUL separates because no S3 bucket name may contain
-// one and no object key survives XML with one, which is the same reasoning the
-// coordinator's object references already rest on.
-func objectKey(bucket, key string) []byte {
-	out := make([]byte, 0, 2+len(bucket)+len(key))
-	out = append(out, prefixObject)
-	out = append(out, bucket...)
-	out = append(out, 0)
-	out = append(out, key...)
-
-	return out
-}
-
-// usageKey is 'u' + bucket.
-func usageKey(bucket string) []byte {
-	out := make([]byte, 0, 1+len(bucket))
-	out = append(out, prefixUsage)
-	out = append(out, bucket...)
-
-	return out
-}
-
-// bucketPrefix is every object key of a bucket: 'o' + bucket + NUL.
-func bucketPrefix(bucket string) []byte {
-	out := make([]byte, 0, 2+len(bucket))
-	out = append(out, prefixObject)
-	out = append(out, bucket...)
-	out = append(out, 0)
-
-	return out
-}
-
-// upperBound is the exclusive end of a prefix scan: the prefix with its last
-// byte incremented. A prefix of all 0xFF has no successor, and nil then means
-// "to the end", which is correct because nothing sorts above it.
-func upperBound(prefix []byte) []byte {
-	out := bytes.Clone(prefix)
-
-	for i := len(out) - 1; i >= 0; i-- {
-		if out[i] < 0xFF {
-			out[i]++
-
-			return out[:i+1]
-		}
-	}
-
-	return nil
-}
-
 // lock returns the stripe guarding a bucket's updates.
 func (i *Index) lock(bucket string) *sync.Mutex {
 	h := fnv.New32a()
@@ -416,7 +360,7 @@ func (i *Index) Put(ctx context.Context, e metastore.Entry) error {
 	batch := i.db.NewBatch()
 	defer func() { _ = batch.Close() }()
 
-	if err := batch.Set(objectKey(e.Bucket, e.Key), data, nil); err != nil {
+	if err := batch.Set(keyspace.ObjectKey(e.Bucket, e.Key), data, nil); err != nil {
 		return errors.Wrap(err, "stage index entry")
 	}
 
@@ -456,7 +400,7 @@ func (i *Index) Delete(ctx context.Context, bucket, key string) error {
 	batch := i.db.NewBatch()
 	defer func() { _ = batch.Close() }()
 
-	if err := batch.Delete(objectKey(bucket, key), nil); err != nil {
+	if err := batch.Delete(keyspace.ObjectKey(bucket, key), nil); err != nil {
 		return errors.Wrap(err, "stage index delete")
 	}
 
@@ -487,7 +431,7 @@ func (i *Index) stageUsage(batch *pebble.Batch, bucket string, delta metastore.U
 		return errors.Wrap(err, "marshal usage")
 	}
 
-	if err := batch.Set(usageKey(bucket), data, nil); err != nil {
+	if err := batch.Set(keyspace.UsageKey(bucket), data, nil); err != nil {
 		return errors.Wrap(err, "stage usage")
 	}
 
@@ -504,7 +448,7 @@ func (i *Index) Get(ctx context.Context, bucket, key string) (metastore.Entry, b
 }
 
 func (i *Index) get(bucket, key string) (metastore.Entry, bool, error) {
-	value, closer, err := i.db.Get(objectKey(bucket, key))
+	value, closer, err := i.db.Get(keyspace.ObjectKey(bucket, key))
 	if errors.Is(err, pebble.ErrNotFound) {
 		return metastore.Entry{}, false, nil
 	}
@@ -534,7 +478,7 @@ func (i *Index) Usage(ctx context.Context, bucket string) (metastore.Usage, erro
 }
 
 func (i *Index) usage(bucket string) (metastore.Usage, error) {
-	value, closer, err := i.db.Get(usageKey(bucket))
+	value, closer, err := i.db.Get(keyspace.UsageKey(bucket))
 	if errors.Is(err, pebble.ErrNotFound) {
 		return metastore.Usage{}, nil
 	}
@@ -572,7 +516,7 @@ func (i *Index) Scan(
 		return errors.Wrap(err, "scan index")
 	}
 
-	lower := bucketPrefix(bucket)
+	lower := keyspace.BucketPrefix(bucket)
 	if prefix != "" {
 		lower = append(lower, prefix...)
 	}
@@ -580,14 +524,14 @@ func (i *Index) Scan(
 	// Start past the boundary when one is given and it is inside the range.
 	start := lower
 	if after != "" {
-		if candidate := append(bucketPrefix(bucket), after...); bytes.Compare(candidate, lower) >= 0 {
+		if candidate := append(keyspace.BucketPrefix(bucket), after...); bytes.Compare(candidate, lower) >= 0 {
 			start = append(candidate, 0)
 		}
 	}
 
 	iter, err := i.db.NewIter(&pebble.IterOptions{
 		LowerBound: start,
-		UpperBound: upperBound(lower),
+		UpperBound: keyspace.UpperBound(lower),
 	})
 	if err != nil {
 		return errors.Wrap(err, "open index iterator")
@@ -633,11 +577,11 @@ func (i *Index) Buckets(ctx context.Context, fn func(bucket string) error) error
 		return errors.Wrap(err, "scan buckets")
 	}
 
-	lower := []byte{prefixUsage}
+	lower := []byte{keyspace.Usage}
 
 	iter, err := i.db.NewIter(&pebble.IterOptions{
 		LowerBound: lower,
-		UpperBound: upperBound(lower),
+		UpperBound: keyspace.UpperBound(lower),
 	})
 	if err != nil {
 		return errors.Wrap(err, "open index iterator")
@@ -673,8 +617,8 @@ func (i *Index) Reset(ctx context.Context) error {
 	}
 
 	// Everything except the state marker, which was just written.
-	for _, prefix := range [][]byte{{prefixObject}, {prefixUsage}} {
-		if err := i.db.DeleteRange(prefix, upperBound(prefix), pebble.Sync); err != nil {
+	for _, prefix := range [][]byte{{keyspace.Object}, {keyspace.Usage}} {
+		if err := i.db.DeleteRange(prefix, keyspace.UpperBound(prefix), pebble.Sync); err != nil {
 			return errors.Wrap(err, "reset index")
 		}
 	}
@@ -733,7 +677,7 @@ func (i *Index) SetVerified(ctx context.Context, records []metastore.Verificatio
 			return errors.Wrap(err, "marshal index entry")
 		}
 
-		err = batch.Set(objectKey(rec.Bucket, rec.Key), data, nil)
+		err = batch.Set(keyspace.ObjectKey(rec.Bucket, rec.Key), data, nil)
 
 		l.Unlock()
 
