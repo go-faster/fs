@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -10,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/reqid"
 	"github.com/go-faster/fs/internal/s3err"
 )
 
@@ -133,22 +132,23 @@ func optionsGuard(next http.Handler) http.Handler {
 
 // withRequestID stamps every response with a unique x-amz-request-id (echoed
 // into S3 error bodies) and a Server header, matching what S3 clients expect.
+//
+// The same ID goes into the request context and onto the context logger, so it
+// is both the value the client is told and the value every log line this
+// request produces is tagged with — here and, once clusterstore hands it to the
+// peer transport, on the other nodes the request touches.
 func withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("x-amz-request-id", newRequestID())
+		id := reqid.New()
+
+		w.Header().Set(reqid.Header, id)
 		w.Header().Set("Server", "go-faster/fs")
-		next.ServeHTTP(w, r)
+
+		ctx := reqid.NewContext(r.Context(), id)
+		ctx = zctx.With(ctx, zap.String(reqid.Field, id))
+
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-// newRequestID returns a random 16-hex-character request identifier.
-func newRequestID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "00000000000000000000000000000000"
-	}
-
-	return strings.ToUpper(hex.EncodeToString(b[:]))
 }
 
 // route dispatches a request to the appropriate handler based on the path shape

@@ -210,7 +210,7 @@ func newPeerStatus(self cluster.NodeID, secret transport.Secret) *peerStatus {
 	return &peerStatus{
 		self:    self,
 		secret:  secret,
-		http:    &http.Client{Timeout: peerStatusTimeout},
+		http:    peerHTTPClient(peerStatusTimeout),
 		timeout: peerStatusTimeout,
 		clients: make(map[string]*transport.Client),
 	}

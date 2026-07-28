@@ -15,6 +15,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/reqid"
 )
 
 // Client talks to one peer's fragment server. It is safe for concurrent use.
@@ -39,6 +40,22 @@ func NewClient(baseURL string, secret Secret, node cluster.NodeID, httpClient *h
 	}
 
 	return &Client{base: base, secret: secret, node: node, http: httpClient, now: time.Now}, nil
+}
+
+// send stamps the originating S3 request ID onto req and performs it. Every
+// peer call goes through here rather than c.http.Do so the ID cannot be
+// forgotten on a new endpoint: the one thing a user reports about a failed
+// request is that ID, and it is only useful if it reaches the node that
+// actually failed.
+//
+// Requests with no client request behind them (scrub, repair, rebalance,
+// status) carry no ID and send no header.
+func (c *Client) send(req *http.Request) (*http.Response, error) {
+	if id := reqid.FromContext(req.Context()); reqid.Valid(id) {
+		req.Header.Set(headerRequestID, id)
+	}
+
+	return c.http.Do(req) //nolint:wrapcheck // Callers wrap with per-operation context.
 }
 
 // fragmentURL builds the peer URL for a fragment. The decoded path is set on a
@@ -73,7 +90,7 @@ func (c *Client) Put(ctx context.Context, disk cluster.DiskID, name string, size
 
 	reqSig := c.secret.authenticate(req, c.node, c.now())
 
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return errors.Wrap(err, "put fragment")
 	}
@@ -112,7 +129,7 @@ func (c *Client) Get(ctx context.Context, disk cluster.DiskID, name string) (io.
 
 	reqSig := c.secret.authenticate(req, c.node, c.now())
 
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "get fragment")
 	}
@@ -153,7 +170,7 @@ func (c *Client) List(ctx context.Context, disk cluster.DiskID, prefix string) (
 
 	reqSig := c.secret.authenticate(req, c.node, c.now())
 
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, errors.Wrap(err, "list fragments")
 	}
@@ -195,7 +212,7 @@ func (c *Client) Stat(ctx context.Context, disk cluster.DiskID, name string) (in
 
 	reqSig := c.secret.authenticate(req, c.node, c.now())
 
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return 0, errors.Wrap(err, "stat fragment")
 	}
@@ -232,7 +249,7 @@ func (c *Client) Delete(ctx context.Context, disk cluster.DiskID, name string) e
 
 	reqSig := c.secret.authenticate(req, c.node, c.now())
 
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return errors.Wrap(err, "delete fragment")
 	}

@@ -39,6 +39,14 @@ const (
 	headerDigest = "X-Fragment-Sha256"
 	// headerSize carries the fragment size on HEAD responses.
 	headerSize = "X-Fragment-Size"
+	// headerRequestID carries the S3 request ID of the client request this peer
+	// call serves, so the peer logs its side of a failure under the same ID the
+	// client was handed. Deliberately outside the signature: it decides nothing
+	// — not auth, not placement, not what is stored — and a peer that lies
+	// about it can only mislabel its own log lines, which it could do anyway.
+	// Empty for peer traffic no client request originated (scrub, repair,
+	// rebalance, status polling).
+	headerRequestID = "X-Cluster-Request-Id"
 )
 
 // maxClockSkew is how far a request timestamp may deviate from the receiver's
