@@ -30,6 +30,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/cluster/metastore/keyspace"
 )
 
 // Range is one contiguous interval of the key space and who serves it.
@@ -167,10 +168,6 @@ func (m *Map) Validate() error {
 	return nil
 }
 
-// objectPrefix is the byte every object key starts with, matching the
-// encoding the node-local index already uses.
-const objectPrefix = 'o'
-
 // Split bounds. Bucket names are lowercase alphanumeric with hyphens and dots,
 // so the second byte of a key — the first of the bucket name — lives in a
 // narrow band. Splitting evenly across the whole byte range would put almost
@@ -238,5 +235,5 @@ func boundary(i, n int) string {
 	b := min(max(int(splitLow)+i*span/n, int(splitLow)), int(splitHigh))
 
 	//nolint:gosec // Clamped to [splitLow, splitHigh] on the line above, both byte constants.
-	return string([]byte{objectPrefix, byte(b)})
+	return string([]byte{keyspace.Object, byte(b)})
 }
