@@ -1,0 +1,280 @@
+package shardstore_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/metastore/keyspace"
+	"github.com/go-faster/fs/internal/cluster/rangemap"
+	"github.com/go-faster/fs/internal/cluster/shardstore"
+)
+
+// fill writes n objects into a bucket with padded sequential keys, and flushes,
+// because pebble's size estimate reads table metadata — data still in the
+// memtable is data it cannot see.
+func fill(t *testing.T, s *shardstore.Shard, bucket string, n int) {
+	t.Helper()
+
+	for i := range n {
+		require.NoError(t, s.Put(t.Context(),
+			entry(bucket, fmt.Sprintf("%08d/%s", i, strings.Repeat("x", 200)), 1024, 1)))
+	}
+
+	require.NoError(t, s.Flush())
+}
+
+// TestSplitPointDividesTheData is what the descent exists for, and what a
+// midpoint of the key space cannot do.
+//
+// Every key here is in one bucket, so the presplit's boundaries — spread across
+// the byte band bucket names start in — put all of it in a single range. A
+// split point has to come from the data.
+func TestSplitPointDividesTheData(t *testing.T) {
+	shard := openShard(t, whole)
+	fill(t, shard, "photos", 4000)
+
+	at, ok, err := shard.SplitPoint(whole)
+	require.NoError(t, err)
+	require.True(t, ok, "a range with thousands of keys has a split point")
+
+	m := &rangemap.Map{Ranges: []rangemap.Range{whole}}
+
+	split, err := m.Split(at)
+	require.NoError(t, err, "the proposed point must actually be splittable")
+	require.Len(t, split.Ranges, 2)
+
+	left, err := shard.RangeSize(split.Ranges[0])
+	require.NoError(t, err)
+
+	right, err := shard.RangeSize(split.Ranges[1])
+	require.NoError(t, err)
+
+	total := float64(left.Bytes + right.Bytes)
+	require.Positive(t, total)
+
+	share := float64(left.Bytes) / total
+	assert.InDelta(t, 0.5, share, 0.15,
+		"the halves are %d and %d bytes, which is not a division of the data",
+		left.Bytes, right.Bytes)
+}
+
+// TestSplitPointIsBounded: every boundary is a key stored in etcd for the life
+// of the cluster, so the descent has to stop.
+//
+// Not *short*, though — an earlier version of this test asserted eight bytes,
+// which is a cap the data cannot honor: keys are 'o' + bucket + NUL + key, so
+// a boundary inside a bucket necessarily carries the bucket name before it can
+// say anything about the keys. That cap is what produced a 99.9/0.1 "split".
+func TestSplitPointIsBounded(t *testing.T) {
+	shard := openShard(t, whole)
+	fill(t, shard, "photos", 2000)
+
+	at, ok, err := shard.SplitPoint(whole)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	assert.LessOrEqual(t, len(at), 32, "boundary %q exceeds the descent depth", at)
+	assert.Greater(t, len(at), len("ophotos"),
+		"a boundary dividing one bucket has to get past its name")
+}
+
+// TestSplitPointRefusesAnEmptyRange: inventing a boundary for a range with
+// nothing in it produces an empty half that splits again next pass, forever.
+func TestSplitPointRefusesAnEmptyRange(t *testing.T) {
+	shard := openShard(t, whole)
+
+	_, ok, err := shard.SplitPoint(whole)
+	require.NoError(t, err)
+	assert.False(t, ok, "nothing to divide")
+}
+
+// TestSplitPointStaysInsideTheRange: a boundary below Start does not divide the
+// range, and one at or above End belongs to the next one. Either is a map edit
+// Split refuses, so a proposal that cannot be applied is worse than none.
+//
+// The data is deliberately lopsided — almost all of it below the range under
+// test — so that a descent measuring the *whole* shard would answer with a key
+// far outside it. An even fixture cannot tell the two apart: the global median
+// happens to land inside, and the test passes without the bounds doing
+// anything, which is exactly how the first version of this test passed.
+func TestSplitPointStaysInsideTheRange(t *testing.T) {
+	shard := openShard(t, whole)
+
+	fill(t, shard, "alpha", 3000)
+	fill(t, shard, "omega", 400)
+
+	bounded := rangemap.Range{
+		Start: string(keyspace.BucketPrefix("omega")),
+		Owner: "n0",
+	}
+
+	shard.Adopt([]rangemap.Range{bounded})
+
+	at, ok, err := shard.SplitPoint(bounded)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	assert.Greater(t, at, bounded.Start,
+		"boundary %q is below the range, where most of the shard happens to be", at)
+
+	// And it really splits, which is the only test that matters to the caller.
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: bounded.Start, Owner: "n0"},
+		bounded,
+	}}
+	require.NoError(t, m.Validate())
+
+	split, err := m.Split(at)
+	require.NoError(t, err)
+	assert.Len(t, split.Ranges, 3)
+
+	// The halves divide *this* range, not the shard: a descent that measured
+	// everything would put the whole of omega on one side.
+	left, err := shard.RangeSize(split.Ranges[1])
+	require.NoError(t, err)
+
+	right, err := shard.RangeSize(split.Ranges[2])
+	require.NoError(t, err)
+
+	total := float64(left.Bytes + right.Bytes)
+	require.Positive(t, total)
+	assert.InDelta(t, 0.5, float64(left.Bytes)/total, 0.2,
+		"halves are %d and %d bytes", left.Bytes, right.Bytes)
+}
+
+// TestSplitPointRespectsAnUpperBound is the mirror: a range that ends before the
+// bulk of the data must not be handed a boundary from beyond its End.
+func TestSplitPointRespectsAnUpperBound(t *testing.T) {
+	shard := openShard(t, whole)
+
+	fill(t, shard, "alpha", 400)
+	fill(t, shard, "omega", 3000)
+
+	bounded := rangemap.Range{
+		End:   string(keyspace.BucketPrefix("omega")),
+		Owner: "n0",
+	}
+
+	shard.Adopt([]rangemap.Range{bounded})
+
+	at, ok, err := shard.SplitPoint(bounded)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	assert.Less(t, at, bounded.End,
+		"boundary %q is above the range, where most of the shard happens to be", at)
+	assert.Greater(t, at, "", "a boundary has to be somewhere")
+}
+
+// TestRangeSizeIsPerRange: the estimate has to describe the range it was asked
+// about, not the shard.
+//
+// Worth its own test because the split assertions cannot tell: if every range
+// reported the whole shard, the two halves would report the same number and
+// look perfectly balanced.
+func TestRangeSizeIsPerRange(t *testing.T) {
+	shard := openShard(t, whole)
+
+	fill(t, shard, "alpha", 2400)
+	fill(t, shard, "omega", 300)
+
+	boundary := string(keyspace.BucketPrefix("omega"))
+
+	big, err := shard.RangeSize(rangemap.Range{End: boundary, Owner: "n0"})
+	require.NoError(t, err)
+
+	small, err := shard.RangeSize(rangemap.Range{Start: boundary, Owner: "n0"})
+	require.NoError(t, err)
+
+	all, err := shard.RangeSize(whole)
+	require.NoError(t, err)
+
+	assert.Greater(t, big.Bytes, small.Bytes*3, "the ranges hold 2400 and 300 objects")
+	assert.InDelta(t, all.Bytes, big.Bytes+small.Bytes, float64(all.Bytes)*0.05,
+		"the halves account for the whole")
+}
+
+// TestSplitPointGivesUpBelowItsOwnDepth: a range whose Start is longer than the
+// descent can reach has no split point this method can find, and it says so.
+//
+// Reporting one anyway would mean a key at or below Start — which Split refuses,
+// so the caller would retry it every pass forever. Ranges get boundaries this
+// long by being split repeatedly, so it is a state the plane reaches on its own.
+func TestSplitPointGivesUpBelowItsOwnDepth(t *testing.T) {
+	shard := openShard(t, whole)
+
+	deep := "z" + strings.Repeat("q", 64)
+	fill(t, shard, deep, 400)
+
+	bounded := rangemap.Range{Start: string(keyspace.BucketPrefix(deep)), Owner: "n0"}
+	shard.Adopt([]rangemap.Range{bounded})
+
+	at, ok, err := shard.SplitPoint(bounded)
+	require.NoError(t, err)
+
+	if ok {
+		assert.Greater(t, at, bounded.Start,
+			"a reported point must be one Split would accept")
+	}
+}
+
+// TestSplitPointConverges: splitting repeatedly must make progress. A range
+// split into halves that are then split again is what a growing cluster does,
+// and a descent that kept proposing the same boundary would loop.
+func TestSplitPointConverges(t *testing.T) {
+	shard := openShard(t, whole)
+	fill(t, shard, "photos", 6000)
+
+	m := &rangemap.Map{Ranges: []rangemap.Range{whole}}
+
+	seen := map[string]bool{}
+
+	for range 3 {
+		// Always split the largest range, which is what a policy would do.
+		var (
+			biggest rangemap.Range
+			maxSize uint64
+		)
+
+		for _, r := range m.Ranges {
+			size, err := shard.RangeSize(r)
+			require.NoError(t, err)
+
+			if size.Bytes >= maxSize {
+				biggest, maxSize = r, size.Bytes
+			}
+		}
+
+		at, ok, err := shard.SplitPoint(biggest)
+		require.NoError(t, err)
+		require.True(t, ok, "range [%q,%q) holding %d bytes has no split point",
+			biggest.Start, biggest.End, maxSize)
+
+		require.False(t, seen[at], "proposed the same boundary %q twice", at)
+		seen[at] = true
+
+		next, err := m.Split(at)
+		require.NoError(t, err)
+
+		m = next
+		shard.Adopt(m.Ranges)
+	}
+
+	require.Len(t, m.Ranges, 4)
+
+	// Every key is still served, which a split must never change.
+	var served int
+
+	require.NoError(t, shard.Scan(t.Context(), "photos", "", "", 0, func(e metastore.Entry) error {
+		served++
+
+		return nil
+	}))
+
+	assert.Equal(t, 6000, served)
+}
