@@ -30,6 +30,9 @@ type Backend interface {
 	SetVerified(ctx context.Context, records []metastore.Verification) error
 	Coverage(ctx context.Context) (metastore.Coverage, error)
 	Reset(ctx context.Context) error
+	// Measure reports a range's size and where it would divide, asked of the
+	// node that owns it — the only one holding it.
+	Measure(ctx context.Context, r rangemap.Range) (Measurement, error)
 }
 
 var _ Backend = (*Shard)(nil)

@@ -2,9 +2,13 @@ package shardstore
 
 import (
 	"bytes"
+	"cmp"
+	"context"
+	"slices"
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
@@ -39,6 +43,36 @@ type RangeSize struct {
 	// pass. A count would need a scan, which is the thing a split exists to
 	// keep bounded.
 	Bytes uint64
+}
+
+// Measurement is what a range looks like to whoever owns it: how much it holds
+// and where it would divide.
+//
+// The two travel together because they are read from the same table metadata,
+// and a caller with the size would ask for the point next anyway — on a map
+// that may have changed in between.
+type Measurement struct {
+	// Bytes is the range's estimated size.
+	Bytes uint64
+	// SplitAt is where it would divide, or empty when there is no such point:
+	// a range with nothing in it, or one whose boundary is already deeper than
+	// the descent can reach.
+	SplitAt string
+}
+
+// Measure reports a range's size and split point together.
+func (s *Shard) Measure(_ context.Context, r rangemap.Range) (Measurement, error) {
+	size, err := s.RangeSize(r)
+	if err != nil {
+		return Measurement{}, err
+	}
+
+	at, _, err := s.SplitPoint(r)
+	if err != nil {
+		return Measurement{}, err
+	}
+
+	return Measurement{Bytes: size.Bytes, SplitAt: at}, nil
 }
 
 // RangeSize estimates what a range holds.
@@ -241,4 +275,124 @@ func orMax(to []byte) []byte {
 	}
 
 	return to
+}
+
+// SplitPolicy is when a range is too large to leave alone.
+type SplitPolicy struct {
+	// MaxBytes is the size above which a range is split. Zero means
+	// DefaultMaxRangeBytes.
+	//
+	// The number that matters is not the size itself but what a *move* of one
+	// range costs, because that is the unit a rebalance shifts and a failover
+	// rebuilds. A range so large that moving it takes hours is one the cluster
+	// cannot rebalance, however even the partition looks on paper.
+	MaxBytes uint64
+
+	// MaxSplitsPerPass bounds how many ranges are split in one reconciliation.
+	// Zero means DefaultMaxSplitsPerPass.
+	//
+	// Splitting is cheap — it moves nothing — but each split is a control-plane
+	// write and a map revision every node in the cluster will refetch. A
+	// cluster that has just been switched on, with every range over the
+	// threshold, would otherwise publish thousands of revisions in one pass and
+	// spend the next minutes serving nothing but map reads.
+	MaxSplitsPerPass int
+}
+
+// Split policy defaults.
+const (
+	// DefaultMaxRangeBytes is the size above which a range splits.
+	//
+	// Chosen from what a move costs rather than from what pebble prefers: at a
+	// gigabyte, handing a range to another node is seconds of transfer, so a
+	// rebalance is something a cluster can do continuously rather than plan.
+	DefaultMaxRangeBytes = 1 << 30
+
+	// DefaultMaxSplitsPerPass bounds the map churn one pass can cause.
+	DefaultMaxSplitsPerPass = 8
+)
+
+func (p SplitPolicy) maxBytes() uint64 {
+	if p.MaxBytes == 0 {
+		return DefaultMaxRangeBytes
+	}
+
+	return p.MaxBytes
+}
+
+func (p SplitPolicy) maxPerPass() int {
+	if p.MaxSplitsPerPass <= 0 {
+		return DefaultMaxSplitsPerPass
+	}
+
+	return p.MaxSplitsPerPass
+}
+
+// PlanSplits asks every range's owner what it holds and returns the boundaries
+// worth creating, largest range first.
+//
+// # Largest first, and bounded
+//
+// A pass splits the ranges that most need it rather than the ones that sort
+// earliest, because the cap is reached long before the work is done on a
+// cluster that has just been switched on — and finishing the alphabet while the
+// one enormous range waits is the wrong order to make progress in.
+//
+// # An owner that cannot be reached is skipped, not guessed at
+//
+// Splitting a range on a stale size would be a map edit made from a number
+// nobody currently stands behind. The range is measured again next pass, and
+// nothing is lost by waiting: an oversized range is a slow problem.
+func PlanSplits(
+	ctx context.Context,
+	m *rangemap.Map,
+	measure func(context.Context, cluster.NodeID, rangemap.Range) (Measurement, error),
+	policy SplitPolicy,
+) []string {
+	type candidate struct {
+		at    string
+		bytes uint64
+	}
+
+	var found []candidate
+
+	for _, r := range m.Ranges {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
+
+		got, err := measure(ctx, r.Owner, r)
+		if err != nil {
+			continue
+		}
+
+		if got.Bytes <= policy.maxBytes() || got.SplitAt == "" {
+			continue
+		}
+
+		found = append(found, candidate{at: got.SplitAt, bytes: got.Bytes})
+	}
+
+	// Sorted by size alone. What the plan owes is that two controllers racing
+	// the same pass produce the same answer from the same measurements, and any
+	// deterministic sort gives that — an explicit tie-break on the boundary
+	// would look like it was carrying the property and would not be.
+	//
+	// Stable rather than not, because it costs nothing here and leaves equal
+	// ranges in map order, which is key order. That is a nicety, not the
+	// guarantee.
+	slices.SortStableFunc(found, func(a, b candidate) int {
+		return cmp.Compare(b.bytes, a.bytes)
+	})
+
+	if len(found) > policy.maxPerPass() {
+		found = found[:policy.maxPerPass()]
+	}
+
+	out := make([]string, 0, len(found))
+	for _, c := range found {
+		out = append(out, c.at)
+	}
+
+	return out
 }

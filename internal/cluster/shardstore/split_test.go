@@ -1,13 +1,16 @@
 package shardstore_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/metastore/keyspace"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
@@ -277,4 +280,201 @@ func TestSplitPointConverges(t *testing.T) {
 	}))
 
 	assert.Equal(t, 6000, served)
+}
+
+// measurements answers PlanSplits from a fixed table, and records which owners
+// were asked — so a test can tell "measured and declined" from "never asked".
+type measurements struct {
+	byStart map[string]shardstore.Measurement
+	fail    map[cluster.NodeID]bool
+	asked   []cluster.NodeID
+}
+
+func (m *measurements) measure(
+	_ context.Context, node cluster.NodeID, r rangemap.Range,
+) (shardstore.Measurement, error) {
+	m.asked = append(m.asked, node)
+
+	if m.fail[node] {
+		return shardstore.Measurement{}, errors.Errorf("node %s is unreachable", node)
+	}
+
+	return m.byStart[r.Start], nil
+}
+
+// TestPlanSplitsTakesTheLargestFirst: the cap is reached long before the work is
+// done on a cluster that has just been switched on, so finishing the alphabet
+// while one enormous range waits is the wrong order to make progress in.
+func TestPlanSplitsTakesTheLargestFirst(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "ob", Owner: "n0"},
+		{Start: "ob", End: "oc", Owner: "n1"},
+		{Start: "oc", End: "", Owner: "n2"},
+	}}
+	require.NoError(t, m.Validate())
+
+	table := &measurements{byStart: map[string]shardstore.Measurement{
+		"":   {Bytes: 200, SplitAt: "oa"},
+		"ob": {Bytes: 900, SplitAt: "obm"},
+		"oc": {Bytes: 500, SplitAt: "ocm"},
+	}}
+
+	plan := shardstore.PlanSplits(t.Context(), m, table.measure,
+		shardstore.SplitPolicy{MaxBytes: 100, MaxSplitsPerPass: 2})
+
+	assert.Equal(t, []string{"obm", "ocm"}, plan, "the two largest, in that order")
+}
+
+// TestPlanSplitsLeavesSmallRangesAlone: a partition finer than the data warrants
+// costs a boundary in etcd and a routing entry on every node, forever.
+func TestPlanSplitsLeavesSmallRangesAlone(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{Start: "", End: "", Owner: "n0"}}}
+
+	table := &measurements{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 100, SplitAt: "om"},
+	}}
+
+	assert.Empty(t, shardstore.PlanSplits(t.Context(), m, table.measure,
+		shardstore.SplitPolicy{MaxBytes: 1000}))
+}
+
+// TestPlanSplitsSkipsARangeWithNoPoint: an owner reporting no split point has a
+// range that cannot be divided — empty, or already bounded deeper than the
+// descent reaches. Splitting it anyway would need a boundary nobody computed.
+func TestPlanSplitsSkipsARangeWithNoPoint(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{Start: "", End: "", Owner: "n0"}}}
+
+	table := &measurements{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 1 << 40, SplitAt: ""},
+	}}
+
+	assert.Empty(t, shardstore.PlanSplits(t.Context(), m, table.measure,
+		shardstore.SplitPolicy{MaxBytes: 100}))
+}
+
+// TestPlanSplitsSkipsAnUnreachableOwner: splitting on a stale size would be a
+// map edit made from a number nobody currently stands behind, and an oversized
+// range is a slow problem — waiting a pass costs nothing.
+func TestPlanSplitsSkipsAnUnreachableOwner(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "ob", Owner: "gone"},
+		{Start: "ob", End: "", Owner: "n1"},
+	}}
+	require.NoError(t, m.Validate())
+
+	table := &measurements{
+		byStart: map[string]shardstore.Measurement{
+			"":   {Bytes: 1 << 40, SplitAt: "oa"},
+			"ob": {Bytes: 900, SplitAt: "obm"},
+		},
+		fail: map[cluster.NodeID]bool{"gone": true},
+	}
+
+	plan := shardstore.PlanSplits(t.Context(), m, table.measure,
+		shardstore.SplitPolicy{MaxBytes: 100})
+
+	assert.Equal(t, []string{"obm"}, plan,
+		"the unreachable owner's range is skipped, not assumed")
+	assert.Contains(t, table.asked, cluster.NodeID("gone"), "it was asked, and it failed")
+}
+
+// TestPlanSplitsAsksTheOwner: a controller measuring its own shard would be
+// measuring whichever ranges it happens to own and calling that the cluster.
+func TestPlanSplitsAsksTheOwner(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "ob", Owner: "n0"},
+		{Start: "ob", End: "oc", Owner: "n1"},
+		{Start: "oc", End: "", Owner: "n2"},
+	}}
+	require.NoError(t, m.Validate())
+
+	table := &measurements{byStart: map[string]shardstore.Measurement{}}
+
+	shardstore.PlanSplits(t.Context(), m, table.measure, shardstore.SplitPolicy{})
+
+	assert.Equal(t, []cluster.NodeID{"n0", "n1", "n2"}, table.asked,
+		"each range is measured by whoever holds it")
+}
+
+// TestPlanSplitsIsAFunctionOfTheMeasurements: an election has a window where
+// two candidates both believe they hold it, so the plan has to depend on the
+// measurements and nothing else — then that window produces a duplicate write
+// rather than a disagreement.
+//
+// Two earlier versions of this test claimed more than they checked. The first
+// asserted that an explicit tie-break on the boundary was what made the plan
+// reproducible; removing the tie-break changed nothing, because sorting
+// identical input is reproducible either way. The second tried to assert
+// stability instead, which is equally unobservable: pdqsort leaves all-equal
+// input alone at every size. What is actually owed is below.
+func TestPlanSplitsIsAFunctionOfTheMeasurements(t *testing.T) {
+	var (
+		ranges []rangemap.Range
+		table  = &measurements{byStart: map[string]shardstore.Measurement{}}
+	)
+
+	// Sizes that are neither sorted nor equal, so the ordering has real work to
+	// do and the answer is not the input.
+	sizes := []uint64{400, 9000, 700, 200, 5000, 300, 8000, 600}
+
+	for i, size := range sizes {
+		start := ""
+		if i > 0 {
+			start = fmt.Sprintf("o%02d", i)
+		}
+
+		end := ""
+		if i < len(sizes)-1 {
+			end = fmt.Sprintf("o%02d", i+1)
+		}
+
+		ranges = append(ranges, rangemap.Range{Start: start, End: end, Owner: "n0"})
+		table.byStart[start] = shardstore.Measurement{Bytes: size, SplitAt: start + "m"}
+	}
+
+	m := &rangemap.Map{Ranges: ranges}
+	require.NoError(t, m.Validate())
+
+	policy := shardstore.SplitPolicy{MaxBytes: 100, MaxSplitsPerPass: 3}
+
+	first := shardstore.PlanSplits(t.Context(), m, table.measure, policy)
+	second := shardstore.PlanSplits(t.Context(), m, table.measure, policy)
+
+	require.Equal(t, first, second, "the same measurements must give the same plan")
+	assert.Equal(t, []string{"o01m", "o06m", "o04m"}, first,
+		"largest first: 9000, 8000, 5000")
+}
+
+// TestPlanSplitsBoundsMapChurn: each split is a control-plane write and a map
+// revision every node in the cluster refetches. A freshly switched-on cluster
+// with every range over the threshold would otherwise publish thousands of
+// revisions in one pass and then serve nothing but map reads.
+func TestPlanSplitsBoundsMapChurn(t *testing.T) {
+	var (
+		ranges []rangemap.Range
+		table  = &measurements{byStart: map[string]shardstore.Measurement{}}
+	)
+
+	for i := range 40 {
+		start := ""
+		if i > 0 {
+			start = fmt.Sprintf("o%02d", i)
+		}
+
+		end := ""
+		if i < 39 {
+			end = fmt.Sprintf("o%02d", i+1)
+		}
+
+		ranges = append(ranges, rangemap.Range{Start: start, End: end, Owner: "n0"})
+		table.byStart[start] = shardstore.Measurement{
+			Bytes: 1 << 30, SplitAt: start + "m",
+		}
+	}
+
+	m := &rangemap.Map{Ranges: ranges}
+	require.NoError(t, m.Validate())
+
+	plan := shardstore.PlanSplits(t.Context(), m, table.measure, shardstore.SplitPolicy{MaxBytes: 1})
+	assert.Len(t, plan, shardstore.DefaultMaxSplitsPerPass)
 }
