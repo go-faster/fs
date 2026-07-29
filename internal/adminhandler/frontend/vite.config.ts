@@ -27,8 +27,10 @@ export default defineConfig({
   server: {
     port: 5273,
     // During `npm run dev`, proxy API calls to a locally running fs admin.
+    // dev/demo publishes its admin on 8095, so the target is overridable:
+    //   FS_ADMIN_URL=http://127.0.0.1:8095 npm run dev
     proxy: {
-      "/api": "http://127.0.0.1:8090",
+      "/api": process.env.FS_ADMIN_URL || "http://127.0.0.1:8090",
     },
   },
 });

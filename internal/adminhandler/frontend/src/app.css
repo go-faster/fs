@@ -1,0 +1,393 @@
+/*
+ * Layout glue and the two non-Gravity surfaces (the vitals tape, the disk
+ * ladder). Every color, space and type metric is a --g-* token; nothing here
+ * defines a palette.
+ */
+
+/*
+ * Type: two voices.
+ *
+ * Human voice (prose, titles) is the platform sans. Machine voice — captions,
+ * labels, identifiers, every number — is monospace, which is what an operator
+ * is actually reading here.
+ *
+ * No webfont on purpose. This console ships inside the fs binary and is often
+ * opened on a host with no route to the internet, so it must not depend on (or
+ * leak a request to) a font CDN the way uikit's own fonts.css does.
+ */
+.g-root {
+  --g-font-family-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --g-font-family-monospace:
+    ui-monospace, "JetBrains Mono", "SF Mono", "SFMono-Regular", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --g-text-caption-font-family: var(--g-font-family-monospace);
+
+  /* Live values must not jitter as digits change width. */
+  font-variant-numeric: tabular-nums;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--g-color-base-background);
+}
+
+/*
+ * AsideHeader's content pane sizes itself to its children, so an element that
+ * measures its parent would grow the pane and then re-measure, widening the
+ * page on every frame. Pin the content to the viewport minus the aside;
+ * --gn-aside-header-size is the navigation's published width variable.
+ */
+.content {
+  width: calc(100vw - var(--gn-aside-header-size, 0px));
+  height: 100vh;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.topbar {
+  flex: 0 0 auto;
+  padding: var(--g-spacing-3) var(--g-spacing-5);
+}
+
+.page {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: var(--g-spacing-5);
+}
+
+/* Machine label: section breaks, table heads, tape captions, ladder columns. */
+.label-micro {
+  font-family: var(--g-font-family-monospace);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--g-color-text-hint);
+}
+
+/*
+ * The vitals tape. Deliberately un-carded: flush to the frame, hairline rules,
+ * square corners. It reads as instrumentation against the rounded cards below,
+ * which are documents.
+ */
+.vitals {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-block: 1px solid var(--g-color-line-generic);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/*
+ * Cells share the width evenly but stop growing, so a single-node instance —
+ * which has only two readings to give — gets the same cell size as a cluster
+ * with five, and the tape simply ends early instead of stretching thin.
+ */
+.vitals__cell {
+  flex: 1 1 0;
+  min-width: 148px;
+  max-width: 260px;
+  padding: var(--g-spacing-3) var(--g-spacing-5);
+  border-inline-start: 1px solid var(--g-color-line-generic);
+}
+
+.vitals__cell:first-child {
+  border-inline-start: none;
+}
+
+.vitals__label {
+  display: block;
+  font-family: var(--g-font-family-monospace);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--g-color-text-hint);
+}
+
+.vitals__reading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--g-spacing-3);
+  margin-block-start: var(--g-spacing-1);
+}
+
+.vitals__value {
+  font-family: var(--g-font-family-monospace);
+  font-size: 19px;
+  line-height: 24px;
+  white-space: nowrap;
+  color: var(--g-color-text-primary);
+}
+
+.vitals__value_warning {
+  color: var(--g-color-text-warning);
+}
+
+.vitals__value_danger {
+  color: var(--g-color-text-danger);
+}
+
+.vitals__unit {
+  margin-inline-start: 0.25em;
+  font-size: 12px;
+  color: var(--g-color-text-secondary);
+}
+
+.panel {
+  padding: var(--g-spacing-4) var(--g-spacing-5);
+}
+
+/*
+ * A titled section: its rule, then its card. The section fills its grid column
+ * and the card takes whatever is left under the rule, so cards sharing a row
+ * end on the same line however unequal their contents.
+ */
+.section {
+  height: 100%;
+}
+
+.section > .panel {
+  flex: 1 1 auto;
+}
+
+/* Wide tables inside a panel scroll on their own instead of the page. */
+.panel__scroll {
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--g-spacing-5));
+  padding: 0 var(--g-spacing-5);
+}
+
+/* Subsystem boundary: a labelled hairline, not a heading. */
+.rule {
+  display: flex;
+  align-items: center;
+  gap: var(--g-spacing-3);
+}
+
+.rule::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--g-color-line-generic);
+}
+
+.aside-footer {
+  min-width: 0;
+}
+
+/*
+ * A credential, shown the one time it can be. Not a definition-list row: the
+ * value is the point, so it gets a box of its own, wraps rather than clips, and
+ * keeps the copy control within reach of it.
+ */
+.secret {
+  display: flex;
+  align-items: center;
+  gap: var(--g-spacing-2);
+  padding: var(--g-spacing-2) var(--g-spacing-3);
+  border: 1px solid var(--g-color-line-generic);
+  border-radius: var(--g-border-radius-m);
+  background: var(--g-color-base-generic-ultralight);
+}
+
+.secret__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--g-font-family-monospace);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* An input whose useful content is short has no business spanning the page. */
+.field-narrow {
+  width: 100%;
+  max-width: 320px;
+}
+
+/*
+ * One grant: the bucket pattern takes the room, the permission is a fixed
+ * column so the levels line up down the list, and the remove control sits at
+ * the end where it cannot be hit by accident.
+ */
+.grant-row {
+  display: grid;
+  grid-template-columns: 1fr 132px auto;
+  align-items: center;
+  gap: var(--g-spacing-2);
+}
+
+/* The token gate: the whole viewport, one card, nothing else to look at. */
+.gate {
+  min-height: 100vh;
+  padding: var(--g-spacing-5);
+}
+
+.gate__card {
+  width: 100%;
+  max-width: 420px;
+  padding: var(--g-spacing-7) var(--g-spacing-6);
+}
+
+/*
+ * The disk ladder — the one place this console spends its boldness.
+ *
+ * fs's shape is spatial: racks hold nodes, nodes hold disks. Every disk in a
+ * failure domain is one row of a single grid owned by the rack, so the columns
+ * line up straight down past the node headers. Reading the occupancy column is
+ * then one vertical scan: the disk that is filling up breaks the line of bars
+ * before you have read a single number.
+ */
+.ladder {
+  display: grid;
+  grid-template-columns:
+    /* id */ minmax(96px, max-content)
+    /* meter — capped, so a wide window lengthens the bar's empty tail
+       rather than the reading */ minmax(120px, 420px)
+    /* pct */ 44px
+    /* weight */ minmax(64px, max-content)
+    /* capacity */ max-content
+    /* tail: absorbs the rest, keeping the rungs left-aligned */ 1fr;
+  align-items: center;
+  gap: var(--g-spacing-1) var(--g-spacing-4);
+}
+
+/* Node headers and rack-level notes span the whole ladder. */
+.ladder__span {
+  grid-column: 1 / -1;
+}
+
+.ladder__node {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--g-spacing-2);
+  margin-block-start: var(--g-spacing-3);
+  padding-block-end: var(--g-spacing-1);
+  border-block-end: 1px solid var(--g-color-line-generic);
+}
+
+.ladder__node:first-child {
+  margin-block-start: 0;
+}
+
+.ladder__id,
+.ladder__num {
+  font-family: var(--g-font-family-monospace);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.ladder__num {
+  text-align: end;
+}
+
+.ladder__cap {
+  font-family: var(--g-font-family-monospace);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--g-color-text-secondary);
+}
+
+/* The occupancy meter: a hairline track, a solid fill, a watermark tick. */
+.meter {
+  position: relative;
+  height: 8px;
+  border-radius: var(--g-border-radius-xs);
+  background: var(--g-color-base-generic);
+  overflow: hidden;
+}
+
+.meter__fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: inherit;
+  background: var(--g-color-base-info-heavy);
+}
+
+.meter_degraded .meter__fill {
+  background: var(--g-color-base-warning-heavy);
+}
+
+.meter_critical .meter__fill {
+  background: var(--g-color-base-danger-heavy);
+}
+
+/* A drained disk is out of placement: the track stays, the fill goes. */
+.meter_drained,
+.meter_unknown {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--g-color-base-generic) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+/* The 0.9 drain watermark, so "how full" is read against the threshold. */
+.meter__mark {
+  position: absolute;
+  inset-block: 0;
+  width: 1px;
+  background: var(--g-color-line-generic-solid);
+}
+
+.text-healthy {
+  color: var(--g-color-text-primary);
+}
+
+.text-degraded {
+  color: var(--g-color-text-warning);
+}
+
+.text-critical {
+  color: var(--g-color-text-danger);
+}
+
+.text-muted {
+  color: var(--g-color-text-hint);
+}
+
+/*
+ * Narrow viewports: capacity is the first column to go — the bar and the
+ * percentage already say what an operator needs on a phone.
+ */
+@media (max-width: 900px) {
+  .vitals__cell {
+    min-width: 124px;
+    padding-inline: var(--g-spacing-4);
+  }
+
+  .vitals__value {
+    font-size: 17px;
+  }
+
+  .ladder {
+    grid-template-columns:
+      minmax(80px, max-content)
+      minmax(80px, 1fr)
+      40px
+      max-content;
+  }
+
+  /* Dropping the column also drops its grid track, so the template above has
+     one fewer entry and no trailing tail — the rungs already fill the width. */
+  .ladder__cap {
+    display: none;
+  }
+}

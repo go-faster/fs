@@ -1,31 +1,81 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
-import { getToken, setToken, clearToken, subscribe } from "./lib/auth";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { AsideHeader, type AsideHeaderItem } from "@gravity-ui/navigation";
+import {
+  Button,
+  Card,
+  Flex,
+  Icon,
+  PasswordInput,
+  Text,
+  Tooltip,
+  type IconData,
+  type Theme,
+} from "@gravity-ui/uikit";
+import {
+  ArrowRightFromSquare,
+  ArrowsRotateRight,
+  Bucket,
+  ChartMixed,
+  Display,
+  Key,
+  Moon,
+  Server,
+  Sun,
+} from "@gravity-ui/icons";
+import { clearToken, getToken, setToken, subscribe } from "./lib/auth";
 import { useGetInfo } from "./api/admin";
-import MatrixRain from "./components/MatrixRain";
+import { INFO_POLL } from "./lib/poll";
+import { useAppTheme } from "./lib/theme";
+import { GoFasterMark } from "./components/GoFasterMark";
+import { Vitals } from "./components/Vitals";
 import Overview from "./pages/Overview";
 import AccessKeys from "./pages/AccessKeys";
 import Cluster from "./pages/Cluster";
 import Buckets from "./pages/Buckets";
 
-// useToken re-renders when the stored admin token changes (login/logout, or a
-// 401 clearing a stale token).
+// useToken re-renders when the stored admin token changes (sign-in/sign-out, or
+// a 401 clearing a stale token).
 function useToken(): string {
   const [token, setLocal] = useState(getToken());
   useEffect(() => subscribe(() => setLocal(getToken())), []);
   return token;
 }
 
-function Brand() {
+// Four destinations, so the list stays flat: AsideHeader's menu groups put
+// their children behind a popup rather than inlining them, which would hide
+// three of these four behind an extra click.
+const NAV: { id: string; title: string; icon: IconData }[] = [
+  { id: "/", title: "Overview", icon: ChartMixed },
+  { id: "/access-keys", title: "Access keys", icon: Key },
+  { id: "/cluster", title: "Cluster", icon: Server },
+  { id: "/buckets", title: "Buckets", icon: Bucket },
+];
+
+const THEME_CYCLE: { next: Theme; icon: IconData; hint: string }[] = [
+  { next: "light", icon: Display, hint: "Theme: system" },
+  { next: "dark", icon: Sun, hint: "Theme: light" },
+  { next: "system", icon: Moon, hint: "Theme: dark" },
+];
+
+function ThemeButton() {
+  const { theme, setTheme } = useAppTheme();
+  const current = THEME_CYCLE[theme === "light" ? 1 : theme === "dark" ? 2 : 0];
   return (
-    <div className="brand">
-      <span className="logo">fs</span>
-      <span className="tag">admin</span>
-    </div>
+    <Tooltip content={`${current.hint} — click to switch`}>
+      <Button view="flat" onClick={() => setTheme(current.next)} aria-label="Switch theme">
+        <Icon data={current.icon} />
+      </Button>
+    </Tooltip>
   );
 }
 
+/**
+ * The token gate. The admin API is bearer-protected; the operator pastes the
+ * token once and it stays in this browser's localStorage, so the console
+ * survives a reload without the server holding a session.
+ */
 function Gate() {
   const [value, setValue] = useState("");
 
@@ -35,97 +85,86 @@ function Gate() {
   };
 
   return (
-    <div className="gate">
-      <form className="card" onSubmit={submit}>
-        <Brand />
-        <p className="lead">
-          Enter the admin API token to manage access keys. It is stored in this
-          browser only and sent as a bearer token to the admin API.
-        </p>
-        <div className="field">
-          <label htmlFor="token">Admin token</label>
-          <input
-            id="token"
-            type="password"
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="FS_ADMIN_TOKEN"
-          />
-        </div>
-        <button className="primary" type="submit" disabled={!value.trim()}>
-          Continue
-        </button>
-      </form>
-    </div>
+    <Flex className="gate" justifyContent="center" alignItems="center">
+      <Card view="outlined" className="gate__card">
+        <form onSubmit={submit}>
+          <Flex direction="column" gap={5}>
+            <Flex alignItems="center" gap={3}>
+              <GoFasterMark width={28} height={28} />
+              <Text variant="header-1">fs admin</Text>
+            </Flex>
+
+            <Text variant="body-1" color="secondary">
+              Enter the admin API token. It is kept in this browser and sent as a bearer token to
+              the admin API — nothing else stores it.
+            </Text>
+
+            <PasswordInput
+              autoFocus
+              size="l"
+              value={value}
+              onUpdate={setValue}
+              placeholder="FS_ADMIN_TOKEN"
+              controlProps={{ "aria-label": "Admin token" }}
+            />
+
+            <Button type="submit" view="action" size="l" disabled={!value.trim()} width="max">
+              Continue
+            </Button>
+          </Flex>
+        </form>
+      </Card>
+    </Flex>
   );
 }
 
-function Topbar() {
+function TopBar({ section }: { section: string }) {
   const qc = useQueryClient();
-  const info = useGetInfo();
-
-  const meta = info.data
-    ? `${info.data.version} · ${info.data.go_version}`
-    : "go-faster/fs";
+  const fetching = useIsFetching();
 
   return (
-    <header className="topbar">
-      <MatrixRain />
-      <div className="topbar__scrim" aria-hidden="true" />
-      <div className="topbar__content">
-        <h1>go-faster / fs</h1>
-        <span className="sub">Admin Panel</span>
-        <span className="spacer" />
-        <span className="meta">{meta}</span>
-        <button
-          onClick={() => void qc.invalidateQueries()}
-          disabled={info.isFetching}
-        >
-          {info.isFetching ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
-    </header>
+    <Flex className="topbar" alignItems="center" gap={3}>
+      <span className="label-micro">{section}</span>
+      <Flex grow />
+      <ThemeButton />
+      <Button
+        view="outlined"
+        loading={fetching > 0}
+        onClick={() => qc.invalidateQueries()}
+        aria-label="Refresh all data"
+      >
+        <Icon data={ArrowsRotateRight} />
+        Refresh
+      </Button>
+    </Flex>
   );
 }
 
-function Dot() {
-  return <span className="ic" aria-hidden="true" />;
-}
+function Console() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [compact, setCompact] = useState(false);
+  const info = useGetInfo({ query: { refetchInterval: INFO_POLL } });
 
-function Layout() {
-  const navClass = ({ isActive }: { isActive: boolean }) =>
-    isActive ? "nav-item active" : "nav-item";
+  const menuItems = useMemo<AsideHeaderItem[]>(
+    () =>
+      NAV.map((item) => ({
+        id: item.id,
+        title: item.title,
+        icon: item.icon,
+        current: pathname === item.id,
+        onItemClick: () => navigate(item.id),
+      })),
+    [pathname, navigate],
+  );
 
-  return (
-    <div className="shell">
-      <aside className="sidebar">
-        <Brand />
-        <div className="nav-group">Instance</div>
-        <NavLink className={navClass} to="/" end>
-          <Dot />
-          Overview
-        </NavLink>
-        <NavLink className={navClass} to="/access-keys">
-          <Dot />
-          Access keys
-        </NavLink>
-        <div className="nav-group">Cluster</div>
-        <NavLink className={navClass} to="/cluster">
-          <Dot />
-          Status
-        </NavLink>
-        <NavLink className={navClass} to="/buckets">
-          <Dot />
-          Buckets
-        </NavLink>
-        <div className="foot">
-          <button onClick={() => clearToken()}>Sign out</button>
-        </div>
-      </aside>
+  const section = NAV.find((item) => item.id === pathname)?.title ?? "Overview";
 
-      <div className="content">
-        <Topbar />
+  const renderContent = useCallback(
+    () => (
+      <Flex direction="column" className="content">
+        <TopBar section={section} />
+        <Vitals />
         <div className="page">
           <Routes>
             <Route path="/" element={<Overview />} />
@@ -135,12 +174,57 @@ function Layout() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
-      </div>
-    </div>
+      </Flex>
+    ),
+    [section],
+  );
+
+  const renderFooter = useCallback(
+    () => (
+      <Flex direction="column" gap={2} spacing={{ px: 3, pb: 3 }} className="aside-footer">
+        {!compact && info.data && (
+          <Flex direction="column" spacing={{ px: 1 }}>
+            <Text variant="caption-2" color="hint" ellipsis>
+              {info.data.version || "dev"}
+            </Text>
+            <Text variant="caption-2" color="hint" ellipsis>
+              {info.data.os}/{info.data.arch}
+            </Text>
+          </Flex>
+        )}
+        <Button
+          view="flat"
+          width={compact ? undefined : "max"}
+          onClick={() => clearToken()}
+          aria-label="Sign out"
+        >
+          <Icon data={ArrowRightFromSquare} />
+          {compact ? null : "Sign out"}
+        </Button>
+      </Flex>
+    ),
+    [compact, info.data],
+  );
+
+  return (
+    <AsideHeader
+      logo={{
+        text: "fs",
+        icon: GoFasterMark,
+        iconSize: 24,
+        onClick: () => navigate("/"),
+      }}
+      compact={compact}
+      onChangeCompact={setCompact}
+      headerDecoration
+      menuItems={menuItems}
+      renderContent={renderContent}
+      renderFooter={renderFooter}
+    />
   );
 }
 
 export default function App() {
   const token = useToken();
-  return token ? <Layout /> : <Gate />;
+  return token ? <Console /> : <Gate />;
 }
