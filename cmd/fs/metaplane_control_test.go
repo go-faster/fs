@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 )
 
 // planeFixture is a controller over a walk a test drives by hand.
+//
+// The walk runs on its own goroutine — that is the property under test — so
+// everything it touches is guarded. An unguarded counter here passed locally
+// and failed under -race in CI, which is the whole argument for the mutex being
+// in a test fixture at all.
 type planeFixture struct {
 	*planeController
 
@@ -22,9 +28,43 @@ type planeFixture struct {
 	// it can observe rather than a race it has to win.
 	release chan struct{}
 	done    chan struct{}
-	runs    int
-	err     error
-	build   metastore.Build
+
+	mu     sync.Mutex
+	runs   int
+	ranCtx context.Context
+	err    error
+	build  metastore.Build
+}
+
+// ran records that the walk started, and on which context.
+func (f *planeFixture) ran(ctx context.Context) error {
+	f.mu.Lock()
+	f.runs++
+	f.ranCtx = ctx
+	err := f.err
+	f.mu.Unlock()
+
+	<-f.release
+
+	f.done <- struct{}{}
+
+	return err
+}
+
+// runCount is how many walks have started.
+func (f *planeFixture) runCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.runs
+}
+
+// ranContext is the context the walk was given, or nil before it started.
+func (f *planeFixture) ranContext() context.Context {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.ranCtx
 }
 
 func newPlaneFixture(t *testing.T, build metastore.Build) *planeFixture {
@@ -43,15 +83,7 @@ func newPlaneFixture(t *testing.T, build metastore.Build) *planeFixture {
 		status: func(context.Context) (metastore.Build, error) {
 			return f.build, nil
 		},
-		run: func(context.Context) error {
-			f.runs++
-
-			<-f.release
-
-			f.done <- struct{}{}
-
-			return f.err
-		},
+		run: f.ran,
 	}
 
 	return f
@@ -90,7 +122,7 @@ func TestAnOperatorCanStartARebuildNow(t *testing.T) {
 	assert.Equal(t, "never-built", got.Cause)
 
 	f.finish(t)
-	assert.Equal(t, 1, f.runs)
+	assert.Equal(t, 1, f.runCount())
 }
 
 // TestRebuildOutlivesTheRequest: a walk is hours, and a request is not. Run on
@@ -101,26 +133,14 @@ func TestRebuildOutlivesTheRequest(t *testing.T) {
 
 	reqCtx, cancel := context.WithCancel(t.Context())
 
-	var ran context.Context
-
-	f.run = func(ctx context.Context) error {
-		ran = ctx
-		f.runs++
-
-		<-f.release
-
-		f.done <- struct{}{}
-
-		return nil
-	}
-
 	require.NoError(t, f.Rebuild(reqCtx))
 
 	// The request is over.
 	cancel()
 
-	require.Eventually(t, func() bool { return ran != nil }, 5*time.Second, time.Millisecond)
-	assert.NoError(t, ran.Err(), "the rebuild was canceled with the request that asked for it")
+	require.Eventually(t, func() bool { return f.ranContext() != nil }, 5*time.Second, time.Millisecond)
+	assert.NoError(t, f.ranContext().Err(),
+		"the rebuild was canceled with the request that asked for it")
 
 	f.finish(t)
 }
@@ -140,7 +160,7 @@ func TestOneRebuildPerNode(t *testing.T) {
 	require.ErrorIs(t, f.start(nil), adminhandler.ErrPlaneRebuildConflict)
 
 	f.finish(t)
-	assert.Equal(t, 1, f.runs, "two rebuilds ran on one node")
+	assert.Equal(t, 1, f.runCount(), "two rebuilds ran on one node")
 }
 
 // TestARebuildCanBeStartedAgainOnceItIsDone: the guard is "running", not "ever
@@ -156,14 +176,16 @@ func TestARebuildCanBeStartedAgainOnceItIsDone(t *testing.T) {
 	require.NoError(t, f.Rebuild(t.Context()))
 	f.finish(t)
 
-	assert.Equal(t, 2, f.runs)
+	assert.Equal(t, 2, f.runCount())
 }
 
 // TestAFailedRebuildIsReported: it ran hours ago and the request that asked for
 // it returned long before, so the only place the failure can be seen is here.
 func TestAFailedRebuildIsReported(t *testing.T) {
 	f := newPlaneFixture(t, metastore.Building(metastore.CauseOrphaned))
+	f.mu.Lock()
 	f.err = errors.New("etcd went away")
+	f.mu.Unlock()
 
 	require.NoError(t, f.Rebuild(t.Context()))
 	f.finish(t)
