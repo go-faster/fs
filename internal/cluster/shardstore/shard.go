@@ -746,7 +746,10 @@ func (s *Shard) Reset(ctx context.Context) error {
 		}
 	}
 
-	return nil
+	// The cursors go with the entries they describe. One left behind would tell
+	// the next backfill that a prefix it no longer holds is already copied, and
+	// the range would be promoted with a hole at the front of it.
+	return s.dropBackfillCursors()
 }
 
 // DropUnowned removes the entries outside the served ranges, then rebuilds this
@@ -798,6 +801,14 @@ func (s *Shard) DropUnowned(ctx context.Context) error {
 		if err := s.dropBetween(from, nil); err != nil {
 			return err
 		}
+	}
+
+	// A backfill in flight is copying into a range this shard does not own, so
+	// this sweep has just removed what it copied. Dropping the cursors with it
+	// makes that a restart rather than a hole: the next run walks the range from
+	// the beginning instead of resuming into a prefix that is no longer here.
+	if err := s.dropBackfillCursors(); err != nil {
+		return err
 	}
 
 	return s.recount(ctx)

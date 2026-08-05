@@ -49,6 +49,14 @@ const (
 	// measuring whichever ranges it happens to own and calling that the
 	// cluster.
 	ShardOpMeasure = "measure"
+	// ShardOpBackfill reads one bounded step of a range out of its owner, for a
+	// learner being copied into.
+	//
+	// A read rather than a write, because the learner pulls: it is the node that
+	// knows how far it has got, and a cursor kept where the data lands cannot
+	// disagree with the data. The write half needs no operation at all — the
+	// learner stores what it pulled into its own shard.
+	ShardOpBackfill = "backfill"
 )
 
 // ShardRequest is one operation against a peer's shard.
@@ -72,6 +80,11 @@ type ShardRequest struct {
 	// owner applied rather than a re-description of it, so a follower's state
 	// is the owner's state and not a reconstruction that could differ.
 	Batch []byte `json:"batch,omitempty"`
+	// Cursor is where a backfill step resumes: the key the last step stopped
+	// before. Separate from After, which is a scan's position inside a bucket —
+	// this one is a position in the whole key space, and conflating them would
+	// have a resumed backfill bounded by a bucket it was never confined to.
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // ShardResponse is the peer's answer.
@@ -104,6 +117,16 @@ type ShardResponse struct {
 	// point — a range with nothing in it, or one whose boundary is already
 	// deeper than the search can reach.
 	SplitAt string `json:"split_at,omitempty"`
+
+	// Cursor is where the next backfill step resumes, empty when the range has
+	// been walked to its end.
+	Cursor string `json:"cursor,omitempty"`
+	// Done reports that a backfill step reached the end of the range.
+	//
+	// Carried rather than inferred from an empty Cursor, because a step that
+	// stopped exactly on the last key would report both — and a learner that
+	// read "no cursor" as "start over" would copy the range forever.
+	Done bool `json:"done,omitempty"`
 }
 
 // ErrUnknownShardOp reports an operation the peer does not implement.
