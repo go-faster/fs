@@ -253,7 +253,7 @@ func rebalanceFixture(
 	calls := 0
 
 	f = &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: live,
 	}
@@ -333,7 +333,7 @@ func TestControllerDoesNotSplitAndMoveInOnePass(t *testing.T) {
 	m, _ := spread(t, []cluster.NodeID{"n0", "n0", "n1"}, nil)
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n0", "n1"},
 	}

@@ -204,6 +204,12 @@ Command-line flags override YAML configuration values.`,
 						// the controller decided this node should
 						// hold. Every node runs its own.
 						go clusterRT.RunPlaneCatchUp(ctx)
+
+						// And the rebuild the plane owes after a
+						// failure has left a range holding nothing.
+						// Elected like the controller; every node is a
+						// candidate and one runs it.
+						go clusterRT.RunPlaneRebuild(ctx, cfg)
 					}
 
 					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {

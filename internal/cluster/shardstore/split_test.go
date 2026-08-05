@@ -408,7 +408,7 @@ func TestTheSurveyAsksEachRangesOwner(t *testing.T) {
 	require.NoError(t, m.Validate())
 
 	table := &measurements{byStart: map[string]shardstore.Measurement{}}
-	ctl := &recorder{m: m, state: metastore.StateReady}
+	ctl := &recorder{m: m, build: metastore.Ready()}
 
 	c, err := shardstore.NewController(shardstore.ControllerConfig{
 		Load: ctl.load, Save: ctl.save,

@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,10 @@ type PlaneState struct {
 
 	// cur is the last state seen, read lock-free on the listing path.
 	cur atomic.Int32
+	// cause is why it is building, parsed from the same value on the same
+	// update. Separate from cur so the listing path stays one atomic load: a
+	// listing asks whether the plane is usable and never asks why.
+	cause atomic.Int32
 	// watching is false while the watch is broken or resyncing, which is what
 	// makes State report building without changing cur.
 	watching atomic.Bool
@@ -119,6 +124,25 @@ func (p *PlaneState) State(context.Context) (metastore.State, error) {
 	return metastore.StateBuilding, nil
 }
 
+// Status is the flag and, when it is building, why.
+//
+// A broken watch reports building with no cause, not the last cause seen. The
+// flag failing toward building is what keeps listings correct; carrying a
+// remembered *reason* through that would let a rebuild start on the strength of
+// something nobody can currently read.
+func (p *PlaneState) Status(ctx context.Context) (metastore.Build, error) {
+	state, err := p.State(ctx)
+	if err != nil || state == metastore.StateReady {
+		return metastore.Build{State: state}, err
+	}
+
+	if !p.watching.Load() {
+		return metastore.Building(metastore.CauseUnspecified), nil
+	}
+
+	return metastore.Building(metastore.BuildCause(p.cause.Load())), nil //nolint:gosec // Stored from a BuildCause below.
+}
+
 // readyMarker is what a ready plane writes.
 //
 // A word rather than the numeric State, because this key is one an operator
@@ -133,10 +157,15 @@ const readyMarker = "ready"
 // there is nothing to keep consistent — not a correctness requirement, since a
 // writer briefly ahead of its own watch would be right either way, but one path
 // is easier to reason about than two that must agree.
-func (p *PlaneState) Set(ctx context.Context, state metastore.State) error {
-	value := "building"
-	if state == metastore.StateReady {
-		value = readyMarker
+func (p *PlaneState) Set(ctx context.Context, build metastore.Build) error {
+	value := readyMarker
+
+	if build.State != metastore.StateReady {
+		// "building:orphaned" rather than a second key, so the flag and the
+		// reason for it can never be read a revision apart — and so an older
+		// node, which compares against the ready marker and calls everything
+		// else building, reads a newer cluster correctly.
+		value = "building:" + build.Cause.String()
 	}
 
 	if _, err := p.client.Put(ctx, p.cfg.planeStateKey(), value); err != nil {
@@ -181,12 +210,38 @@ func (p *PlaneState) load(ctx context.Context) (int64, error) {
 // toward the correct-and-slow answer.
 func (p *PlaneState) store(value string) {
 	if value == readyMarker {
+		// The cause is left as it was, and never read: Status answers a ready
+		// plane without consulting it, because a store that is usable has no
+		// reason to be unusable. Clearing it here would be a second place that
+		// has to agree with that, for no reader.
 		p.cur.Store(stateReady)
 
 		return
 	}
 
 	p.cur.Store(stateBuilding)
+	p.cause.Store(int32(causeOf(value)))
+}
+
+// causeOf reads the reason out of a building marker.
+//
+// Anything it does not recognize is unspecified, which is the cautious answer:
+// a rebuild is hours of I/O, and a value written by a version that named its
+// causes differently is not grounds to start one.
+func causeOf(value string) metastore.BuildCause {
+	name, ok := strings.CutPrefix(value, "building:")
+	if !ok {
+		return metastore.CauseUnspecified
+	}
+
+	switch name {
+	case metastore.CauseOrphaned.String():
+		return metastore.CauseOrphaned
+	case metastore.CauseNeverBuilt.String():
+		return metastore.CauseNeverBuilt
+	default:
+		return metastore.CauseUnspecified
+	}
 }
 
 // watch applies flag changes from rev onward, re-establishing the watch with a

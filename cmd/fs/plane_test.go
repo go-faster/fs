@@ -115,7 +115,7 @@ func TestShardedPlaneServesTheCluster(t *testing.T) {
 
 	// Now the S3 path, with the plane vouched for.
 	for i, rt := range nodes {
-		require.NoError(t, rt.metaPlane.state.Set(t.Context(), metastore.StateReady))
+		require.NoError(t, rt.metaPlane.state.Set(t.Context(), metastore.Ready()))
 
 		require.Eventually(t, func() bool {
 			return len(listKeys(t, rt)) == len(keys)

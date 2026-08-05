@@ -11,6 +11,7 @@ import (
 	"github.com/go-faster/fs/clusterstore"
 	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/etcd"
+	"github.com/go-faster/fs/internal/cluster/metastore"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 	"github.com/go-faster/fs/internal/cluster/shardstore"
 	"github.com/go-faster/fs/internal/cluster/transport"
@@ -416,6 +417,16 @@ func bootstrapPlane(
 	}
 
 	if created {
+		// Said explicitly rather than left to the flag's absence. An unset key
+		// already reads as building, but with no reason attached — and the
+		// reason is what decides whether the rebuild waits for an operator. A
+		// plane partitioned over a cluster that already holds objects describes
+		// only what has been written since, and that is a fact worth recording
+		// at the moment it becomes true.
+		if err := rt.metaPlane.state.Set(ctx, metastore.Building(metastore.CauseNeverBuilt)); err != nil {
+			return errors.Wrap(err, "mark the new plane unbuilt")
+		}
+
 		lg.Info("Metadata plane partitioned",
 			zap.Int("ranges", cfg.MetadataRanges()),
 			zap.Int("replicas", cfg.MetadataReplicas()),

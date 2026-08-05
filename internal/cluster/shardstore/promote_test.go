@@ -51,7 +51,7 @@ func movingFixture(t *testing.T, r *readiness, live ...cluster.NodeID) *fixture 
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: live,
 	}
@@ -222,7 +222,7 @@ func TestPromotionIsOffWithoutAWayToAsk(t *testing.T) {
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n0", "n2"},
 	}
@@ -331,7 +331,7 @@ func handoverFixture(t *testing.T, live ...cluster.NodeID) *fixture {
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: live,
 	}
@@ -407,7 +407,7 @@ func TestUnfinishedMoveIsNotHandedOver(t *testing.T) {
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n0", "n1"},
 	}
@@ -439,7 +439,7 @@ func TestHandoverComesBeforeStartingMoreWork(t *testing.T) {
 	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n0", "n1", "n2"},
 	}
@@ -496,7 +496,7 @@ func TestOrphanedOntoTheDestinationEndsTheMove(t *testing.T) {
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n1"},
 	}
@@ -539,7 +539,7 @@ func trimFixture(t *testing.T, replicas int, r rangemap.Range) *fixture {
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n0", "n1", "n2"},
 	}
@@ -671,7 +671,7 @@ func TestTheNodeAMoveRelievesDoesNotKeepACopy(t *testing.T) {
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: []cluster.NodeID{"n0", "n1", "n2"},
 	}

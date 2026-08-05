@@ -320,6 +320,22 @@ type MetadataConfig struct {
 	// but each one is a map revision every node in the cluster refetches.
 	MaxSplitsPerPass int `yaml:"max_splits_per_pass,omitempty"`
 
+	// Rebuild is when the plane rebuilds itself without being asked:
+	// "on_failure" (default), "always" or "never".
+	//
+	// The two ways a plane ends up unbuilt want different answers. Switching it
+	// on over a cluster that already holds objects is planned — an operator
+	// chose the moment, and they can choose the window for the walk of every
+	// disk that follows, which on a large cluster is hours of I/O competing with
+	// serving traffic. A failure that leaves a range with no copy of its data is
+	// not planned: the plane is degraded now, every listing in the cluster is on
+	// the slow path meanwhile, and waiting for a human is waiting for nothing.
+	//
+	// So the default rebuilds after a failure and waits to be told after an
+	// enable. "always" covers both, for a cluster small enough that the walk is
+	// not an event; "never" leaves both to an operator.
+	Rebuild string `yaml:"rebuild,omitempty"`
+
 	// RebalanceGap is how much busier, in writes a second, the busiest node
 	// must be than the quietest before a range is moved to even them out
 	// (default shardstore.DefaultRebalanceGap).
@@ -337,6 +353,26 @@ func (c *Config) MetadataMaxRangeBytes() uint64 { return c.Cluster.Metadata.MaxR
 
 // MetadataMaxSplitsPerPass is the configured per-pass cap, or the default.
 func (c *Config) MetadataMaxSplitsPerPass() int { return c.Cluster.Metadata.MaxSplitsPerPass }
+
+// Metadata rebuild policies.
+const (
+	// RebuildOnFailure rebuilds when a failure orphaned a range, and waits to be
+	// told when the plane has merely never been built.
+	RebuildOnFailure = "on_failure"
+	// RebuildAlways rebuilds whenever the plane is not ready.
+	RebuildAlways = "always"
+	// RebuildNever leaves every rebuild to an operator.
+	RebuildNever = "never"
+)
+
+// MetadataRebuild is the configured rebuild policy, or the default.
+func (c *Config) MetadataRebuild() string {
+	if c.Cluster.Metadata.Rebuild == "" {
+		return RebuildOnFailure
+	}
+
+	return c.Cluster.Metadata.Rebuild
+}
 
 // MetadataRebalanceGap is the configured rebalance threshold, or the default.
 func (c *Config) MetadataRebalanceGap() float64 { return c.Cluster.Metadata.RebalanceGap }
@@ -545,6 +581,13 @@ func (c *Config) validateCluster() error {
 
 	if len(cc.Etcd.Endpoints) == 0 {
 		return errors.New("cluster.etcd.endpoints is required")
+	}
+
+	switch cc.Metadata.Rebuild {
+	case "", RebuildOnFailure, RebuildAlways, RebuildNever:
+	default:
+		return errors.Errorf("invalid cluster.metadata.rebuild %q (want %q, %q or %q)",
+			cc.Metadata.Rebuild, RebuildOnFailure, RebuildAlways, RebuildNever)
 	}
 
 	if cc.Etcd.TTL != 0 && cc.Etcd.TTL < time.Second {

@@ -133,7 +133,7 @@ func newCluster(t *testing.T, ids ...cluster.NodeID) *testCluster {
 		ready: &shardstore.MemoryReadiness{},
 	}
 
-	require.NoError(t, c.ready.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, c.ready.Set(t.Context(), metastore.Ready()))
 
 	// Two passes: every node's dialer must be able to reach every other, so no
 	// node can be finished until all of them exist.

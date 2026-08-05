@@ -24,7 +24,7 @@ import (
 type recorder struct {
 	m *rangemap.Map
 
-	state metastore.State
+	build metastore.Build
 	acts  []string
 
 	saveErr error
@@ -43,13 +43,23 @@ func (r *recorder) save(_ context.Context, m *rangemap.Map) error {
 	return nil
 }
 
-func (r *recorder) State(context.Context) (metastore.State, error) { return r.state, nil }
+func (r *recorder) Status(context.Context) (metastore.Build, error) { return r.build, nil }
 
-func (r *recorder) Set(_ context.Context, s metastore.State) error {
-	r.acts = append(r.acts, "state:"+string(s))
-	r.state = s
+func (r *recorder) Set(_ context.Context, b metastore.Build) error {
+	r.acts = append(r.acts, "state:"+stateName(b))
+	r.build = b
 
 	return nil
+}
+
+// stateName is what the recorder writes into its log: "ready", or "building"
+// with the reason, so a test can assert the cause reached the flag.
+func stateName(b metastore.Build) string {
+	if b.State == metastore.StateReady {
+		return "ready"
+	}
+
+	return "building:" + b.Cause.String()
 }
 
 // clock is a hand-wound clock, so grace periods are tested by moving time
@@ -73,7 +83,7 @@ func newFixture(t *testing.T, m *rangemap.Map, live ...cluster.NodeID) *fixture 
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: live,
 	}
@@ -192,7 +202,7 @@ func TestAnOrphanWaitsMuchLonger(t *testing.T) {
 	out = f.reconcile(t)
 	assert.False(t, out.Changed)
 	assert.Empty(t, out.Held)
-	assert.Equal(t, metastore.StateReady, f.ctl.state)
+	assert.Equal(t, metastore.Ready(), f.ctl.build)
 }
 
 // TestOrphanMarksBuildingBeforePublishingTheMap: order is the assertion.
@@ -217,7 +227,7 @@ func TestOrphanMarksBuildingBeforePublishingTheMap(t *testing.T) {
 	require.Len(t, out.Orphaned, 1)
 	assert.True(t, out.RebuildOwed())
 
-	assert.Equal(t, []string{"state:" + string(metastore.StateBuilding), "save"}, f.ctl.acts,
+	assert.Equal(t, []string{"state:building:orphaned", "save"}, f.ctl.acts,
 		"building is published before the map that makes it true")
 
 	assert.Equal(t, cluster.NodeID("n1"), f.ctl.m.Ranges[0].Owner,
@@ -369,7 +379,7 @@ func TestAFailedWriteIsNotReportedAsDone(t *testing.T) {
 // controller that partitioned an empty map would be guessing at a layout while
 // reacting to a failure.
 func TestUnpartitionedPlaneIsRefused(t *testing.T) {
-	ctl := &recorder{m: &rangemap.Map{}, state: metastore.StateReady}
+	ctl := &recorder{m: &rangemap.Map{}, build: metastore.Ready()}
 
 	c, err := shardstore.NewController(shardstore.ControllerConfig{
 		Load: ctl.load,
@@ -405,7 +415,7 @@ func splitting(t *testing.T, m *rangemap.Map, table *sized, live ...cluster.Node
 	require.NoError(t, m.Validate())
 
 	f := &fixture{
-		ctl:  &recorder{m: m, state: metastore.StateReady},
+		ctl:  &recorder{m: m, build: metastore.Ready()},
 		clk:  &clock{t: time.Unix(1700000000, 0)},
 		live: live,
 	}
@@ -521,7 +531,7 @@ func TestFailoverAndSplitDoNotShareAPass(t *testing.T) {
 func TestSplittingIsOffWithoutAWayToMeasure(t *testing.T) {
 	ctl := &recorder{m: &rangemap.Map{Ranges: []rangemap.Range{
 		{Start: "", End: "", Owner: "n0"},
-	}}, state: metastore.StateReady}
+	}}, build: metastore.Ready()}
 
 	c, err := shardstore.NewController(shardstore.ControllerConfig{
 		Load: ctl.load,
@@ -618,4 +628,24 @@ func TestOneWriteForAWholePassOfSplits(t *testing.T) {
 	assert.Equal(t, []string{"save"}, f.ctl.acts,
 		"three boundaries, one published map")
 	assert.Len(t, f.ctl.m.Ranges, 6)
+}
+
+// TestOrphanRecordsWhyThePlaneIsBuilding: the flag says the plane is not usable;
+// the cause says whether anything should act on that without being asked.
+//
+// A failure that leaves a range with no copy of its data is degraded now, and
+// every listing in the cluster is on the slow path until it is rebuilt. A plane
+// that had merely never been built is waiting for an operator's window. Only the
+// controller knows which of those just happened, so only the controller can say.
+func TestOrphanRecordsWhyThePlaneIsBuilding(t *testing.T) {
+	f := newFixture(t, soloMap(), "n1")
+
+	f.reconcile(t)
+	f.clk.advance(time.Hour)
+
+	out := f.reconcile(t)
+	require.Len(t, out.Orphaned, 1)
+
+	assert.Equal(t, metastore.Building(metastore.CauseOrphaned), f.ctl.build,
+		"the plane is building for a reason nothing can act on")
 }

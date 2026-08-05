@@ -275,7 +275,7 @@ func (c *Controller) Reconcile(ctx context.Context) (Reconciliation, error) {
 	// authoritative, and an empty range answers "no such object" for objects
 	// that exist — a wrong answer rather than a slow one.
 	if len(out.Orphaned) > 0 && c.cfg.Readiness != nil {
-		if err := c.cfg.Readiness.Set(ctx, metastore.StateBuilding); err != nil {
+		if err := c.cfg.Readiness.Set(ctx, metastore.Building(metastore.CauseOrphaned)); err != nil {
 			return Reconciliation{}, errors.Wrap(err, "mark the plane building")
 		}
 	}
