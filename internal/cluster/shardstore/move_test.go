@@ -479,3 +479,34 @@ func TestCaughtUpSurvivesAnUnrelatedMapChange(t *testing.T) {
 
 	assert.True(t, learner.CaughtUp(learned))
 }
+
+// TestCaughtUpOverTheWire: the controller asks the learner, and the learner is
+// on another node. A peer that always answered false would stall every move; one
+// that always answered true would promote onto a half-copied range.
+func TestCaughtUpOverTheWire(t *testing.T) {
+	owner := openShard(t, learned)
+	fill(t, owner, "photos", 12)
+
+	learner := openShardAt(t, t.TempDir(), learned)
+
+	srv := httptest.NewServer(transport.NewServer(
+		transport.NewMemStore(), peerSecret, transport.WithShard(shardstore.Serve(learner)),
+	))
+	t.Cleanup(srv.Close)
+
+	client, err := transport.NewClient(srv.URL, peerSecret, "n1", srv.Client())
+	require.NoError(t, err)
+
+	peer := shardstore.NewPeer(client)
+
+	ready, err := peer.CaughtUp(t.Context(), learned)
+	require.NoError(t, err)
+	assert.False(t, ready, "nothing has been copied yet")
+
+	_, err = learner.Backfill(t.Context(), learned, owner, 5)
+	require.NoError(t, err)
+
+	ready, err = peer.CaughtUp(t.Context(), learned)
+	require.NoError(t, err)
+	assert.True(t, ready)
+}

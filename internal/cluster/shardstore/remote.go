@@ -153,6 +153,18 @@ func Serve(shard *Shard) transport.ShardFunc {
 				Done:    step.Done,
 			}, nil
 
+		case transport.ShardOpCaughtUp:
+			if req.Range == nil {
+				return transport.ShardResponse{}, errors.New("caught-up check without a range")
+			}
+
+			// No ownership mapping: a shard that is not learning the range
+			// answers false, which is the same thing the caller must do with it.
+			// Turning it into a refusal would make "I am not the learner you
+			// think I am" and "I am, and I am not done" two cases where the
+			// controller has one correct response.
+			return transport.ShardResponse{CaughtUp: shard.CaughtUp(*req.Range)}, nil
+
 		case transport.ShardOpReset:
 			return transport.ShardResponse{}, shard.Reset(ctx)
 
@@ -256,6 +268,20 @@ func (p *Peer) ReadBackfill(
 		Cursor:  resp.Cursor,
 		Done:    resp.Done,
 	}, nil
+}
+
+// CaughtUp asks this peer whether it has finished being copied into for a
+// range.
+func (p *Peer) CaughtUp(ctx context.Context, r rangemap.Range) (bool, error) {
+	resp, err := p.call(ctx, transport.ShardRequest{
+		Op:    transport.ShardOpCaughtUp,
+		Range: &r,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return resp.CaughtUp, nil
 }
 
 // Put implements Backend.

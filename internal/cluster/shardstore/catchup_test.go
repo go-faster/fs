@@ -38,13 +38,13 @@ func seed(t *testing.T, c *testCluster, n int) {
 }
 
 // held is what a node's shard holds for a bucket, regardless of what it serves.
-func held(t *testing.T, c *testCluster, id cluster.NodeID, bucket string) []string {
+func held(t *testing.T, c *testCluster) []string {
 	t.Helper()
 
-	c.nodes[id].shard.Adopt([]rangemap.Range{owned})
+	c.nodes["n1"].shard.Adopt([]rangemap.Range{owned})
 	defer c.refreshAll(t)
 
-	return scanKeys(t, c.nodes[id].shard, bucket)
+	return scanKeys(t, c.nodes["n1"].shard, "photos")
 }
 
 // TestCatchUpCopiesALearnedRange is the move's data half running by itself: the
@@ -68,7 +68,7 @@ func TestCatchUpCopiesALearnedRange(t *testing.T) {
 	assert.Empty(t, got.Failed)
 	assert.Equal(t, 20, got.Entries)
 
-	assert.Len(t, held(t, c, "n1", "photos"), 20)
+	assert.Len(t, held(t, c), 20)
 }
 
 // TestCatchUpDoesNotRecopyAFinishedRange: a learner stays a learner until the
@@ -114,7 +114,7 @@ func TestCatchUpIgnoresARangeItMerelyFollows(t *testing.T) {
 
 	assert.Zero(t, got.Learning)
 	assert.Empty(t, got.Copied)
-	assert.Empty(t, held(t, c, "n1", "photos"),
+	assert.Empty(t, held(t, c),
 		"a follower was backfilled, which is a learner's work")
 }
 
@@ -228,7 +228,7 @@ func TestCatchUpResumesOnceTheOwnerIsBack(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Len(t, got.Copied, 1)
-	assert.Len(t, held(t, c, "n1", "photos"), 12)
+	assert.Len(t, held(t, c), 12)
 }
 
 // TestCatchUpDoesNothingOnANodeLearningNothing is the ordinary case, and it must

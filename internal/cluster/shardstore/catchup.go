@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
@@ -114,6 +115,49 @@ func (p *Plane) CatchUp(ctx context.Context) (CatchUpResult, error) {
 
 	return out, nil
 }
+
+// Ready reports whether a node has finished being copied into for a range.
+//
+// Asked of that node, and there is nowhere else to ask. The controller knows it
+// decided the move and the owner knows what it shipped; neither knows what
+// landed. A promotion decided on either would promote a learner holding part of
+// a range, which answers "no such object" for every key the copy has not reached
+// — and nothing would report it, because a partial range is a range that simply
+// says no.
+//
+// A node that cannot be reached is not ready, which is the same answer as "not
+// finished" and needs no distinction: a learner the controller cannot reach is
+// one it must not promote either way.
+func (p *Plane) Ready(ctx context.Context, node cluster.NodeID, r rangemap.Range) (bool, error) {
+	// Answered directly rather than through resolve, because a local shard's
+	// answer is a memory read: there is no round trip to make and no failure to
+	// report, and routing it through the wire shape would invent both.
+	if node == p.self {
+		return p.shard.CaughtUp(r), nil
+	}
+
+	backend, err := p.resolve(ctx, node)
+	if err != nil {
+		return false, err
+	}
+
+	learner, ok := backend.(Learner)
+	if !ok {
+		return false, errors.Errorf("node %s cannot be asked whether it is caught up", node)
+	}
+
+	return learner.CaughtUp(ctx, r)
+}
+
+// Learner is a backend that can report whether a copy into it has finished.
+//
+// Satisfied by a Peer. A local shard answers without the wire's ctx and error,
+// so Ready reaches it directly rather than through here.
+type Learner interface {
+	CaughtUp(ctx context.Context, r rangemap.Range) (bool, error)
+}
+
+var _ Learner = (*Peer)(nil)
 
 // backfill copies one range from its owner into this node's shard.
 func (p *Plane) backfill(ctx context.Context, r rangemap.Range) (BackfillResult, error) {

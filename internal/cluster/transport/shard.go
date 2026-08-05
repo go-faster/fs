@@ -57,6 +57,13 @@ const (
 	// disagree with the data. The write half needs no operation at all — the
 	// learner stores what it pulled into its own shard.
 	ShardOpBackfill = "backfill"
+	// ShardOpCaughtUp asks a learner whether the copy of a range has finished.
+	//
+	// Asked of the learner, because the learner is the only node that knows.
+	// The owner knows what it sent and the controller knows what it decided;
+	// neither knows what landed, and a promotion decided on either would
+	// promote a node holding part of a range.
+	ShardOpCaughtUp = "caught_up"
 )
 
 // ShardRequest is one operation against a peer's shard.
@@ -121,6 +128,9 @@ type ShardResponse struct {
 	// Cursor is where the next backfill step resumes, empty when the range has
 	// been walked to its end.
 	Cursor string `json:"cursor,omitempty"`
+	// CaughtUp reports that the peer has finished being copied into for the
+	// range, for ShardOpCaughtUp.
+	CaughtUp bool `json:"caught_up,omitempty"`
 	// Done reports that a backfill step reached the end of the range.
 	//
 	// Carried rather than inferred from an empty Cursor, because a step that

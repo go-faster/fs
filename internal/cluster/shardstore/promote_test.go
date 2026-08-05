@@ -1,0 +1,292 @@
+package shardstore_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/go-faster/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/go-faster/fs/internal/cluster"
+	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/rangemap"
+	"github.com/go-faster/fs/internal/cluster/shardstore"
+)
+
+// readiness is what learners say when asked, plus which of them were asked.
+//
+// The asking is worth recording on its own: a controller that promoted without
+// asking, or that asked the owner instead of the learner, would pass a test that
+// only looked at the map it wrote.
+type readiness struct {
+	ready map[cluster.NodeID]bool
+	fail  map[cluster.NodeID]bool
+	asked []cluster.NodeID
+}
+
+func (r *readiness) answer(_ context.Context, node cluster.NodeID, _ rangemap.Range) (bool, error) {
+	r.asked = append(r.asked, node)
+
+	if r.fail[node] {
+		return false, errors.Errorf("node %s is unreachable", node)
+	}
+
+	return r.ready[node], nil
+}
+
+// movingFixture is a controller over a map with a move in flight: n0 owns, n1
+// follows, n2 is being copied into.
+func movingFixture(t *testing.T, r *readiness, live ...cluster.NodeID) *fixture {
+	t.Helper()
+
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n1"},
+		Learners:  []cluster.NodeID{"n2"},
+	}}}
+
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: live,
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load:         f.ctl.load,
+		Save:         f.ctl.save,
+		Live:         func() []cluster.NodeID { return f.live },
+		Readiness:    f.ctl,
+		Ready:        r.answer,
+		PromoteAfter: 30 * time.Second,
+		RebuildAfter: 10 * time.Minute,
+		Now:          f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	return f
+}
+
+// TestCaughtUpLearnerBecomesAFollower is the move's last step: the copy is done,
+// so the node that was being copied into stops being un-promotable.
+func TestCaughtUpLearnerBecomesAFollower(t *testing.T) {
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
+	f := movingFixture(t, r, "n0", "n1", "n2")
+
+	out := f.reconcile(t)
+
+	assert.True(t, out.Changed)
+	require.Len(t, out.Learned, 1)
+
+	assert.Equal(t, []cluster.NodeID{"n2"}, r.asked,
+		"the learner is the only node that knows what landed")
+
+	got := f.ctl.m.Ranges[0]
+	assert.Equal(t, []cluster.NodeID{"n1", "n2"}, got.Followers)
+	assert.Empty(t, got.Learners)
+	assert.Equal(t, cluster.NodeID("n0"), got.Owner,
+		"promotion grants the right to be promoted, not ownership")
+}
+
+// TestUnfinishedLearnerIsLeftAlone: a learner holding part of a range is the one
+// state that must not be served, and waiting costs nothing — the range keeps
+// being served by its owner while the copy runs.
+func TestUnfinishedLearnerIsLeftAlone(t *testing.T) {
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": false}}
+	f := movingFixture(t, r, "n0", "n1", "n2")
+
+	out := f.reconcile(t)
+
+	assert.False(t, out.Changed)
+	assert.Empty(t, out.Learned)
+	assert.Empty(t, f.ctl.acts, "nothing was written")
+
+	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Learners,
+		"still a learner")
+}
+
+// TestUnreachableLearnerIsNotPromoted: unreachable and unfinished are the same
+// answer. A learner the controller cannot reach is one it must not promote, and
+// the pass must not fail over it either — a controller that stopped reconciling
+// because one node was slow would stop failing over too.
+func TestUnreachableLearnerIsNotPromoted(t *testing.T) {
+	r := &readiness{fail: map[cluster.NodeID]bool{"n2": true}}
+	f := movingFixture(t, r, "n0", "n1", "n2")
+
+	out := f.reconcile(t)
+
+	assert.False(t, out.Changed)
+	assert.Empty(t, out.Learned)
+	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Learners)
+}
+
+// TestMissingLearnerIsNotAsked: a node that is not in the membership is not
+// asked at all. Asking would be a round trip to a node that is gone, on the pass
+// that runs most often.
+func TestMissingLearnerIsNotAsked(t *testing.T) {
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
+	f := movingFixture(t, r, "n0", "n1")
+
+	out := f.reconcile(t)
+
+	assert.False(t, out.Changed)
+	assert.Empty(t, r.asked, "a learner that is gone was asked anyway")
+	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Learners)
+}
+
+// TestPromotionIsIdempotent: a promoted node is a follower, and a follower is
+// not asked again. Without that the controller would rewrite the map every pass
+// for a move that finished.
+func TestPromotionIsIdempotent(t *testing.T) {
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
+	f := movingFixture(t, r, "n0", "n1", "n2")
+
+	require.True(t, f.reconcile(t).Changed)
+
+	r.asked = nil
+
+	out := f.reconcile(t)
+	assert.False(t, out.Changed)
+	assert.Empty(t, r.asked)
+	assert.Len(t, f.ctl.acts, 1, "the map was written twice for one move")
+}
+
+// TestFailoverPassDoesNotPromote is the one-thing-per-pass rule. A promotion is
+// a rewrite of the map, and one made from a map that failover has just
+// invalidated would be describing a cluster that no longer exists.
+func TestFailoverPassDoesNotPromote(t *testing.T) {
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
+	f := movingFixture(t, r, "n0", "n1", "n2")
+
+	// The owner goes, and stays gone past its grace.
+	f.live = []cluster.NodeID{"n1", "n2"}
+	f.reconcile(t)
+	f.clk.advance(time.Minute)
+
+	out := f.reconcile(t)
+
+	require.NotEmpty(t, out.Promoted, "the premise: this pass failed over")
+	assert.Empty(t, out.Learned, "and promoted a learner in the same breath")
+}
+
+// TestPromotionDoesNotSplitInTheSamePass: the same rule in the other direction.
+// A split planned from the map as it was would be applied to one the promotion
+// had already changed.
+func TestPromotionDoesNotSplitInTheSamePass(t *testing.T) {
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
+	f := movingFixture(t, r, "n0", "n1", "n2")
+
+	measured := 0
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load,
+		Save: f.ctl.save,
+		Live: func() []cluster.NodeID { return f.live },
+		Measure: func(context.Context, cluster.NodeID, rangemap.Range) (shardstore.Measurement, error) {
+			measured++
+
+			return shardstore.Measurement{Bytes: 1 << 40, SplitAt: "om"}, nil
+		},
+		Ready:     r.answer,
+		Readiness: f.ctl,
+		Now:       f.clk.now,
+	})
+	require.NoError(t, err)
+
+	out, err := c.Reconcile(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, out.Learned, 1, "the premise: this pass promoted")
+	assert.Empty(t, out.Split)
+	assert.Zero(t, measured, "a split was planned from a map the promotion had changed")
+
+	// And the next pass, with nothing left to promote, does split.
+	out, err = c.Reconcile(t.Context())
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.Split)
+}
+
+// TestPromotionIsOffWithoutAWayToAsk: a plane with no transport cannot ask a
+// learner anything, and a controller that promoted on no evidence would promote
+// every learner the moment it was named one.
+func TestPromotionIsOffWithoutAWayToAsk(t *testing.T) {
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0", Learners: []cluster.NodeID{"n2"},
+	}}}
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: []cluster.NodeID{"n0", "n2"},
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live: func() []cluster.NodeID { return f.live },
+		Now:  f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	out := f.reconcile(t)
+	assert.False(t, out.Changed)
+	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Learners)
+}
+
+// TestMoveCompletesEndToEnd is the whole of E4's move, over real nodes: the
+// controller names a learner, the learner copies itself current, the controller
+// asks it over the wire and promotes it.
+//
+// Every part of it is exercised here and nowhere else together — the catch-up
+// pass, the backfill's transport, the caught-up RPC, and the map edit — which is
+// the point: each half passes its own tests while disagreeing with the other.
+func TestMoveCompletesEndToEnd(t *testing.T) {
+	c := newCluster(t, "n0", "n1")
+	c.ctl.publish(t, owned)
+	c.refreshAll(t)
+
+	seed(t, c, 20)
+
+	// The controller decides the move.
+	c.ctl.publish(t, learnedByN1())
+
+	ctl, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: c.ctl.load,
+		Save: c.ctl.save,
+		Live: func() []cluster.NodeID { return []cluster.NodeID{"n0", "n1"} },
+		// Asked from n0, so the question crosses the wire to n1.
+		Ready: c.nodes["n0"].plane.Ready,
+		Now:   time.Now,
+	})
+	require.NoError(t, err)
+
+	// Nothing to promote yet: the copy has not run.
+	out, err := ctl.Reconcile(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, out.Learned, "promoted before anything was copied")
+
+	// The learner catches itself up.
+	caught, err := c.nodes["n1"].plane.CatchUp(t.Context())
+	require.NoError(t, err)
+	require.Len(t, caught.Copied, 1)
+	require.Equal(t, 20, caught.Entries)
+
+	// And now the controller promotes it.
+	out, err = ctl.Reconcile(t.Context())
+	require.NoError(t, err)
+	require.Len(t, out.Learned, 1)
+
+	got := c.ctl.m.Ranges[0]
+	assert.Equal(t, []cluster.NodeID{"n1"}, got.Followers)
+	assert.Empty(t, got.Learners)
+
+	// The follower holds the range, which is what made it promotable.
+	assert.Len(t, held(t, c), 20)
+}

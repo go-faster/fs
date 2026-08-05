@@ -50,6 +50,11 @@ type ControllerConfig struct {
 	// Split is when a range is too large to leave alone.
 	Split SplitPolicy
 
+	// Ready asks a learner whether the copy of a range into it has finished.
+	// Nil disables promotion, which is what a plane with no transport gets —
+	// and what leaves a learner a learner forever, which is the safe direction.
+	Ready func(context.Context, cluster.NodeID, rangemap.Range) (bool, error)
+
 	// Readiness is the cluster-wide build flag. Orphaning a range makes the
 	// plane untrustworthy until it is rebuilt, and this is what says so.
 	Readiness Readiness
@@ -126,6 +131,9 @@ type Reconciliation struct {
 	Orphaned []rangemap.Range
 	// Split are the boundaries this pass created.
 	Split []string
+	// Learned are the ranges whose learner finished its copy and became an
+	// ordinary follower this pass.
+	Learned []rangemap.Range
 }
 
 // RebuildOwed reports whether this pass left ranges that hold nothing, which
@@ -202,11 +210,22 @@ func (c *Controller) Reconcile(ctx context.Context) (Reconciliation, error) {
 		// Nothing is wrong with the membership, so the pass can spend itself on
 		// making the partitioning better rather than correct.
 		//
-		// One or the other, never both. A pass that failed over *and* split
+		// One thing per pass, never two. A pass that failed over *and* split
 		// would be deciding where data goes from measurements taken while it
 		// was moving, and the second decision would be made against a map the
-		// first had already invalidated. Splits wait a pass; they are not
-		// urgent, and the next pass is five seconds away.
+		// first had already invalidated. The same holds for a promotion: it
+		// rewrites the map, and a split planned from the map before it would be
+		// applied to one that no longer matches. Neither is urgent, and the next
+		// pass is five seconds away.
+		result, promoted, err := c.promote(ctx, m, result)
+		if err != nil {
+			return Reconciliation{}, err
+		}
+
+		if promoted {
+			return result, nil
+		}
+
 		return c.split(ctx, m, result)
 	}
 
@@ -271,6 +290,90 @@ func (c *Controller) churn(m *rangemap.Map, live []cluster.NodeID) error {
 	}
 
 	return nil
+}
+
+// promote turns learners that have finished their copy into ordinary followers.
+//
+// # Into Followers, never straight to Owner
+//
+// A move is a promotion in slow motion, and this is the step that ends the slow
+// part. What it grants is exactly what a learner lacked: the right to be
+// promoted. Handing over ownership in the same edit would make one decision out
+// of two — "this node holds the range" and "this node should serve it" — and
+// only the first has been established here. Ownership moves afterwards, by the
+// path failover already uses, so a promotion made on a wrong answer costs a
+// stale replica rather than a range served with a hole in it.
+//
+// # A learner is asked, not measured
+//
+// Only the destination knows what landed. A learner that cannot be reached, or
+// that has not finished, is left exactly as it is — a learner. That is the safe
+// standstill: the range keeps being served by its owner, and nothing about the
+// plane degrades while a move waits.
+//
+// Runs only on a pass where the membership needed nothing, for the same reason
+// splitting does: a promotion is a rewrite of the map, and one made from a map
+// that failover has just invalidated would be describing a cluster that no
+// longer exists.
+func (c *Controller) promote(
+	ctx context.Context,
+	m *rangemap.Map,
+	result Reconciliation,
+) (Reconciliation, bool, error) {
+	if c.cfg.Ready == nil {
+		return result, false, nil
+	}
+
+	live := c.cfg.Live()
+
+	next := &rangemap.Map{Revision: m.Revision, Ranges: slices.Clone(m.Ranges)}
+	changed := false
+
+	for i, r := range next.Ranges {
+		for _, learner := range r.Learners {
+			// A learner that is gone is not asked. Its absence is the
+			// membership's business, and this pass runs only when the
+			// membership needed nothing — so a missing learner here is one
+			// whose range still has a live owner and nothing to fix.
+			if !slices.Contains(live, learner) {
+				continue
+			}
+
+			ready, err := c.cfg.Ready(ctx, learner, r)
+			if err != nil || !ready {
+				// Unreachable and unfinished are the same answer. Neither is a
+				// reason to fail the pass: the move waits, which costs nothing
+				// but time, and the alternative is a controller that stops
+				// reconciling because one node is slow.
+				continue
+			}
+
+			promoted := next.Ranges[i]
+			promoted.Learners = withoutNode(promoted.Learners, learner)
+			promoted.Followers = append(slices.Clone(promoted.Followers), learner)
+			next.Ranges[i] = promoted
+
+			changed = true
+
+			result.Learned = append(result.Learned, promoted)
+		}
+	}
+
+	if !changed {
+		return result, false, nil
+	}
+
+	if err := next.Validate(); err != nil {
+		return result, false, errors.Wrap(err, "promotion produced an invalid map")
+	}
+
+	if err := c.cfg.Save(ctx, next); err != nil {
+		return result, false, errors.Wrap(err, "write the partitioning")
+	}
+
+	result.Changed = true
+
+	return result, true, nil
 }
 
 // split makes the partitioning finer where the data warrants it.
