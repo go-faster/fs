@@ -51,7 +51,22 @@ func (c *control) save(_ context.Context, m *rangemap.Map) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.m = m
+	// The revision advances on every write, as etcd's does — LoadRangeMap takes
+	// it from the response header, so a map that was written is a map read at a
+	// higher revision than the one before it.
+	//
+	// Emulated rather than ignored because the router adopts a map only when it
+	// is *newer*: a control plane whose revision stood still would leave every
+	// node routing by whatever it cached first, and a test built on one would
+	// show ownership changes taking effect that in a real cluster never would.
+	next := *m
+	next.Revision = 1
+
+	if c.m != nil {
+		next.Revision = c.m.Revision + 1
+	}
+
+	c.m = &next
 
 	return nil
 }

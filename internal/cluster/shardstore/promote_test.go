@@ -2,6 +2,7 @@ package shardstore_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -240,22 +241,26 @@ func TestPromotionIsOffWithoutAWayToAsk(t *testing.T) {
 	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Learners)
 }
 
-// TestMoveCompletesEndToEnd is the whole of E4's move, over real nodes: the
-// controller names a learner, the learner copies itself current, the controller
-// asks it over the wire and promotes it.
+// TestAMoveRunsToCompletion is E4's move, whole, over real nodes and real HTTP:
+// the controller records the move, the destination copies itself current, the
+// controller asks it across the wire and promotes it, and the pass after that
+// hands it the range.
 //
-// Every part of it is exercised here and nowhere else together — the catch-up
-// pass, the backfill's transport, the caught-up RPC, and the map edit — which is
-// the point: each half passes its own tests while disagreeing with the other.
-func TestMoveCompletesEndToEnd(t *testing.T) {
+// Every piece is covered on its own; this is the only place they have to agree.
+// Each half passes its own tests while disagreeing with the other — a learner
+// that never gets asked, an intent nothing acts on, a handover onto a node that
+// holds half a range — and none of those show up until the sequence is run.
+func TestAMoveRunsToCompletion(t *testing.T) {
 	c := newCluster(t, "n0", "n1")
 	c.ctl.publish(t, owned)
 	c.refreshAll(t)
 
 	seed(t, c, 20)
 
-	// The controller decides the move.
-	c.ctl.publish(t, learnedByN1())
+	// The move is decided: n1 becomes a learner, and the intent is recorded.
+	started, err := c.ctl.m.StartMove("", "n1")
+	require.NoError(t, err)
+	c.ctl.publish(t, started.Ranges...)
 
 	ctl, err := shardstore.NewController(shardstore.ControllerConfig{
 		Load: c.ctl.load,
@@ -267,26 +272,260 @@ func TestMoveCompletesEndToEnd(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Nothing to promote yet: the copy has not run.
+	// Nothing yet: the copy has not run, so there is nothing to promote and
+	// nothing to hand over.
 	out, err := ctl.Reconcile(t.Context())
 	require.NoError(t, err)
 	require.Empty(t, out.Learned, "promoted before anything was copied")
+	require.Empty(t, out.Moved)
 
-	// The learner catches itself up.
+	// The destination catches itself up.
 	caught, err := c.nodes["n1"].plane.CatchUp(t.Context())
 	require.NoError(t, err)
 	require.Len(t, caught.Copied, 1)
 	require.Equal(t, 20, caught.Entries)
 
-	// And now the controller promotes it.
+	// One pass promotes it out of being a learner.
 	out, err = ctl.Reconcile(t.Context())
 	require.NoError(t, err)
 	require.Len(t, out.Learned, 1)
+	require.Empty(t, out.Moved, "promoted and handed over in the same pass")
+
+	assert.Equal(t, cluster.NodeID("n0"), c.ctl.m.Ranges[0].Owner,
+		"ownership moves in its own edit, after the node is an ordinary replica")
+
+	// The next hands it the range.
+	out, err = ctl.Reconcile(t.Context())
+	require.NoError(t, err)
+	require.Len(t, out.Moved, 1)
 
 	got := c.ctl.m.Ranges[0]
-	assert.Equal(t, []cluster.NodeID{"n1"}, got.Followers)
-	assert.Empty(t, got.Learners)
+	assert.Equal(t, cluster.NodeID("n1"), got.Owner)
+	assert.Empty(t, got.MoveTo)
+	assert.Equal(t, []cluster.NodeID{"n0"}, got.Followers)
 
-	// The follower holds the range, which is what made it promotable.
-	assert.Len(t, held(t, c), 20)
+	// And the cluster still answers for every object, now from the new owner.
+	c.refreshAll(t)
+
+	for i := range 20 {
+		_, found, err := c.store("n0").Get(t.Context(), "photos", fmt.Sprintf("%03d.jpg", i))
+		require.NoError(t, err)
+		assert.True(t, found, "object %03d.jpg was lost in the move", i)
+	}
+
+	assert.Equal(t, []rangemap.Range{got}, c.nodes["n1"].shard.Ranges(),
+		"the new owner serves the range it was given")
+}
+
+// handoverFixture is a controller over a map whose move has reached its last
+// step: n0 owns, n1 has finished its copy and is a follower, and the intent to
+// hand it the range is still recorded.
+func handoverFixture(t *testing.T, live ...cluster.NodeID) *fixture {
+	t.Helper()
+
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n1"},
+		MoveTo:    "n1",
+	}}}
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: live,
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live:      func() []cluster.NodeID { return f.live },
+		Readiness: f.ctl,
+		Now:       f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	return f
+}
+
+// TestFinishedMoveIsHandedOver is the last edit of a move: the destination holds
+// the range, so it takes it.
+func TestFinishedMoveIsHandedOver(t *testing.T) {
+	f := handoverFixture(t, "n0", "n1")
+
+	out := f.reconcile(t)
+
+	assert.True(t, out.Changed)
+	require.Len(t, out.Moved, 1)
+
+	got := f.ctl.m.Ranges[0]
+	assert.Equal(t, cluster.NodeID("n1"), got.Owner)
+	assert.Empty(t, got.MoveTo)
+	assert.Equal(t, []cluster.NodeID{"n0"}, got.Followers,
+		"the old owner keeps its copy: dropping it would lower R as ownership changes")
+}
+
+// TestHandoverIsIdempotent: the intent is cleared by the handover, so the next
+// pass has nothing to do. Without that the controller would rewrite the map
+// every tick for a move that finished.
+func TestHandoverIsIdempotent(t *testing.T) {
+	f := handoverFixture(t, "n0", "n1")
+
+	require.True(t, f.reconcile(t).Changed)
+
+	out := f.reconcile(t)
+	assert.False(t, out.Changed)
+	assert.Empty(t, out.Moved)
+	assert.Len(t, f.ctl.acts, 1, "the map was written twice for one handover")
+}
+
+// TestHandoverWaitsForAnAbsentDestination: a destination that is gone holds a
+// full copy and the range is still served by its current owner, so waiting costs
+// nothing. Picking a different destination would throw away a finished copy to
+// start another.
+func TestHandoverWaitsForAnAbsentDestination(t *testing.T) {
+	f := handoverFixture(t, "n0")
+
+	out := f.reconcile(t)
+
+	assert.False(t, out.Changed)
+	assert.Empty(t, out.Moved)
+	assert.Equal(t, cluster.NodeID("n0"), f.ctl.m.Ranges[0].Owner)
+	assert.Equal(t, cluster.NodeID("n1"), f.ctl.m.Ranges[0].MoveTo, "the move is still recorded")
+}
+
+// TestUnfinishedMoveIsNotHandedOver: the destination is still a learner, so its
+// copy is not done. Handing it the range would make it the owner of data it does
+// not have.
+func TestUnfinishedMoveIsNotHandedOver(t *testing.T) {
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Learners: []cluster.NodeID{"n1"},
+		MoveTo:   "n1",
+	}}}
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: []cluster.NodeID{"n0", "n1"},
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live: func() []cluster.NodeID { return f.live },
+		Now:  f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	out := f.reconcile(t)
+	assert.False(t, out.Changed)
+	assert.Equal(t, cluster.NodeID("n0"), f.ctl.m.Ranges[0].Owner)
+}
+
+// TestHandoverComesBeforeStartingMoreWork: a range mid-move is holding an extra
+// replica until it completes, so the pass that can finish one does that rather
+// than promoting a learner somewhere else.
+func TestHandoverComesBeforeStartingMoreWork(t *testing.T) {
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{
+		{Start: "", End: "om", Owner: "n0", Followers: []cluster.NodeID{"n1"}, MoveTo: "n1"},
+		{Start: "om", End: "", Owner: "n0", Learners: []cluster.NodeID{"n2"}},
+	}}
+	require.NoError(t, m.Validate())
+
+	r := &readiness{ready: map[cluster.NodeID]bool{"n2": true}}
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: []cluster.NodeID{"n0", "n1", "n2"},
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live:  func() []cluster.NodeID { return f.live },
+		Ready: r.answer,
+		Now:   f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	out, err := c.Reconcile(t.Context())
+	require.NoError(t, err)
+
+	assert.Len(t, out.Moved, 1)
+	assert.Empty(t, out.Learned, "a promotion and a handover in the same pass")
+
+	// And the next pass promotes the other one.
+	out, err = c.Reconcile(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, out.Learned, 1)
+}
+
+// TestHandoverFinishesWhileTheOwnerIsAbsent: a range held because its owner is
+// gone but still inside its grace is no reason to wait. The destination already
+// holds everything the owner had, so handing it over resolves the absence
+// instead of enduring it.
+func TestHandoverFinishesWhileTheOwnerIsAbsent(t *testing.T) {
+	f := handoverFixture(t, "n1")
+
+	out := f.reconcile(t)
+
+	require.Len(t, out.Moved, 1)
+
+	got := f.ctl.m.Ranges[0]
+	assert.Equal(t, cluster.NodeID("n1"), got.Owner, "the range is served again")
+	assert.Empty(t, got.MoveTo)
+}
+
+// TestOrphanedOntoTheDestinationEndsTheMove: a range with no live follower is
+// reassigned to whichever node is least loaded, and that can be the learner it
+// was already moving to. Left recorded, the intent would name the owner as its
+// own destination — which Validate refuses, and which would fail every later
+// pass rather than the one that made it.
+func TestOrphanedOntoTheDestinationEndsTheMove(t *testing.T) {
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Learners: []cluster.NodeID{"n1"},
+		MoveTo:   "n1",
+	}}}
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: []cluster.NodeID{"n1"},
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live:         func() []cluster.NodeID { return f.live },
+		Readiness:    f.ctl,
+		PromoteAfter: 30 * time.Second,
+		RebuildAfter: 10 * time.Minute,
+		Now:          f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	// The owner goes, and stays gone past the long grace: there is no follower
+	// to promote, so the range is rebuilt onto whoever is left.
+	f.reconcile(t)
+	f.clk.advance(time.Hour)
+
+	out := f.reconcile(t)
+	require.Len(t, out.Orphaned, 1)
+
+	got := f.ctl.m.Ranges[0]
+	assert.Equal(t, cluster.NodeID("n1"), got.Owner)
+	assert.Empty(t, got.MoveTo, "the intent outlived the move and would name its own owner")
+	require.NoError(t, f.ctl.m.Validate())
+
+	// And the passes that follow are quiet rather than failing on an invalid map.
+	assert.False(t, f.reconcile(t).Changed)
 }
