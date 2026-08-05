@@ -3,6 +3,7 @@ package shardstore
 import (
 	"context"
 	"slices"
+	"sync"
 
 	"github.com/go-faster/errors"
 
@@ -36,6 +37,11 @@ type Plane struct {
 	router *Router
 	store  *Store
 	dial   Dialer
+
+	mu sync.RWMutex
+	// caught is the ranges this node has finished learning, in this process.
+	// See CatchUp for why it is not persisted.
+	caught map[rangeID]bool
 }
 
 // NewPlane wires this node's shard, routing and store together.

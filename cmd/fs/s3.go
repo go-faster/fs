@@ -198,6 +198,12 @@ Command-line flags override YAML configuration values.`,
 					// gone. Every node is a candidate; one holds it.
 					if clusterRT.metaPlane != nil {
 						go clusterRT.RunPlaneController(ctx, cfg)
+
+						// The other half of a range move, and the half
+						// only its destination can run: copying what
+						// the controller decided this node should
+						// hold. Every node runs its own.
+						go clusterRT.RunPlaneCatchUp(ctx)
 					}
 
 					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {
