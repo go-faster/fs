@@ -529,3 +529,176 @@ func TestOrphanedOntoTheDestinationEndsTheMove(t *testing.T) {
 	// And the passes that follow are quiet rather than failing on an invalid map.
 	assert.False(t, f.reconcile(t).Changed)
 }
+
+// trimFixture is a controller over a range holding more copies than configured,
+// which is the state a completed move leaves behind.
+func trimFixture(t *testing.T, replicas int, r rangemap.Range) *fixture {
+	t.Helper()
+
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{r}}
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: []cluster.NodeID{"n0", "n1", "n2"},
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live:      func() []cluster.NodeID { return f.live },
+		Readiness: f.ctl,
+		Replicas:  replicas,
+		Now:       f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	return f
+}
+
+// TestSurplusReplicaIsTrimmedAfterAMove is the debt a move leaves.
+//
+// Handover keeps the node it replaced as a follower rather than dropping it in
+// the same edit, so a range comes out of a move holding one more copy than it
+// went in with. Nothing gave it back until this: a cluster that rebalanced would
+// gain a replica per move, forever.
+func TestSurplusReplicaIsTrimmedAfterAMove(t *testing.T) {
+	// What Handover leaves: n1 took the range, n0 is the node it replaced.
+	f := trimFixture(t, 2, rangemap.Range{
+		Start: "", End: "", Owner: "n1",
+		Followers: []cluster.NodeID{"n2", "n0"},
+	})
+
+	out := f.reconcile(t)
+
+	assert.True(t, out.Changed)
+	require.Len(t, out.Trimmed, 1)
+
+	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Followers,
+		"the node the range was moved off keeps a copy, so the move relieved nothing")
+}
+
+// TestTrimIsIdempotent: a range already at its replica count is left alone, or
+// the controller would rewrite the map every tick forever.
+func TestTrimIsIdempotent(t *testing.T) {
+	f := trimFixture(t, 2, rangemap.Range{
+		Start: "", End: "", Owner: "n1",
+		Followers: []cluster.NodeID{"n2", "n0"},
+	})
+
+	require.True(t, f.reconcile(t).Changed)
+
+	out := f.reconcile(t)
+	assert.False(t, out.Changed)
+	assert.Empty(t, out.Trimmed)
+	assert.Len(t, f.ctl.acts, 1, "the map was written twice for one trim")
+}
+
+// TestTrimLeavesARangeMidMoveAlone: a range that is still moving is *supposed*
+// to have an extra copy — that is what the copy is. Trimming it would take away
+// the replica the move is in the middle of making.
+func TestTrimLeavesARangeMidMoveAlone(t *testing.T) {
+	f := trimFixture(t, 2, rangemap.Range{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n2", "n1"},
+		MoveTo:    "n1",
+	})
+
+	// The destination is away, so the handover cannot run and the surplus sits
+	// there for the trim to find. Without the guard it drops n1 — the very node
+	// the range is being given to — and the map stops being valid at all.
+	f.live = []cluster.NodeID{"n0", "n2"}
+
+	out := f.reconcile(t)
+
+	assert.Empty(t, out.Trimmed)
+	assert.Equal(t, []cluster.NodeID{"n2", "n1"}, f.ctl.m.Ranges[0].Followers,
+		"the move lost the replica it was making")
+	assert.Equal(t, cluster.NodeID("n1"), f.ctl.m.Ranges[0].MoveTo)
+}
+
+// TestTrimNeverGoesBelowTheTarget: a range short of its replicas is not the
+// trim's business, and taking one away would be the opposite of what it is for.
+func TestTrimNeverGoesBelowTheTarget(t *testing.T) {
+	// Exactly at the target: two replicas, so one follower. One fewer would be
+	// a range kept below what the cluster asked for, by the pass that exists to
+	// keep it at it.
+	f := trimFixture(t, 2, rangemap.Range{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n1"},
+	})
+
+	out := f.reconcile(t)
+
+	assert.False(t, out.Changed)
+	assert.Equal(t, []cluster.NodeID{"n1"}, f.ctl.m.Ranges[0].Followers)
+}
+
+// TestTrimIsOffWithoutATarget: a caller that does not know how many copies the
+// cluster keeps must not have this guess. Dropping replicas on a guess is the
+// one mistake here that costs data rather than space.
+func TestTrimIsOffWithoutATarget(t *testing.T) {
+	f := trimFixture(t, 0, rangemap.Range{
+		Start: "", End: "", Owner: "n1",
+		Followers: []cluster.NodeID{"n2", "n0"},
+	})
+
+	out := f.reconcile(t)
+
+	assert.False(t, out.Changed)
+	assert.Len(t, f.ctl.m.Ranges[0].Followers, 2)
+}
+
+// TestTheNodeAMoveRelievesDoesNotKeepACopy is the debt and its repayment in
+// sequence: the handover leaves the range one copy over, and the pass after it
+// takes that copy from the node the range was moved off.
+//
+// Which node is dropped is the whole point. A range is moved to relieve its
+// owner; leaving the replica there means its disk still holds the range, so the
+// move relieved nothing it was meant to.
+//
+// The two do not share a pass, though nothing would break if they did — trim
+// skips a range that is still moving, so the order is a preference for finishing
+// work in flight rather than a rule that has to hold.
+func TestTheNodeAMoveRelievesDoesNotKeepACopy(t *testing.T) {
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n2", "n1"},
+		MoveTo:    "n1",
+	}}}
+	require.NoError(t, m.Validate())
+
+	f := &fixture{
+		ctl:  &recorder{m: m, state: metastore.StateReady},
+		clk:  &clock{t: time.Unix(1700000000, 0)},
+		live: []cluster.NodeID{"n0", "n1", "n2"},
+	}
+
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: f.ctl.load, Save: f.ctl.save,
+		Live:     func() []cluster.NodeID { return f.live },
+		Replicas: 2,
+		Now:      f.clk.now,
+	})
+	require.NoError(t, err)
+
+	f.c = c
+
+	out, err := c.Reconcile(t.Context())
+	require.NoError(t, err)
+	require.Len(t, out.Moved, 1)
+	assert.Empty(t, out.Trimmed, "trimmed in the same pass as the handover")
+
+	// n1 owns it now, and n0 — the node it was moved off — is the surplus.
+	require.Equal(t, cluster.NodeID("n1"), f.ctl.m.Ranges[0].Owner)
+	require.Equal(t, []cluster.NodeID{"n2", "n0"}, f.ctl.m.Ranges[0].Followers)
+
+	out, err = c.Reconcile(t.Context())
+	require.NoError(t, err)
+	require.Len(t, out.Trimmed, 1)
+
+	assert.Equal(t, []cluster.NodeID{"n2"}, f.ctl.m.Ranges[0].Followers,
+		"the node the range was moved off is the one that kept a copy")
+}

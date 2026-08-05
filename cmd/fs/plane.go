@@ -235,6 +235,7 @@ func servePlaneLeadership(
 		Readiness: rt.metaPlane.state,
 		Measure:   rt.metaPlane.plane.Measure,
 		Ready:     rt.metaPlane.plane.Ready,
+		Replicas:  cfg.MetadataReplicas(),
 		Split: shardstore.SplitPolicy{
 			MaxBytes:         cfg.MetadataMaxRangeBytes(),
 			MaxSplitsPerPass: cfg.MetadataMaxSplitsPerPass(),
@@ -270,6 +271,12 @@ func servePlaneLeadership(
 
 		if !out.Changed {
 			continue
+		}
+
+		if len(out.Trimmed) > 0 {
+			lg.Info("Metadata ranges trimmed back to the configured replica count",
+				zap.Int("ranges", len(out.Trimmed)),
+				zap.Int("replicas", cfg.MetadataReplicas()))
 		}
 
 		if len(out.Moved) > 0 {
