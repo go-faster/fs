@@ -50,6 +50,11 @@ type ControllerConfig struct {
 	// Split is when a range is too large to leave alone.
 	Split SplitPolicy
 
+	// Rebalance is when a range is worth moving to relieve its owner. Nil
+	// Measure disables it, the same way it disables splitting: neither can be
+	// decided without asking the owners.
+	Rebalance RebalancePolicy
+
 	// Replicas is how many copies of a range the cluster is configured to keep,
 	// counting the owner. Zero means surplus replicas are left alone, which is
 	// what a caller that does not know the target should get.
@@ -145,6 +150,9 @@ type Reconciliation struct {
 	// Trimmed are the ranges dropped back to the configured replica count this
 	// pass, after a move left them one copy over it.
 	Trimmed []rangemap.Range
+	// Started is the move this pass began, if any — the first of a move's three
+	// edits, and the only one that decides anything.
+	Started *Move
 }
 
 // RebuildOwed reports whether this pass left ranges that hold nothing, which
@@ -259,7 +267,7 @@ func (c *Controller) Reconcile(ctx context.Context) (Reconciliation, error) {
 			return result, nil
 		}
 
-		return c.split(ctx, m, result)
+		return c.improve(ctx, m, result)
 	}
 
 	// Building before the map, not after. A node that picked up a map with an
@@ -556,13 +564,26 @@ func (c *Controller) promote(
 	return result, true, nil
 }
 
-// split makes the partitioning finer where the data warrants it.
+// improve makes the partitioning better rather than merely correct: finer where
+// the data warrants it, and more evenly placed where the load does.
 //
 // Runs only on a pass where the membership needed nothing, so every range has a
 // live owner to be measured — a range whose owner is gone cannot be measured,
-// and splitting it on the last number anyone saw would be a map edit made from
-// a stale reading.
-func (c *Controller) split(
+// and deciding from the last number anyone saw would be a map edit made from a
+// stale reading.
+//
+// # Split before move, and never both
+//
+// A split costs nothing: both halves are already on the right side of the new
+// boundary, so it is a map edit and no I/O at all. A move is a full copy. Doing
+// the free thing first is not merely cheaper — it is what makes the expensive
+// thing possible, because a node whose load sits in one enormous range has no
+// range small enough to place, and splitting is what produces the halves that
+// fit.
+//
+// So a pass that splits does not also move. The measurements it moved by are
+// about ranges that no longer exist.
+func (c *Controller) improve(
 	ctx context.Context,
 	m *rangemap.Map,
 	result Reconciliation,
@@ -571,9 +592,14 @@ func (c *Controller) split(
 		return result, nil
 	}
 
-	boundaries := PlanSplits(ctx, m, c.cfg.Measure, c.cfg.Split)
+	// One survey, both planners. Asking every owner twice a pass would double
+	// the traffic on the path that runs every five seconds, and could decide
+	// two things from two different readings of one cluster.
+	survey := c.survey(ctx, m)
+
+	boundaries := PlanSplits(m, survey, c.cfg.Split)
 	if len(boundaries) == 0 {
-		return result, nil
+		return c.startMove(ctx, m, survey, result)
 	}
 
 	next := m
@@ -595,6 +621,63 @@ func (c *Controller) split(
 	}
 
 	if len(result.Split) == 0 {
+		return c.startMove(ctx, m, survey, result)
+	}
+
+	if err := c.cfg.Save(ctx, next); err != nil {
+		return Reconciliation{}, errors.Wrap(err, "write the partitioning")
+	}
+
+	result.Changed = true
+
+	return result, nil
+}
+
+// survey asks every range's owner what it holds and what it is taking.
+//
+// One entry per range, in map order, nil where the owner could not be reached —
+// which the planners read as "no answer" rather than as a zero. A node that
+// cannot be asked is not a node that is idle, and the difference decides whether
+// it is chosen as somewhere to put more work.
+func (c *Controller) survey(ctx context.Context, m *rangemap.Map) Survey {
+	out := make(Survey, len(m.Ranges))
+
+	for i, r := range m.Ranges {
+		if err := ctx.Err(); err != nil {
+			return out
+		}
+
+		got, err := c.cfg.Measure(ctx, r.Owner, r)
+		if err != nil {
+			continue
+		}
+
+		out[i] = &got
+	}
+
+	return out
+}
+
+// startMove begins one move, if the load is uneven enough to be worth a copy.
+//
+// The first of a move's three edits and the only one that decides anything —
+// everything after it carries out what this wrote. See PlanRebalance for what
+// makes a move worth starting and why only one runs at a time.
+func (c *Controller) startMove(
+	ctx context.Context,
+	m *rangemap.Map,
+	survey Survey,
+	result Reconciliation,
+) (Reconciliation, error) {
+	move, ok := PlanRebalance(m, survey, c.cfg.Live(), c.cfg.Rebalance)
+	if !ok {
+		return result, nil
+	}
+
+	next, err := m.StartMove(move.At, move.To)
+	if err != nil {
+		// A move the map will not accept is one the next pass plans again from
+		// a fresher picture. Nothing is written, so nothing is half-started.
 		return result, nil
 	}
 
@@ -603,6 +686,7 @@ func (c *Controller) split(
 	}
 
 	result.Changed = true
+	result.Started = &move
 
 	return result, nil
 }

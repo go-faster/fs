@@ -236,6 +236,9 @@ func servePlaneLeadership(
 		Measure:   rt.metaPlane.plane.Measure,
 		Ready:     rt.metaPlane.plane.Ready,
 		Replicas:  cfg.MetadataReplicas(),
+		Rebalance: shardstore.RebalancePolicy{
+			MinGap: cfg.MetadataRebalanceGap(),
+		},
 		Split: shardstore.SplitPolicy{
 			MaxBytes:         cfg.MetadataMaxRangeBytes(),
 			MaxSplitsPerPass: cfg.MetadataMaxSplitsPerPass(),
@@ -271,6 +274,13 @@ func servePlaneLeadership(
 
 		if !out.Changed {
 			continue
+		}
+
+		if out.Started != nil {
+			lg.Info("Metadata range move started",
+				zap.String("to", string(out.Started.To)),
+				zap.Float64("range_writes_per_sec", out.Started.Writes),
+				zap.Float64("gap_writes_per_sec", out.Started.Gap))
 		}
 
 		if len(out.Trimmed) > 0 {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
@@ -302,6 +303,25 @@ func (m *measurements) measure(
 	return m.byStart[r.Start], nil
 }
 
+// survey is what a pass hands the planners: one entry per range, nil where the
+// owner could not be reached.
+func (m *measurements) survey(t *testing.T, in *rangemap.Map) shardstore.Survey {
+	t.Helper()
+
+	out := make(shardstore.Survey, len(in.Ranges))
+
+	for i, r := range in.Ranges {
+		got, err := m.measure(t.Context(), r.Owner, r)
+		if err != nil {
+			continue
+		}
+
+		out[i] = &got
+	}
+
+	return out
+}
+
 // TestPlanSplitsTakesTheLargestFirst: the cap is reached long before the work is
 // done on a cluster that has just been switched on, so finishing the alphabet
 // while one enormous range waits is the wrong order to make progress in.
@@ -319,8 +339,7 @@ func TestPlanSplitsTakesTheLargestFirst(t *testing.T) {
 		"oc": {Bytes: 500, SplitAt: "ocm"},
 	}}
 
-	plan := shardstore.PlanSplits(t.Context(), m, table.measure,
-		shardstore.SplitPolicy{MaxBytes: 100, MaxSplitsPerPass: 2})
+	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100, MaxSplitsPerPass: 2})
 
 	assert.Equal(t, []string{"obm", "ocm"}, plan, "the two largest, in that order")
 }
@@ -334,8 +353,7 @@ func TestPlanSplitsLeavesSmallRangesAlone(t *testing.T) {
 		"": {Bytes: 100, SplitAt: "om"},
 	}}
 
-	assert.Empty(t, shardstore.PlanSplits(t.Context(), m, table.measure,
-		shardstore.SplitPolicy{MaxBytes: 1000}))
+	assert.Empty(t, shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 1000}))
 }
 
 // TestPlanSplitsSkipsARangeWithNoPoint: an owner reporting no split point has a
@@ -348,8 +366,7 @@ func TestPlanSplitsSkipsARangeWithNoPoint(t *testing.T) {
 		"": {Bytes: 1 << 40, SplitAt: ""},
 	}}
 
-	assert.Empty(t, shardstore.PlanSplits(t.Context(), m, table.measure,
-		shardstore.SplitPolicy{MaxBytes: 100}))
+	assert.Empty(t, shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100}))
 }
 
 // TestPlanSplitsSkipsAnUnreachableOwner: splitting on a stale size would be a
@@ -370,18 +387,20 @@ func TestPlanSplitsSkipsAnUnreachableOwner(t *testing.T) {
 		fail: map[cluster.NodeID]bool{"gone": true},
 	}
 
-	plan := shardstore.PlanSplits(t.Context(), m, table.measure,
-		shardstore.SplitPolicy{MaxBytes: 100})
+	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100})
 
 	assert.Equal(t, []string{"obm"}, plan,
 		"the unreachable owner's range is skipped, not assumed")
 	assert.Contains(t, table.asked, cluster.NodeID("gone"), "it was asked, and it failed")
 }
 
-// TestPlanSplitsAsksTheOwner: a controller measuring its own shard would be
-// measuring whichever ranges it happens to own and calling that the cluster.
-func TestPlanSplitsAsksTheOwner(t *testing.T) {
-	m := &rangemap.Map{Ranges: []rangemap.Range{
+// TestTheSurveyAsksEachRangesOwner: a controller measuring its own shard would
+// be measuring whichever ranges it happens to own and calling that the cluster.
+//
+// At the controller rather than the planner, because that is where the asking
+// moved when the survey became something taken once and shared.
+func TestTheSurveyAsksEachRangesOwner(t *testing.T) {
+	m := &rangemap.Map{Revision: 7, Ranges: []rangemap.Range{
 		{Start: "", End: "ob", Owner: "n0"},
 		{Start: "ob", End: "oc", Owner: "n1"},
 		{Start: "oc", End: "", Owner: "n2"},
@@ -389,11 +408,21 @@ func TestPlanSplitsAsksTheOwner(t *testing.T) {
 	require.NoError(t, m.Validate())
 
 	table := &measurements{byStart: map[string]shardstore.Measurement{}}
+	ctl := &recorder{m: m, state: metastore.StateReady}
 
-	shardstore.PlanSplits(t.Context(), m, table.measure, shardstore.SplitPolicy{})
+	c, err := shardstore.NewController(shardstore.ControllerConfig{
+		Load: ctl.load, Save: ctl.save,
+		Live:    func() []cluster.NodeID { return []cluster.NodeID{"n0", "n1", "n2"} },
+		Measure: table.measure,
+		Now:     time.Now,
+	})
+	require.NoError(t, err)
+
+	_, err = c.Reconcile(t.Context())
+	require.NoError(t, err)
 
 	assert.Equal(t, []cluster.NodeID{"n0", "n1", "n2"}, table.asked,
-		"each range is measured by whoever holds it")
+		"each range is measured by whoever holds it, once")
 }
 
 // TestPlanSplitsIsAFunctionOfTheMeasurements: an election has a window where
@@ -437,8 +466,8 @@ func TestPlanSplitsIsAFunctionOfTheMeasurements(t *testing.T) {
 
 	policy := shardstore.SplitPolicy{MaxBytes: 100, MaxSplitsPerPass: 3}
 
-	first := shardstore.PlanSplits(t.Context(), m, table.measure, policy)
-	second := shardstore.PlanSplits(t.Context(), m, table.measure, policy)
+	first := shardstore.PlanSplits(m, table.survey(t, m), policy)
+	second := shardstore.PlanSplits(m, table.survey(t, m), policy)
 
 	require.Equal(t, first, second, "the same measurements must give the same plan")
 	assert.Equal(t, []string{"o01m", "o06m", "o04m"}, first,
@@ -475,6 +504,6 @@ func TestPlanSplitsBoundsMapChurn(t *testing.T) {
 	m := &rangemap.Map{Ranges: ranges}
 	require.NoError(t, m.Validate())
 
-	plan := shardstore.PlanSplits(t.Context(), m, table.measure, shardstore.SplitPolicy{MaxBytes: 1})
+	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 1})
 	assert.Len(t, plan, shardstore.DefaultMaxSplitsPerPass)
 }

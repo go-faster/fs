@@ -319,6 +319,17 @@ type MetadataConfig struct {
 	// (default shardstore.DefaultMaxSplitsPerPass). Splitting moves no data,
 	// but each one is a map revision every node in the cluster refetches.
 	MaxSplitsPerPass int `yaml:"max_splits_per_pass,omitempty"`
+
+	// RebalanceGap is how much busier, in writes a second, the busiest node
+	// must be than the quietest before a range is moved to even them out
+	// (default shardstore.DefaultRebalanceGap).
+	//
+	// A floor rather than a ratio, because a quiet node makes any ratio look
+	// infinite: a cluster doing almost nothing would shuffle ranges over a
+	// handful of writes. Raise it on a cluster whose load is spiky, where a
+	// difference that exists now will be gone before a copy of a range
+	// finishes.
+	RebalanceGap float64 `yaml:"rebalance_gap,omitempty"`
 }
 
 // MetadataMaxRangeBytes is the configured split threshold, or the default.
@@ -326,6 +337,9 @@ func (c *Config) MetadataMaxRangeBytes() uint64 { return c.Cluster.Metadata.MaxR
 
 // MetadataMaxSplitsPerPass is the configured per-pass cap, or the default.
 func (c *Config) MetadataMaxSplitsPerPass() int { return c.Cluster.Metadata.MaxSplitsPerPass }
+
+// MetadataRebalanceGap is the configured rebalance threshold, or the default.
+func (c *Config) MetadataRebalanceGap() float64 { return c.Cluster.Metadata.RebalanceGap }
 
 // MetadataRanges is the configured presplit count, or the default.
 func (c *Config) MetadataRanges() int {
