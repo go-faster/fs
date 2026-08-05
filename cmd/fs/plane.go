@@ -234,6 +234,7 @@ func servePlaneLeadership(
 		Live:      rt.liveNodes,
 		Readiness: rt.metaPlane.state,
 		Measure:   rt.metaPlane.plane.Measure,
+		Ready:     rt.metaPlane.plane.Ready,
 		Split: shardstore.SplitPolicy{
 			MaxBytes:         cfg.MetadataMaxRangeBytes(),
 			MaxSplitsPerPass: cfg.MetadataMaxSplitsPerPass(),
@@ -269,6 +270,11 @@ func servePlaneLeadership(
 
 		if !out.Changed {
 			continue
+		}
+
+		if len(out.Learned) > 0 {
+			lg.Info("Metadata ranges finished being copied: learners promoted to followers",
+				zap.Int("ranges", len(out.Learned)))
 		}
 
 		if len(out.Split) > 0 {
