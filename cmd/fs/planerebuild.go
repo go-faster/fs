@@ -83,24 +83,22 @@ func (rt *clusterRuntime) RunPlaneRebuild(ctx context.Context, cfg Config) {
 			continue
 		}
 
-		lg.Info("Metadata plane owes a rebuild: starting one",
-			zap.String("cause", build.Cause.String()),
-			zap.String("policy", cfg.MetadataRebuild()))
-
+		// Through the same guard an operator's request goes through, so a
+		// timer that fires while someone is already rebuilding does nothing
+		// rather than campaigning behind them.
+		//
 		// Elected, resumable and idempotent, all of which RunMetaRebuild
 		// already is — including the recheck after winning the election, which
 		// is what stops every node rebuilding the cluster in turn. So a tick
-		// that races another node's rebuild costs one campaign and no work.
-		if err := rt.RunMetaRebuild(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			// Retried on the next tick. Every reason this fails — a lost
-			// election, a control-plane read, a node going away mid-walk — is
-			// one the next attempt may not have, and the cursor means it
-			// resumes rather than starts over.
-			lg.Warn("Metadata plane rebuild failed; retrying", zap.Error(err))
+		// that races *another node's* rebuild costs one campaign and no work,
+		// and the failure of one attempt is retried by the next tick from the
+		// cursor rather than from the beginning.
+		if err := rt.plane.start(func() {
+			lg.Info("Metadata plane owes a rebuild: starting one",
+				zap.String("cause", build.Cause.String()),
+				zap.String("policy", cfg.MetadataRebuild()))
+		}); err != nil {
+			continue
 		}
 	}
 }

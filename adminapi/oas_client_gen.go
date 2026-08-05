@@ -103,6 +103,15 @@ type Invoker interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetMetadataPlaneStatus invokes getMetadataPlaneStatus operation.
+	//
+	// Whether the sharded metadata plane is usable, and when it is not, why. A plane that is building
+	// still answers every listing correctly — the request falls back to walking sidecars, which is
+	// slower — so this is the difference between a cluster that is slow and one that is broken. State is
+	// "disabled" when the server is not running the sharded plane.
+	//
+	// GET /api/v1/cluster/metadata-plane
+	GetMetadataPlaneStatus(ctx context.Context) (*MetadataPlaneStatus, error)
 	// GetMigrationStatus invokes getMigrationStatus operation.
 	//
 	// The schema version the cluster has agreed on, the version this binary implements, and the migrations
@@ -139,6 +148,17 @@ type Invoker interface {
 	//
 	// GET /api/v1/cluster/disk-weights
 	ListDiskWeights(ctx context.Context) (*DiskWeightList, error)
+	// RebuildMetadataPlane invokes rebuildMetadataPlane operation.
+	//
+	// Start the cluster-wide rebuild the plane owes, now, whatever the configured policy. This is how an
+	// operator answers the case the policy deliberately leaves alone: a plane switched on over a cluster
+	// that already holds objects, where the walk of every disk that follows is theirs to schedule. At most
+	// one rebuild runs cluster-wide (etcd election), and it checkpoints a cursor, so a request that races
+	// another node's rebuild costs one campaign and no work. Returns 409 when this node is already running
+	// one.
+	//
+	// POST /api/v1/cluster/metadata-plane
+	RebuildMetadataPlane(ctx context.Context) (*MetadataPlaneStatus, error)
 	// ReloadConfig invokes reloadConfig operation.
 	//
 	// Re-read the configuration file and apply the parts that change without a restart — the
@@ -1042,6 +1062,89 @@ func (c *Client) sendGetInfo(ctx context.Context) (res *InstanceInfo, err error)
 	return result, nil
 }
 
+// GetMetadataPlaneStatus invokes getMetadataPlaneStatus operation.
+//
+// Whether the sharded metadata plane is usable, and when it is not, why. A plane that is building
+// still answers every listing correctly — the request falls back to walking sidecars, which is
+// slower — so this is the difference between a cluster that is slow and one that is broken. State is
+// "disabled" when the server is not running the sharded plane.
+//
+// GET /api/v1/cluster/metadata-plane
+func (c *Client) GetMetadataPlaneStatus(ctx context.Context) (*MetadataPlaneStatus, error) {
+	res, err := c.sendGetMetadataPlaneStatus(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetMetadataPlaneStatus(ctx context.Context) (res *MetadataPlaneStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMetadataPlaneStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/metadata-plane"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetMetadataPlaneStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/metadata-plane"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetMetadataPlaneStatusResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetMigrationStatus invokes getMigrationStatus operation.
 //
 // The schema version the cluster has agreed on, the version this binary implements, and the migrations
@@ -1441,6 +1544,91 @@ func (c *Client) sendListDiskWeights(ctx context.Context) (res *DiskWeightList, 
 
 	stage = "DecodeResponse"
 	result, err := decodeListDiskWeightsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RebuildMetadataPlane invokes rebuildMetadataPlane operation.
+//
+// Start the cluster-wide rebuild the plane owes, now, whatever the configured policy. This is how an
+// operator answers the case the policy deliberately leaves alone: a plane switched on over a cluster
+// that already holds objects, where the walk of every disk that follows is theirs to schedule. At most
+// one rebuild runs cluster-wide (etcd election), and it checkpoints a cursor, so a request that races
+// another node's rebuild costs one campaign and no work. Returns 409 when this node is already running
+// one.
+//
+// POST /api/v1/cluster/metadata-plane
+func (c *Client) RebuildMetadataPlane(ctx context.Context) (*MetadataPlaneStatus, error) {
+	res, err := c.sendRebuildMetadataPlane(ctx)
+	return res, err
+}
+
+func (c *Client) sendRebuildMetadataPlane(ctx context.Context) (res *MetadataPlaneStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("rebuildMetadataPlane"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/metadata-plane"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RebuildMetadataPlaneOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/metadata-plane"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRebuildMetadataPlaneResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

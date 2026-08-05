@@ -43,8 +43,12 @@ type clusterRuntime struct {
 	closers   []func() error
 	coord     *clusterstore.Coordinator
 	metaPlane *metadataPlane
-	nodeID    cluster.NodeID
-	schemeID  string
+	// plane guards the metadata plane's rebuild: the timed policy and an
+	// operator's request both start one through it, so "already running on this
+	// node" is one fact rather than two that have to agree.
+	plane    *planeController
+	nodeID   cluster.NodeID
+	schemeID string
 	// version and started stamp the live state this node reports to peers.
 	version string
 	started time.Time
@@ -423,6 +427,20 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 	// as `fs cluster rebalance`, using this node's repairer. Its runs are
 	// bounded by ctx (the server lifetime).
 	rt.rebalance = newRebalanceController(ctx, lg, client, etcdCfg, coord, rt.repairer, string(rt.nodeID)+"/admin")
+	// The metadata plane's rebuild, likewise bounded by the server lifetime
+	// rather than by the request that asks for one: the walk outlives it by
+	// hours. Only wired when this node runs the plane; without it the status
+	// endpoint reports "disabled" and the rebuild is refused.
+	if rt.metaPlane != nil {
+		rt.plane = &planeController{
+			lg:      lg,
+			run:     rt.RunMetaRebuild,
+			status:  rt.metaPlane.state.Status,
+			policy:  cfg.MetadataRebuild(),
+			baseCtx: ctx,
+		}
+	}
+
 	rt.status = newClusterStatusSource(coord, client, etcdCfg, newPeerStatus(rt.nodeID, secret))
 	rt.migrate = newMigrateController(client, etcdCfg, string(rt.nodeID)+"/admin",
 		clusterMigrations(migrationDeps{client: client, etcdCfg: etcdCfg, coord: coord}))

@@ -100,6 +100,48 @@ paths:
                 $ref: "#/components/schemas/RebalanceStatus"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/metadata-plane:
+    get:
+      operationId: "getMetadataPlaneStatus"
+      summary: "Sharded metadata plane status"
+      description: >
+        Whether the sharded metadata plane is usable, and when it is not, why.
+        A plane that is building still answers every listing correctly — the
+        request falls back to walking sidecars, which is slower — so this is
+        the difference between a cluster that is slow and one that is broken.
+        State is "disabled" when the server is not running the sharded plane.
+      responses:
+        200:
+          description: Metadata plane status.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MetadataPlaneStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: "rebuildMetadataPlane"
+      summary: "Rebuild the sharded metadata plane"
+      description: >
+        Start the cluster-wide rebuild the plane owes, now, whatever the
+        configured policy. This is how an operator answers the case the policy
+        deliberately leaves alone: a plane switched on over a cluster that
+        already holds objects, where the walk of every disk that follows is
+        theirs to schedule.
+
+        At most one rebuild runs cluster-wide (etcd election), and it
+        checkpoints a cursor, so a request that races another node's rebuild
+        costs one campaign and no work. Returns 409 when this node is already
+        running one.
+      responses:
+        200:
+          description: Status after starting the rebuild.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MetadataPlaneStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/cluster/status:
     get:
       operationId: "getClusterStatus"
@@ -612,6 +654,57 @@ components:
         repair_queue_depth:
           type: integer
           description: "Pending async replication-remainder tasks on this node (repair backlog indicator)."
+    MetadataPlaneState:
+      type: string
+      enum:
+        - disabled
+        - ready
+        - building
+      description: >
+        "ready" means listings are served from the plane. "building" means they
+        fall back to walking sidecars: correct, and slower. "disabled" means
+        this server does not run the sharded plane.
+    MetadataPlaneCause:
+      type: string
+      enum:
+        - unspecified
+        - never-built
+        - orphaned
+      description: >
+        Why the plane is building, and what decides whether anything rebuilds
+        it without being asked. "never-built" is a plane switched on over a
+        cluster that already held objects — planned, so the walk is an
+        operator's to schedule. "orphaned" is a failure that left a range with
+        no copy of its data — not planned, and the cluster is degraded until it
+        is rebuilt. "unspecified" is a reason nobody recorded, which is never
+        acted on automatically.
+    MetadataPlaneStatus:
+      type: object
+      required:
+        - state
+        - rebuilding
+      properties:
+        state:
+          $ref: "#/components/schemas/MetadataPlaneState"
+        cause:
+          $ref: "#/components/schemas/MetadataPlaneCause"
+        rebuilding:
+          type: boolean
+          description: "Whether this node is running a rebuild right now."
+        policy:
+          type: string
+          description: "The configured automatic-rebuild policy (cluster.metadata.rebuild)."
+        started_at:
+          type: string
+          format: date-time
+          description: "When this node's current or last rebuild started."
+        finished_at:
+          type: string
+          format: date-time
+          description: "When this node's last rebuild ended."
+        error_message:
+          type: string
+          description: "Why this node's last rebuild failed."
     RebalanceAction:
       type: string
       enum:

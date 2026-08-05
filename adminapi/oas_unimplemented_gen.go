@@ -115,6 +115,18 @@ func (UnimplementedHandler) GetInfo(ctx context.Context) (r *InstanceInfo, _ err
 	return r, ht.ErrNotImplemented
 }
 
+// GetMetadataPlaneStatus implements getMetadataPlaneStatus operation.
+//
+// Whether the sharded metadata plane is usable, and when it is not, why. A plane that is building
+// still answers every listing correctly — the request falls back to walking sidecars, which is
+// slower — so this is the difference between a cluster that is slow and one that is broken. State is
+// "disabled" when the server is not running the sharded plane.
+//
+// GET /api/v1/cluster/metadata-plane
+func (UnimplementedHandler) GetMetadataPlaneStatus(ctx context.Context) (r *MetadataPlaneStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetMigrationStatus implements getMigrationStatus operation.
 //
 // The schema version the cluster has agreed on, the version this binary implements, and the migrations
@@ -163,6 +175,20 @@ func (UnimplementedHandler) ListAccessKeys(ctx context.Context) (r *AccessKeyLis
 //
 // GET /api/v1/cluster/disk-weights
 func (UnimplementedHandler) ListDiskWeights(ctx context.Context) (r *DiskWeightList, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RebuildMetadataPlane implements rebuildMetadataPlane operation.
+//
+// Start the cluster-wide rebuild the plane owes, now, whatever the configured policy. This is how an
+// operator answers the case the policy deliberately leaves alone: a plane switched on over a cluster
+// that already holds objects, where the walk of every disk that follows is theirs to schedule. At most
+// one rebuild runs cluster-wide (etcd election), and it checkpoints a cursor, so a request that races
+// another node's rebuild costs one campaign and no work. Returns 409 when this node is already running
+// one.
+//
+// POST /api/v1/cluster/metadata-plane
+func (UnimplementedHandler) RebuildMetadataPlane(ctx context.Context) (r *MetadataPlaneStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

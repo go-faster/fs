@@ -70,6 +70,7 @@ type adminServerConfig struct {
 	StartTime   time.Time
 
 	Rebalance            adminhandler.RebalanceControl
+	Plane                adminhandler.PlaneControl
 	ClusterStatus        adminhandler.ClusterStatusSource
 	Migrations           adminhandler.MigrationControl
 	BucketSchemes        adminhandler.BucketSchemeStore
@@ -106,6 +107,7 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 		AuthEnabled:          cfg.AuthEnabled,
 		StartTime:            cfg.StartTime,
 		Rebalance:            cfg.Rebalance,
+		Plane:                cfg.Plane,
 		ClusterStatus:        cfg.ClusterStatus,
 		Migrations:           cfg.Migrations,
 		BucketSchemes:        cfg.BucketSchemes,

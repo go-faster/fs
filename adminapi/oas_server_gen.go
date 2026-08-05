@@ -83,6 +83,15 @@ type Handler interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetMetadataPlaneStatus implements getMetadataPlaneStatus operation.
+	//
+	// Whether the sharded metadata plane is usable, and when it is not, why. A plane that is building
+	// still answers every listing correctly — the request falls back to walking sidecars, which is
+	// slower — so this is the difference between a cluster that is slow and one that is broken. State is
+	// "disabled" when the server is not running the sharded plane.
+	//
+	// GET /api/v1/cluster/metadata-plane
+	GetMetadataPlaneStatus(ctx context.Context) (*MetadataPlaneStatus, error)
 	// GetMigrationStatus implements getMigrationStatus operation.
 	//
 	// The schema version the cluster has agreed on, the version this binary implements, and the migrations
@@ -119,6 +128,17 @@ type Handler interface {
 	//
 	// GET /api/v1/cluster/disk-weights
 	ListDiskWeights(ctx context.Context) (*DiskWeightList, error)
+	// RebuildMetadataPlane implements rebuildMetadataPlane operation.
+	//
+	// Start the cluster-wide rebuild the plane owes, now, whatever the configured policy. This is how an
+	// operator answers the case the policy deliberately leaves alone: a plane switched on over a cluster
+	// that already holds objects, where the walk of every disk that follows is theirs to schedule. At most
+	// one rebuild runs cluster-wide (etcd election), and it checkpoints a cursor, so a request that races
+	// another node's rebuild costs one campaign and no work. Returns 409 when this node is already running
+	// one.
+	//
+	// POST /api/v1/cluster/metadata-plane
+	RebuildMetadataPlane(ctx context.Context) (*MetadataPlaneStatus, error)
 	// ReloadConfig implements reloadConfig operation.
 	//
 	// Re-read the configuration file and apply the parts that change without a restart — the

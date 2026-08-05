@@ -23,7 +23,7 @@ var (
 	rn7AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn18AllowedHeaders = map[string]string{
+	rn20AllowedHeaders = map[string]string{
 		"PUT": "Content-Type",
 	}
 )
@@ -331,31 +331,72 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					}
 
-				case 'm': // Prefix: "migrate"
+				case 'm': // Prefix: "m"
 
-					if l := len("migrate"); len(elem) >= l && elem[0:l] == "migrate" {
+					if l := len("m"); len(elem) >= l && elem[0:l] == "m" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch r.Method {
-						case "GET":
-							s.handleGetMigrationStatusRequest([0]string{}, elemIsEscaped, w, r)
-						case "POST":
-							s.handleApplyMigrationsRequest([0]string{}, elemIsEscaped, w, r)
-						default:
-							s.notAllowed(w, r, notAllowedParams{
-								allowedMethods: "GET,POST",
-								allowedHeaders: nil,
-								acceptPost:     "",
-								acceptPatch:    "",
-							})
+						break
+					}
+					switch elem[0] {
+					case 'e': // Prefix: "etadata-plane"
+
+						if l := len("etadata-plane"); len(elem) >= l && elem[0:l] == "etadata-plane" {
+							elem = elem[l:]
+						} else {
+							break
 						}
 
-						return
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleGetMetadataPlaneStatusRequest([0]string{}, elemIsEscaped, w, r)
+							case "POST":
+								s.handleRebuildMetadataPlaneRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET,POST",
+									allowedHeaders: nil,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					case 'i': // Prefix: "igrate"
+
+						if l := len("igrate"); len(elem) >= l && elem[0:l] == "igrate" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleGetMigrationStatusRequest([0]string{}, elemIsEscaped, w, r)
+							case "POST":
+								s.handleApplyMigrationsRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET,POST",
+									allowedHeaders: nil,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
 					}
 
 				case 'r': // Prefix: "rebalance"
@@ -455,7 +496,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					default:
 						s.notAllowed(w, r, notAllowedParams{
 							allowedMethods: "GET,PUT",
-							allowedHeaders: rn18AllowedHeaders,
+							allowedHeaders: rn20AllowedHeaders,
 							acceptPost:     "",
 							acceptPatch:    "",
 						})
@@ -850,38 +891,86 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 
 					}
 
-				case 'm': // Prefix: "migrate"
+				case 'm': // Prefix: "m"
 
-					if l := len("migrate"); len(elem) >= l && elem[0:l] == "migrate" {
+					if l := len("m"); len(elem) >= l && elem[0:l] == "m" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch method {
-						case "GET":
-							r.name = GetMigrationStatusOperation
-							r.summary = "Cluster schema migration status"
-							r.operationID = "getMigrationStatus"
-							r.operationGroup = ""
-							r.pathPattern = "/api/v1/cluster/migrate"
-							r.args = args
-							r.count = 0
-							return r, true
-						case "POST":
-							r.name = ApplyMigrationsOperation
-							r.summary = "Apply pending schema migrations"
-							r.operationID = "applyMigrations"
-							r.operationGroup = ""
-							r.pathPattern = "/api/v1/cluster/migrate"
-							r.args = args
-							r.count = 0
-							return r, true
-						default:
-							return
+						break
+					}
+					switch elem[0] {
+					case 'e': // Prefix: "etadata-plane"
+
+						if l := len("etadata-plane"); len(elem) >= l && elem[0:l] == "etadata-plane" {
+							elem = elem[l:]
+						} else {
+							break
 						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = GetMetadataPlaneStatusOperation
+								r.summary = "Sharded metadata plane status"
+								r.operationID = "getMetadataPlaneStatus"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/cluster/metadata-plane"
+								r.args = args
+								r.count = 0
+								return r, true
+							case "POST":
+								r.name = RebuildMetadataPlaneOperation
+								r.summary = "Rebuild the sharded metadata plane"
+								r.operationID = "rebuildMetadataPlane"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/cluster/metadata-plane"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
+					case 'i': // Prefix: "igrate"
+
+						if l := len("igrate"); len(elem) >= l && elem[0:l] == "igrate" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = GetMigrationStatusOperation
+								r.summary = "Cluster schema migration status"
+								r.operationID = "getMigrationStatus"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/cluster/migrate"
+								r.args = args
+								r.count = 0
+								return r, true
+							case "POST":
+								r.name = ApplyMigrationsOperation
+								r.summary = "Apply pending schema migrations"
+								r.operationID = "applyMigrations"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/cluster/migrate"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
 					}
 
 				case 'r': // Prefix: "rebalance"
