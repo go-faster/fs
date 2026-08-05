@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
@@ -335,8 +334,13 @@ func (p SplitPolicy) maxPerPass() int {
 	return p.MaxSplitsPerPass
 }
 
-// PlanSplits asks every range's owner what it holds and returns the boundaries
-// worth creating, largest range first.
+// PlanSplits returns the boundaries worth creating, largest range first, from a
+// survey already taken.
+//
+// Pure, and taking the measurements rather than a way to make them, because the
+// pass that splits also rebalances and both want the same numbers. Two planners
+// measuring separately would ask every owner twice every five seconds, and could
+// decide two things from two different readings of one cluster.
 //
 // # Largest first, and bounded
 //
@@ -344,18 +348,7 @@ func (p SplitPolicy) maxPerPass() int {
 // earliest, because the cap is reached long before the work is done on a
 // cluster that has just been switched on — and finishing the alphabet while the
 // one enormous range waits is the wrong order to make progress in.
-//
-// # An owner that cannot be reached is skipped, not guessed at
-//
-// Splitting a range on a stale size would be a map edit made from a number
-// nobody currently stands behind. The range is measured again next pass, and
-// nothing is lost by waiting: an oversized range is a slow problem.
-func PlanSplits(
-	ctx context.Context,
-	m *rangemap.Map,
-	measure func(context.Context, cluster.NodeID, rangemap.Range) (Measurement, error),
-	policy SplitPolicy,
-) []string {
+func PlanSplits(m *rangemap.Map, survey Survey, policy SplitPolicy) []string {
 	type candidate struct {
 		at    string
 		bytes uint64
@@ -363,15 +356,16 @@ func PlanSplits(
 
 	var found []candidate
 
-	for _, r := range m.Ranges {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
-
-		got, err := measure(ctx, r.Owner, r)
-		if err != nil {
+	for i := range m.Ranges {
+		if i >= len(survey) || survey[i] == nil {
+			// An owner that could not be reached is skipped, not guessed at.
+			// Splitting on a stale size would be a map edit made from a number
+			// nobody currently stands behind, and an oversized range is a slow
+			// problem: it is measured again next pass and nothing is lost.
 			continue
 		}
+
+		got := survey[i]
 
 		if got.Bytes <= policy.maxBytes() || got.SplitAt == "" {
 			continue
