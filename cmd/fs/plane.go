@@ -295,6 +295,66 @@ func servePlaneLeadership(
 	}
 }
 
+// planeCatchUpInterval is how often a node checks whether it is being copied
+// into, and how often a copy in progress makes another attempt.
+//
+// Slower than the controller's tick: a move is minutes of work at best, so
+// checking three times a minute adds nothing to how fast one finishes. What it
+// bounds is how long a node takes to *notice* it has become a learner, which is
+// dead time at the start of every move — so not much slower either.
+const planeCatchUpInterval = 15 * time.Second
+
+// RunPlaneCatchUp copies the ranges this node is being moved, until ctx is done.
+//
+// Unelected, unlike the controller, and the difference is the point. Deciding
+// that a range moves is a decision about the map, which has one writer. Copying
+// it is work only the destination can do, so every node runs its own pass — and
+// a node that is a learner of nothing does nothing, which is almost every node
+// almost always.
+func (rt *clusterRuntime) RunPlaneCatchUp(ctx context.Context) {
+	lg := rt.lg
+
+	ticker := time.NewTicker(planeCatchUpInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		out, err := rt.metaPlane.plane.CatchUp(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			// Retried rather than escalated: the only way a pass fails outright
+			// is a control-plane read, which the next pass may well get.
+			lg.Warn("Metadata plane catch-up failed", zap.Error(err))
+
+			continue
+		}
+
+		if len(out.Copied) > 0 {
+			lg.Info("Metadata ranges copied into this node",
+				zap.Int("ranges", len(out.Copied)),
+				zap.Int("entries", out.Entries),
+				zap.Int("ready", len(out.Ready)))
+		}
+
+		if len(out.Failed) > 0 {
+			// Said out loud. A move that cannot reach its source is stalled, and
+			// a stalled move is invisible otherwise — the range keeps being
+			// served by its owner, so nothing degrades and nothing completes.
+			lg.Warn("Metadata ranges could not be copied into this node",
+				zap.Int("ranges", len(out.Failed)),
+				zap.Int("learning", out.Learning))
+		}
+	}
+}
+
 // bootstrapPlane partitions the plane if it has never been partitioned.
 //
 // Under leadership, so a cluster starting all its nodes at once partitions once
