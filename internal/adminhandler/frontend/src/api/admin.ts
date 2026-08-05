@@ -36,6 +36,7 @@ import type {
   DiskWeightList,
   ErrorResponse,
   InstanceInfo,
+  MetadataPlaneStatus,
   MigrationStatus,
   PublicReadBuckets,
   RebalanceControlRequest,
@@ -464,6 +465,167 @@ export const useControlRebalance = <TError = ErrorResponse,
       > => {
 
       const mutationOptions = getControlRebalanceMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Whether the sharded metadata plane is usable, and when it is not, why. A plane that is building still answers every listing correctly — the request falls back to walking sidecars, which is slower — so this is the difference between a cluster that is slow and one that is broken. State is "disabled" when the server is not running the sharded plane.
+
+ * @summary Sharded metadata plane status
+ */
+export const getMetadataPlaneStatus = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<MetadataPlaneStatus>(
+      {url: `/api/v1/cluster/metadata-plane`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
+
+export const getGetMetadataPlaneStatusQueryKey = () => {
+    return [
+    `/api/v1/cluster/metadata-plane`
+    ] as const;
+    }
+
+    
+export const getGetMetadataPlaneStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError = ErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError, TData>>, }
+) => {
+
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMetadataPlaneStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMetadataPlaneStatus>>> = ({ signal }) => getMetadataPlaneStatus(signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMetadataPlaneStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getMetadataPlaneStatus>>>
+export type GetMetadataPlaneStatusQueryError = ErrorResponse
+
+
+export function useGetMetadataPlaneStatus<TData = Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError = ErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMetadataPlaneStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getMetadataPlaneStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMetadataPlaneStatus<TData = Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMetadataPlaneStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getMetadataPlaneStatus>>
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMetadataPlaneStatus<TData = Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Sharded metadata plane status
+ */
+
+export function useGetMetadataPlaneStatus<TData = Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError = ErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetadataPlaneStatus>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMetadataPlaneStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Start the cluster-wide rebuild the plane owes, now, whatever the configured policy. This is how an operator answers the case the policy deliberately leaves alone: a plane switched on over a cluster that already holds objects, where the walk of every disk that follows is theirs to schedule.
+At most one rebuild runs cluster-wide (etcd election), and it checkpoints a cursor, so a request that races another node's rebuild costs one campaign and no work. Returns 409 when this node is already running one.
+
+ * @summary Rebuild the sharded metadata plane
+ */
+export const rebuildMetadataPlane = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<MetadataPlaneStatus>(
+      {url: `/api/v1/cluster/metadata-plane`, method: 'POST', signal
+    },
+      );
+    }
+  
+
+
+export const getRebuildMetadataPlaneMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rebuildMetadataPlane>>, TError,void, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof rebuildMetadataPlane>>, TError,void, TContext> => {
+
+const mutationKey = ['rebuildMetadataPlane'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rebuildMetadataPlane>>, void> = () => {
+          
+
+          return  rebuildMetadataPlane()
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RebuildMetadataPlaneMutationResult = NonNullable<Awaited<ReturnType<typeof rebuildMetadataPlane>>>
+    
+    export type RebuildMetadataPlaneMutationError = ErrorResponse
+
+    /**
+ * @summary Rebuild the sharded metadata plane
+ */
+export const useRebuildMetadataPlane = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rebuildMetadataPlane>>, TError,void, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rebuildMetadataPlane>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getRebuildMetadataPlaneMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
