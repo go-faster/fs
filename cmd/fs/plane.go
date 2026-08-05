@@ -272,6 +272,11 @@ func servePlaneLeadership(
 			continue
 		}
 
+		if len(out.Moved) > 0 {
+			lg.Info("Metadata ranges handed to their new owners",
+				zap.Int("ranges", len(out.Moved)))
+		}
+
 		if len(out.Learned) > 0 {
 			lg.Info("Metadata ranges finished being copied: learners promoted to followers",
 				zap.Int("ranges", len(out.Learned)))

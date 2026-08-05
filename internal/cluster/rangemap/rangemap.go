@@ -63,6 +63,26 @@ type Range struct {
 	// over; a learner is a node that is on its way to becoming one. Failover
 	// reads Followers and never this.
 	Learners []cluster.NodeID `json:"learners,omitempty"`
+
+	// MoveTo is the node this range is being handed to, empty when it is not
+	// moving.
+	//
+	// # Why the intent is recorded rather than recomputed
+	//
+	// A move is three edits — name a learner, promote it to follower, hand it
+	// ownership — and between the second and the third the map looks exactly
+	// like a range that simply has an extra replica. Without this field nothing
+	// would distinguish "B is a follower because a move is half done" from "B is
+	// a follower", and the move would have to be re-decided from load every
+	// pass. A workload that shifted in between would leave the range with a
+	// permanent extra replica and no move.
+	//
+	// So the decision is made once, when the move starts, and the passes that
+	// follow carry it out rather than reconsidering it. That is also what makes
+	// each intermediate state safe to stop in: a controller that dies mid-move
+	// leaves a range with one more replica than it needs, which costs storage
+	// and nothing else.
+	MoveTo cluster.NodeID `json:"move_to,omitempty"`
 }
 
 // Replicates reports whether a node receives this range's log, as a follower or
@@ -181,6 +201,22 @@ func (m *Map) Validate() error {
 				return errors.Errorf(
 					"range %d [%q,%q) names %s as both a follower and a learner",
 					i, r.Start, r.End, l)
+			}
+		}
+
+		// A destination that replicates nothing is a move to a node holding
+		// none of the range. Handover would make it the owner of data it does
+		// not have — the empty-range failure, arrived at deliberately.
+		if r.MoveTo != "" {
+			if r.MoveTo == r.Owner {
+				return errors.Errorf(
+					"range %d [%q,%q) is moving to %s, which already owns it", i, r.Start, r.End, r.MoveTo)
+			}
+
+			if !r.Replicates(r.MoveTo) {
+				return errors.Errorf(
+					"range %d [%q,%q) is moving to %s, which neither follows nor learns it",
+					i, r.Start, r.End, r.MoveTo)
 			}
 		}
 
@@ -490,6 +526,14 @@ func (m *Map) Merge(at string) (*Map, error) {
 	// the merged range is not what it was told to copy.
 	merged.Learners = intersect(left.Learners, right.Learners)
 
+	// And a move whose destination did not survive that intersection is a move
+	// to a node holding half of what it was promised. Dropped rather than
+	// carried: the range it was being given no longer exists, so the decision
+	// that named it was about something else.
+	if merged.MoveTo != "" && !merged.Replicates(merged.MoveTo) {
+		merged.MoveTo = ""
+	}
+
 	out.Ranges = append(out.Ranges, merged)
 	out.Ranges = append(out.Ranges, m.Ranges[i+1:]...)
 
@@ -518,6 +562,121 @@ func intersect(a, b []cluster.NodeID) []cluster.NodeID {
 
 	for _, n := range a {
 		if slices.Contains(b, n) {
+			out = append(out, n)
+		}
+	}
+
+	return out
+}
+
+// ErrNotMoving reports a range that is not being handed to anyone.
+var ErrNotMoving = errors.New("range is not moving")
+
+// StartMove records that a range is being handed to a node, adding it as a
+// learner.
+//
+// The first of a move's three edits, and the only one that decides anything.
+// What it writes is an intent — the passes that follow carry it out rather than
+// re-deriving it from load that may have moved on.
+//
+// # A learner, not a follower
+//
+// The destination holds none of the range yet, and a follower is a node that can
+// be promoted. Naming it one would let a failover in the next second hand it a
+// range it has not received, which answers "no such object" for every key in it.
+// So it starts as a learner and becomes a follower only once its copy is done.
+//
+// The returned map is a new value; the receiver is not modified.
+func (m *Map) StartMove(at string, to cluster.NodeID) (*Map, error) {
+	i, err := m.indexOf(at)
+	if err != nil {
+		return nil, err
+	}
+
+	r := m.Ranges[i]
+
+	if r.Owner == to {
+		return nil, errors.Errorf("range [%q,%q) is already owned by %s", r.Start, r.End, to)
+	}
+
+	if r.MoveTo != "" {
+		// One move at a time. A second destination would leave the first
+		// backfilling a range it will never be given, and nothing would stop it.
+		return nil, errors.Errorf(
+			"range [%q,%q) is already moving to %s", r.Start, r.End, r.MoveTo)
+	}
+
+	next := r
+	next.MoveTo = to
+
+	if !r.Replicates(to) {
+		next.Learners = append(slices.Clone(r.Learners), to)
+	}
+
+	return m.with(i, next)
+}
+
+// Handover completes a move: the destination becomes the owner, and the node it
+// replaced becomes a follower.
+//
+// The last of a move's three edits, and it is the cheap one — the destination
+// already holds the range, which is what being promoted out of a learner meant.
+// Refused until then, because an owner that holds part of a range is the failure
+// this whole sequence exists to avoid.
+//
+// # The old owner stays as a follower
+//
+// It holds the range, and dropping it would take the replica count down by one
+// at the moment ownership changes — turning a rebalance into a durability
+// decision nobody made. Reclaiming its space is a separate, deliberate step.
+func (m *Map) Handover(at string) (*Map, error) {
+	i, err := m.indexOf(at)
+	if err != nil {
+		return nil, err
+	}
+
+	r := m.Ranges[i]
+
+	if r.MoveTo == "" {
+		return nil, errors.Wrapf(ErrNotMoving, "range [%q,%q)", r.Start, r.End)
+	}
+
+	if !slices.Contains(r.Followers, r.MoveTo) {
+		// Still a learner, so its copy has not finished. A learner made owner
+		// serves the part it has and answers "no such object" for the rest,
+		// which nothing reports.
+		return nil, errors.Errorf(
+			"range [%q,%q) cannot be handed to %s until its copy is done",
+			r.Start, r.End, r.MoveTo)
+	}
+
+	next := r
+	next.Owner = r.MoveTo
+	next.MoveTo = ""
+	next.Followers = append(withoutNode(r.Followers, r.MoveTo), r.Owner)
+	next.Learners = slices.Clone(r.Learners)
+
+	return m.with(i, next)
+}
+
+// with returns a copy of the map with one range replaced, validated.
+func (m *Map) with(i int, r Range) (*Map, error) {
+	out := &Map{Revision: m.Revision, Ranges: slices.Clone(m.Ranges)}
+	out.Ranges[i] = r
+
+	if err := out.Validate(); err != nil {
+		return nil, errors.Wrap(err, "move produced an invalid map")
+	}
+
+	return out, nil
+}
+
+// withoutNode returns the list with a node removed, or nil when nothing is left.
+func withoutNode(nodes []cluster.NodeID, drop cluster.NodeID) []cluster.NodeID {
+	var out []cluster.NodeID
+
+	for _, n := range nodes {
+		if n != drop {
 			out = append(out, n)
 		}
 	}

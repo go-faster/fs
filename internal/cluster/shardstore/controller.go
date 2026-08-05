@@ -134,6 +134,9 @@ type Reconciliation struct {
 	// Learned are the ranges whose learner finished its copy and became an
 	// ordinary follower this pass.
 	Learned []rangemap.Range
+	// Moved are the ranges handed to their destination this pass — the last
+	// edit of a move, after which the range is served by the node it moved to.
+	Moved []rangemap.Range
 }
 
 // RebuildOwed reports whether this pass left ranges that hold nothing, which
@@ -217,6 +220,19 @@ func (c *Controller) Reconcile(ctx context.Context) (Reconciliation, error) {
 		// rewrites the map, and a split planned from the map before it would be
 		// applied to one that no longer matches. Neither is urgent, and the next
 		// pass is five seconds away.
+		// Moves in flight are finished before any are started. A pass that
+		// handed one range over and named a learner on another would be two
+		// decisions again, and the one already paid for is the one to finish:
+		// a range mid-move is holding an extra replica until it completes.
+		result, moved, err := c.finish(ctx, m, result)
+		if err != nil {
+			return Reconciliation{}, err
+		}
+
+		if moved {
+			return result, nil
+		}
+
 		result, promoted, err := c.promote(ctx, m, result)
 		if err != nil {
 			return Reconciliation{}, err
@@ -290,6 +306,83 @@ func (c *Controller) churn(m *rangemap.Map, live []cluster.NodeID) error {
 	}
 
 	return nil
+}
+
+// finish hands over the ranges whose destination has become a follower.
+//
+// The last edit of a move, and the one that actually changes who serves the
+// range. It is cheap by construction: the destination already holds everything
+// the owner held, which is what being promoted out of a learner established.
+//
+// # Nothing is re-decided here
+//
+// Whether the range should move was settled when the move started, and this pass
+// does not revisit it. A controller that re-derived the decision from load would
+// abandon moves whose justification had shifted while they ran — leaving the
+// range with a permanent extra replica and no move, which is the worst of both.
+//
+// # A destination that is gone is waited for, not replaced
+//
+// It holds a full copy of the range, and the range is still being served by its
+// current owner. So a move whose destination went away costs nothing while it
+// waits, and the alternative — picking a different destination — throws away a
+// finished copy to start another.
+//
+// # A missing owner does not hold this up
+//
+// Like promotion and splitting, this runs on a pass that did not reassign
+// anything. Unlike them, a range merely *held* — an owner gone but still inside
+// its grace — is no reason to wait: the destination already holds everything the
+// owner had, so handing it over is the one edit that resolves the absence
+// instead of enduring it. A move that happened to be one pass from done finishes
+// rather than waiting out a grace it does not need.
+func (c *Controller) finish(
+	ctx context.Context,
+	m *rangemap.Map,
+	result Reconciliation,
+) (Reconciliation, bool, error) {
+	live := c.cfg.Live()
+	next := m
+
+	for i, r := range m.Ranges {
+		// Still a learner, so the copy is not done and Handover would refuse.
+		// Checked here so the refusal is a state this pass understands rather
+		// than an error it has to interpret.
+		if r.MoveTo == "" || !slices.Contains(r.Followers, r.MoveTo) {
+			continue
+		}
+
+		if !slices.Contains(live, r.MoveTo) {
+			continue
+		}
+
+		// Applied one at a time onto the result of the last, because each
+		// returns a new map and the next handover must be made against it.
+		// Handover replaces one range in place, so the index still holds.
+		handed, err := next.Handover(r.Start)
+		if err != nil {
+			// A range this pass cannot hand over is left for the next one. The
+			// map is written from whatever did succeed, so one stuck move does
+			// not hold up the others.
+			continue
+		}
+
+		next = handed
+
+		result.Moved = append(result.Moved, next.Ranges[i])
+	}
+
+	if len(result.Moved) == 0 {
+		return result, false, nil
+	}
+
+	if err := c.cfg.Save(ctx, next); err != nil {
+		return result, false, errors.Wrap(err, "write the partitioning")
+	}
+
+	result.Changed = true
+
+	return result, true, nil
 }
 
 // promote turns learners that have finished their copy into ordinary followers.

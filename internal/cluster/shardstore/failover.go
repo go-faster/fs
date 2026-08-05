@@ -158,6 +158,14 @@ func ReassignWith(
 			out.Orphaned = append(out.Orphaned, next)
 		}
 
+		// A failover that hands the range to the node it was already moving to
+		// has completed that move by another route. Left set, the intent would
+		// name the owner as its own destination, which Validate refuses — and
+		// rightly: there is nothing left to hand over.
+		if next.Owner == next.MoveTo {
+			next.MoveTo = ""
+		}
+
 		out.Map.Ranges = append(out.Map.Ranges, next)
 	}
 

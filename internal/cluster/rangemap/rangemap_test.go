@@ -580,3 +580,152 @@ func TestSplitCarriesLearners(t *testing.T) {
 		assert.Equal(t, []cluster.NodeID{"n2"}, r.Learners, "half %d", i)
 	}
 }
+
+// moving is a range with a move in flight: n0 owns, n1 is being copied into.
+func moving() *rangemap.Map {
+	return &rangemap.Map{Revision: 3, Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0"},
+	}}
+}
+
+// TestStartMoveNamesALearner: the destination holds none of the range yet, and a
+// follower is a node that can be promoted. Naming it one would let a failover in
+// the next second hand it a range it has not received.
+func TestStartMoveNamesALearner(t *testing.T) {
+	m, err := moving().StartMove("", "n1")
+	require.NoError(t, err)
+
+	r := m.Ranges[0]
+	assert.Equal(t, cluster.NodeID("n1"), r.MoveTo)
+	assert.Equal(t, []cluster.NodeID{"n1"}, r.Learners)
+	assert.Empty(t, r.Followers, "a destination that has copied nothing is not promotable")
+	assert.Equal(t, cluster.NodeID("n0"), r.Owner)
+}
+
+// TestStartMoveKeepsAnExistingReplica: a range moving to a node that already
+// follows it has nothing to copy in bulk, and adding it a second time as a
+// learner would name it both — which Validate refuses, and rightly.
+func TestStartMoveKeepsAnExistingReplica(t *testing.T) {
+	m := &rangemap.Map{Revision: 3, Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Followers: []cluster.NodeID{"n1"}},
+	}}
+
+	next, err := m.StartMove("", "n1")
+	require.NoError(t, err)
+
+	r := next.Ranges[0]
+	assert.Equal(t, cluster.NodeID("n1"), r.MoveTo)
+	assert.Equal(t, []cluster.NodeID{"n1"}, r.Followers)
+	assert.Empty(t, r.Learners)
+}
+
+// TestStartMoveRefusesASecondDestination: one move at a time. A second would
+// leave the first backfilling a range it will never be given, with nothing to
+// stop it.
+func TestStartMoveRefusesASecondDestination(t *testing.T) {
+	m, err := moving().StartMove("", "n1")
+	require.NoError(t, err)
+
+	_, err = m.StartMove("", "n2")
+	require.ErrorContains(t, err, "already moving")
+}
+
+// TestStartMoveRefusesTheCurrentOwner: a move to where the range already is.
+func TestStartMoveRefusesTheCurrentOwner(t *testing.T) {
+	_, err := moving().StartMove("", "n0")
+	require.ErrorContains(t, err, "already owned")
+}
+
+// TestHandoverWaitsForTheCopy is the guard the whole three-step sequence exists
+// for. A learner made owner serves the part it has and answers "no such object"
+// for the rest — and nothing reports it, because a partial range is a range that
+// simply says no.
+func TestHandoverWaitsForTheCopy(t *testing.T) {
+	m, err := moving().StartMove("", "n1")
+	require.NoError(t, err)
+
+	_, err = m.Handover("")
+	require.ErrorContains(t, err, "until its copy is done")
+}
+
+// TestHandoverSwapsOwnerAndDestination: the destination takes the range, and the
+// node it replaced keeps a copy.
+func TestHandoverSwapsOwnerAndDestination(t *testing.T) {
+	m := &rangemap.Map{Revision: 3, Ranges: []rangemap.Range{{
+		Start: "", End: "", Owner: "n0",
+		Followers: []cluster.NodeID{"n1"},
+		MoveTo:    "n1",
+	}}}
+	require.NoError(t, m.Validate())
+
+	next, err := m.Handover("")
+	require.NoError(t, err)
+
+	r := next.Ranges[0]
+	assert.Equal(t, cluster.NodeID("n1"), r.Owner)
+	assert.Empty(t, r.MoveTo, "the intent outlived the move")
+	assert.Equal(t, []cluster.NodeID{"n0"}, r.Followers,
+		"the old owner holds the range: dropping it would lower R at the moment ownership changes")
+}
+
+// TestHandoverRefusesARangeThatIsNotMoving: handing over a range nobody decided
+// to move would make ownership change on its own.
+func TestHandoverRefusesARangeThatIsNotMoving(t *testing.T) {
+	_, err := moving().Handover("")
+	require.ErrorIs(t, err, rangemap.ErrNotMoving)
+}
+
+// TestMoveDestinationMustReplicateTheRange: a destination holding none of the
+// range would be handed data it does not have. Validate refuses the state rather
+// than trusting every path that builds one.
+func TestMoveDestinationMustReplicateTheRange(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", MoveTo: "n1"},
+	}}
+
+	require.ErrorContains(t, m.Validate(), "neither follows nor learns")
+}
+
+// TestMoveDestinationIsNotTheOwner: a range moving to where it already is.
+func TestMoveDestinationIsNotTheOwner(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Followers: []cluster.NodeID{"n0"}, MoveTo: "n0"},
+	}}
+
+	require.ErrorContains(t, m.Validate(), "already owns it")
+}
+
+// TestMergeDropsADestinationThatLostHalfTheRange: the merged range is not what
+// the destination was promised, so the decision that named it was about
+// something else.
+func TestMergeDropsADestinationThatLostHalfTheRange(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "om", Owner: "n0", Followers: []cluster.NodeID{"n1"}, MoveTo: "n1"},
+		{Start: "om", End: "", Owner: "n0"},
+	}}
+	require.NoError(t, m.Validate())
+
+	next, err := m.Merge("om")
+	require.NoError(t, err)
+
+	assert.Empty(t, next.Ranges[0].MoveTo)
+	require.NoError(t, next.Validate())
+}
+
+// TestSplitCarriesTheMoveToBothHalves: a range split mid-move is two ranges the
+// same node is being given, and it is already learning both.
+func TestSplitCarriesTheMoveToBothHalves(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{
+		{Start: "", End: "", Owner: "n0", Learners: []cluster.NodeID{"n1"}, MoveTo: "n1"},
+	}}
+	require.NoError(t, m.Validate())
+
+	next, err := m.Split("om")
+	require.NoError(t, err)
+
+	require.NoError(t, next.Validate())
+
+	for _, r := range next.Ranges {
+		assert.Equal(t, cluster.NodeID("n1"), r.MoveTo)
+	}
+}
