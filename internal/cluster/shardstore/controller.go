@@ -50,6 +50,11 @@ type ControllerConfig struct {
 	// Split is when a range is too large to leave alone.
 	Split SplitPolicy
 
+	// Replicas is how many copies of a range the cluster is configured to keep,
+	// counting the owner. Zero means surplus replicas are left alone, which is
+	// what a caller that does not know the target should get.
+	Replicas int
+
 	// Ready asks a learner whether the copy of a range into it has finished.
 	// Nil disables promotion, which is what a plane with no transport gets —
 	// and what leaves a learner a learner forever, which is the safe direction.
@@ -137,6 +142,9 @@ type Reconciliation struct {
 	// Moved are the ranges handed to their destination this pass — the last
 	// edit of a move, after which the range is served by the node it moved to.
 	Moved []rangemap.Range
+	// Trimmed are the ranges dropped back to the configured replica count this
+	// pass, after a move left them one copy over it.
+	Trimmed []rangemap.Range
 }
 
 // RebuildOwed reports whether this pass left ranges that hold nothing, which
@@ -230,6 +238,15 @@ func (c *Controller) Reconcile(ctx context.Context) (Reconciliation, error) {
 		}
 
 		if moved {
+			return result, nil
+		}
+
+		result, trimmed, err := c.trim(ctx, m, result)
+		if err != nil {
+			return Reconciliation{}, err
+		}
+
+		if trimmed {
 			return result, nil
 		}
 
@@ -374,6 +391,76 @@ func (c *Controller) finish(
 
 	if len(result.Moved) == 0 {
 		return result, false, nil
+	}
+
+	if err := c.cfg.Save(ctx, next); err != nil {
+		return result, false, errors.Wrap(err, "write the partitioning")
+	}
+
+	result.Changed = true
+
+	return result, true, nil
+}
+
+// trim drops ranges back to the configured replica count.
+//
+// # A completed move leaves one copy too many, by design
+//
+// Handover gives the range to its destination and keeps the node it replaced as
+// a follower, because dropping it in the same edit would take the replica count
+// down at the moment ownership changes — a rebalance deciding durability, which
+// nobody asked it to. But the destination was added as a replica when the move
+// started, so the range comes out of a move holding one more copy than it went
+// in with. Something has to give it back, and this is that something: a separate
+// edit, on a later pass, when the range is settled.
+//
+// # The old owner is the one dropped
+//
+// Surplus followers are taken from the end of the list, which is where Handover
+// appends the node it replaced — and that is the right one on the merits, not
+// merely by position. A range is moved off a node to relieve it; leaving a
+// replica behind means its disk still holds the range, so the move relieved
+// nothing it was meant to.
+//
+// # Never below the target, and never on a range mid-move
+//
+// A range that is still moving is *supposed* to have an extra copy — that is
+// what the copy is. Trimming it would take away the replica the move is in the
+// middle of making.
+func (c *Controller) trim(
+	ctx context.Context,
+	m *rangemap.Map,
+	result Reconciliation,
+) (Reconciliation, bool, error) {
+	if c.cfg.Replicas < 1 {
+		return result, false, nil
+	}
+
+	next := &rangemap.Map{Revision: m.Revision, Ranges: slices.Clone(m.Ranges)}
+	changed := false
+
+	for i, r := range next.Ranges {
+		// The owner counts as one, so the followers wanted are one fewer.
+		want := c.cfg.Replicas - 1
+		if r.MoveTo != "" || len(r.Followers) <= want {
+			continue
+		}
+
+		trimmed := r
+		trimmed.Followers = slices.Clone(r.Followers[:want])
+		next.Ranges[i] = trimmed
+
+		changed = true
+
+		result.Trimmed = append(result.Trimmed, trimmed)
+	}
+
+	if !changed {
+		return result, false, nil
+	}
+
+	if err := next.Validate(); err != nil {
+		return result, false, errors.Wrap(err, "trim produced an invalid map")
 	}
 
 	if err := c.cfg.Save(ctx, next); err != nil {
