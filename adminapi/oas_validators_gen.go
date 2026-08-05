@@ -525,6 +525,73 @@ func (s *InstanceInfo) Validate() error {
 	return nil
 }
 
+func (s MetadataPlaneCause) Validate() error {
+	switch s {
+	case "unspecified":
+		return nil
+	case "never-built":
+		return nil
+	case "orphaned":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s MetadataPlaneState) Validate() error {
+	switch s {
+	case "disabled":
+		return nil
+	case "ready":
+		return nil
+	case "building":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *MetadataPlaneStatus) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.State.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "state",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Cause.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "cause",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s *MigrationStatus) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer

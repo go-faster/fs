@@ -402,6 +402,15 @@ Command-line flags override YAML configuration values.`,
 					// handlers' "disabled" guards.
 					if clusterRT != nil {
 						adminCfg.Rebalance = clusterRT.rebalance
+
+						// Only when this node runs the sharded plane. A
+						// non-nil interface around a nil controller would
+						// defeat the handler's "disabled" guard the same
+						// way, and answer for a plane that is not there.
+						if clusterRT.plane != nil {
+							adminCfg.Plane = clusterRT.plane
+						}
+
 						adminCfg.ClusterStatus = clusterRT.status
 						adminCfg.Migrations = clusterRT.migrate
 						adminCfg.BucketSchemes = newBucketSchemeSource(clusterRT.coord)

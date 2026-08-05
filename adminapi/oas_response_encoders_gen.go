@@ -115,6 +115,19 @@ func encodeGetInfoResponse(response *InstanceInfo, w http.ResponseWriter, span t
 	return nil
 }
 
+func encodeGetMetadataPlaneStatusResponse(response *MetadataPlaneStatus, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeGetMigrationStatusResponse(response *MigrationStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -168,6 +181,19 @@ func encodeListAccessKeysResponse(response *AccessKeyList, w http.ResponseWriter
 }
 
 func encodeListDiskWeightsResponse(response *DiskWeightList, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeRebuildMetadataPlaneResponse(response *MetadataPlaneStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

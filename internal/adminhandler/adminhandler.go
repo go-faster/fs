@@ -51,6 +51,10 @@ type Options struct {
 	// Rebalance drives the cluster rebalance runner; nil outside cluster mode
 	// (the endpoints then report "disabled" / refuse control).
 	Rebalance RebalanceControl
+	// Plane reports the sharded metadata plane and starts the rebuild it owes;
+	// nil when the node does not run the plane (the status endpoint then
+	// reports "disabled" and the rebuild is refused).
+	Plane PlaneControl
 	// ClusterStatus assembles the cluster-wide status; nil outside cluster mode
 	// (the endpoint then reports "disabled").
 	ClusterStatus ClusterStatusSource

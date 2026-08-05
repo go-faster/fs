@@ -1258,6 +1258,197 @@ func (s *InstanceInfo) SetConfigRevision(val OptString) {
 	s.ConfigRevision = val
 }
 
+// Why the plane is building, and what decides whether anything rebuilds it without being asked.
+// "never-built" is a plane switched on over a cluster that already held objects — planned, so the
+// walk is an operator's to schedule. "orphaned" is a failure that left a range with no copy of its
+// data — not planned, and the cluster is degraded until it is rebuilt. "unspecified" is a reason
+// nobody recorded, which is never acted on automatically.
+// Ref: #/components/schemas/MetadataPlaneCause
+type MetadataPlaneCause string
+
+const (
+	MetadataPlaneCauseUnspecified MetadataPlaneCause = "unspecified"
+	MetadataPlaneCauseNeverBuilt  MetadataPlaneCause = "never-built"
+	MetadataPlaneCauseOrphaned    MetadataPlaneCause = "orphaned"
+)
+
+// AllValues returns all MetadataPlaneCause values.
+func (MetadataPlaneCause) AllValues() []MetadataPlaneCause {
+	return []MetadataPlaneCause{
+		MetadataPlaneCauseUnspecified,
+		MetadataPlaneCauseNeverBuilt,
+		MetadataPlaneCauseOrphaned,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MetadataPlaneCause) MarshalText() ([]byte, error) {
+	switch s {
+	case MetadataPlaneCauseUnspecified:
+		return []byte(s), nil
+	case MetadataPlaneCauseNeverBuilt:
+		return []byte(s), nil
+	case MetadataPlaneCauseOrphaned:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MetadataPlaneCause) UnmarshalText(data []byte) error {
+	switch MetadataPlaneCause(data) {
+	case MetadataPlaneCauseUnspecified:
+		*s = MetadataPlaneCauseUnspecified
+		return nil
+	case MetadataPlaneCauseNeverBuilt:
+		*s = MetadataPlaneCauseNeverBuilt
+		return nil
+	case MetadataPlaneCauseOrphaned:
+		*s = MetadataPlaneCauseOrphaned
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// "ready" means listings are served from the plane. "building" means they fall back to walking
+// sidecars: correct, and slower. "disabled" means this server does not run the sharded plane.
+// Ref: #/components/schemas/MetadataPlaneState
+type MetadataPlaneState string
+
+const (
+	MetadataPlaneStateDisabled MetadataPlaneState = "disabled"
+	MetadataPlaneStateReady    MetadataPlaneState = "ready"
+	MetadataPlaneStateBuilding MetadataPlaneState = "building"
+)
+
+// AllValues returns all MetadataPlaneState values.
+func (MetadataPlaneState) AllValues() []MetadataPlaneState {
+	return []MetadataPlaneState{
+		MetadataPlaneStateDisabled,
+		MetadataPlaneStateReady,
+		MetadataPlaneStateBuilding,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MetadataPlaneState) MarshalText() ([]byte, error) {
+	switch s {
+	case MetadataPlaneStateDisabled:
+		return []byte(s), nil
+	case MetadataPlaneStateReady:
+		return []byte(s), nil
+	case MetadataPlaneStateBuilding:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MetadataPlaneState) UnmarshalText(data []byte) error {
+	switch MetadataPlaneState(data) {
+	case MetadataPlaneStateDisabled:
+		*s = MetadataPlaneStateDisabled
+		return nil
+	case MetadataPlaneStateReady:
+		*s = MetadataPlaneStateReady
+		return nil
+	case MetadataPlaneStateBuilding:
+		*s = MetadataPlaneStateBuilding
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MetadataPlaneStatus
+type MetadataPlaneStatus struct {
+	State MetadataPlaneState    `json:"state"`
+	Cause OptMetadataPlaneCause `json:"cause"`
+	// Whether this node is running a rebuild right now.
+	Rebuilding bool `json:"rebuilding"`
+	// The configured automatic-rebuild policy (cluster.metadata.rebuild).
+	Policy OptString `json:"policy"`
+	// When this node's current or last rebuild started.
+	StartedAt OptDateTime `json:"started_at"`
+	// When this node's last rebuild ended.
+	FinishedAt OptDateTime `json:"finished_at"`
+	// Why this node's last rebuild failed.
+	ErrorMessage OptString `json:"error_message"`
+}
+
+// GetState returns the value of State.
+func (s *MetadataPlaneStatus) GetState() MetadataPlaneState {
+	return s.State
+}
+
+// GetCause returns the value of Cause.
+func (s *MetadataPlaneStatus) GetCause() OptMetadataPlaneCause {
+	return s.Cause
+}
+
+// GetRebuilding returns the value of Rebuilding.
+func (s *MetadataPlaneStatus) GetRebuilding() bool {
+	return s.Rebuilding
+}
+
+// GetPolicy returns the value of Policy.
+func (s *MetadataPlaneStatus) GetPolicy() OptString {
+	return s.Policy
+}
+
+// GetStartedAt returns the value of StartedAt.
+func (s *MetadataPlaneStatus) GetStartedAt() OptDateTime {
+	return s.StartedAt
+}
+
+// GetFinishedAt returns the value of FinishedAt.
+func (s *MetadataPlaneStatus) GetFinishedAt() OptDateTime {
+	return s.FinishedAt
+}
+
+// GetErrorMessage returns the value of ErrorMessage.
+func (s *MetadataPlaneStatus) GetErrorMessage() OptString {
+	return s.ErrorMessage
+}
+
+// SetState sets the value of State.
+func (s *MetadataPlaneStatus) SetState(val MetadataPlaneState) {
+	s.State = val
+}
+
+// SetCause sets the value of Cause.
+func (s *MetadataPlaneStatus) SetCause(val OptMetadataPlaneCause) {
+	s.Cause = val
+}
+
+// SetRebuilding sets the value of Rebuilding.
+func (s *MetadataPlaneStatus) SetRebuilding(val bool) {
+	s.Rebuilding = val
+}
+
+// SetPolicy sets the value of Policy.
+func (s *MetadataPlaneStatus) SetPolicy(val OptString) {
+	s.Policy = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *MetadataPlaneStatus) SetStartedAt(val OptDateTime) {
+	s.StartedAt = val
+}
+
+// SetFinishedAt sets the value of FinishedAt.
+func (s *MetadataPlaneStatus) SetFinishedAt(val OptDateTime) {
+	s.FinishedAt = val
+}
+
+// SetErrorMessage sets the value of ErrorMessage.
+func (s *MetadataPlaneStatus) SetErrorMessage(val OptString) {
+	s.ErrorMessage = val
+}
+
 // A pending schema migration.
 // Ref: #/components/schemas/Migration
 type Migration struct {
@@ -1655,6 +1846,52 @@ func (o OptInt64) Get() (v int64, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMetadataPlaneCause returns new OptMetadataPlaneCause with value set to v.
+func NewOptMetadataPlaneCause(v MetadataPlaneCause) OptMetadataPlaneCause {
+	return OptMetadataPlaneCause{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMetadataPlaneCause is optional MetadataPlaneCause.
+type OptMetadataPlaneCause struct {
+	Value MetadataPlaneCause
+	Set   bool
+}
+
+// IsSet returns true if OptMetadataPlaneCause was set.
+func (o OptMetadataPlaneCause) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMetadataPlaneCause) Reset() {
+	var v MetadataPlaneCause
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMetadataPlaneCause) SetTo(v MetadataPlaneCause) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMetadataPlaneCause) Get() (v MetadataPlaneCause, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMetadataPlaneCause) Or(d MetadataPlaneCause) MetadataPlaneCause {
 	if v, ok := o.Get(); ok {
 		return v
 	}
