@@ -212,7 +212,7 @@ func TestLearnerReceivesTheLog(t *testing.T) {
 	}
 
 	learner := openShard(t)
-	learner.Follow([]rangemap.Range{learning})
+	learner.Configure(nil, nil, []rangemap.Range{learning})
 
 	owner, err := shardstore.OpenShard(t.TempDir(),
 		shardstore.WithShipper(ordered(t, learner.ApplyBatch)))
@@ -228,4 +228,48 @@ func TestLearnerReceivesTheLog(t *testing.T) {
 	// follower, and for the same reason.
 	learner.Adopt([]rangemap.Range{learning})
 	assert.Equal(t, []string{"a.jpg", "b.jpg"}, scanKeys(t, learner, "photos"))
+}
+
+// TestLearnRefusesARangeItMerelyFollows is the distinction the shard used to be
+// unable to make.
+//
+// A follower is kept current by the log and is the destination of no move, so
+// backfilled entries arriving for one come from a sender working from a map
+// where this node is something it is not. Storing them would leave data on a
+// node that will never be asked to hold it — and, worse, would let a follower
+// accumulate a half-copy that nothing distinguishes from a real one.
+func TestLearnRefusesARangeItMerelyFollows(t *testing.T) {
+	follower := openShard(t)
+	follower.Follow([]rangemap.Range{replicated})
+
+	err := follower.Learn(t.Context(), replicated,
+		[]metastore.Entry{entry("photos", "a.jpg", 100, 1)})
+	require.ErrorIs(t, err, shardstore.ErrNotLearned)
+
+	// And the log still reaches it, so this is the narrower check rather than a
+	// follower that stopped replicating.
+	owner, err := shardstore.OpenShard(t.TempDir(),
+		shardstore.WithShipper(ordered(t, follower.ApplyBatch)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = owner.Close() })
+
+	owner.Adopt([]rangemap.Range{replicated})
+	require.NoError(t, owner.Put(t.Context(), entry("photos", "a.jpg", 100, 1)))
+
+	follower.Adopt([]rangemap.Range{replicated})
+	assert.Equal(t, []string{"a.jpg"}, scanKeys(t, follower, "photos"))
+}
+
+// TestFollowingCountsLearnersToo: replicating is what a follower and a learner
+// have in common — each holds a range it does not serve — and the node's own
+// accounting of what it is holding for others must include both.
+func TestFollowingCountsLearnersToo(t *testing.T) {
+	shard := openShard(t)
+
+	left := rangemap.Range{Start: "", End: "om", Owner: "n0", Followers: []cluster.NodeID{"n1"}}
+	right := rangemap.Range{Start: "om", End: "", Owner: "n0", Learners: []cluster.NodeID{"n1"}}
+
+	shard.Configure(nil, []rangemap.Range{left}, []rangemap.Range{right})
+
+	assert.Len(t, shard.Following(), 2)
 }

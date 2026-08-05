@@ -68,10 +68,15 @@ type Shard struct {
 	ship Shipper
 
 	mu sync.RWMutex
-	// owned is what this shard serves; followed is what it replicates for
-	// another node and deliberately does not serve.
+	// owned is what this shard serves. followed and learned are what it
+	// replicates for another node and deliberately does not serve — a follower
+	// kept current by the log, a learner still being copied into.
 	owned    []rangemap.Range
 	followed []rangemap.Range
+	learned  []rangemap.Range
+	// caught is the ranges whose copy has finished, in this process. See
+	// CaughtUp for why it is not persisted.
+	caught map[rangeID]bool
 
 	locks [stripes]sync.Mutex
 }
@@ -560,13 +565,7 @@ func (s *Shard) serves(r rangemap.Range) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, owned := range s.owned {
-		if owned.Start == r.Start && owned.End == r.End {
-			return true
-		}
-	}
-
-	return false
+	return s.servesLocked(r)
 }
 
 // scanRange serves the part of [start, upper) that falls inside r.

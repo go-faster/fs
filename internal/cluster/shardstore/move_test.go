@@ -18,14 +18,14 @@ import (
 // openShardAt opens a shard at a caller-chosen directory, so a test can close
 // one and open another over the same files — which is the only way to tell a
 // cursor that was persisted from one that was merely remembered.
-func openShardAt(t *testing.T, dir string, follows ...rangemap.Range) *shardstore.Shard {
+func openShardAt(t *testing.T, dir string, learns ...rangemap.Range) *shardstore.Shard {
 	t.Helper()
 
 	s, err := shardstore.OpenShard(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 
-	s.Follow(follows)
+	s.Configure(nil, nil, learns)
 
 	return s
 }
@@ -236,7 +236,7 @@ func TestBackfillStartsOverWhenTheRangeChanged(t *testing.T) {
 
 	// The range is split under the move, so what is being copied now is [_,om).
 	owner.Adopt([]rangemap.Range{half})
-	learner.Follow([]rangemap.Range{half})
+	learner.Configure(nil, nil, []rangemap.Range{half})
 
 	healthy := &stepSource{from: owner}
 
@@ -266,7 +266,7 @@ func TestBackfillStartsOverWhenTheOwnerChanged(t *testing.T) {
 	require.Error(t, err)
 
 	owner.Adopt([]rangemap.Range{promoted})
-	learner.Follow([]rangemap.Range{promoted})
+	learner.Configure(nil, nil, []rangemap.Range{promoted})
 
 	healthy := &stepSource{from: owner}
 
@@ -293,7 +293,7 @@ func TestBackfillRefusesARangeItDoesNotLearn(t *testing.T) {
 	from := &stepSource{from: owner}
 
 	_, err := learner.Backfill(t.Context(), learned, from, 4)
-	require.ErrorIs(t, err, shardstore.ErrNotFollowed)
+	require.ErrorIs(t, err, shardstore.ErrNotLearned)
 
 	assert.Empty(t, from.asked, "the owner was read for a range this shard does not learn")
 }
@@ -390,4 +390,92 @@ func TestBackfillOverTheWireRefusesAnUnservedRange(t *testing.T) {
 
 	_, err = shardstore.NewPeer(client).ReadBackfill(t.Context(), learned, "", 4)
 	require.ErrorIs(t, err, shardstore.ErrNotOwned, "the sentinel survives the wire")
+}
+
+// TestCaughtUpOnlyAfterTheWalkFinishes: a learner holding *some* of a range is
+// the one state that must not be served, and this is the flag that stops it
+// being. Claimed early, a promotion answers "no such object" for every key the
+// copy has not reached, and nothing reports it.
+func TestCaughtUpOnlyAfterTheWalkFinishes(t *testing.T) {
+	owner := openShard(t, learned)
+	fill(t, owner, "photos", 20)
+
+	learner := openShardAt(t, t.TempDir(), learned)
+	assert.False(t, learner.CaughtUp(learned), "nothing has been copied yet")
+
+	_, err := learner.Backfill(t.Context(), learned, &stepSource{from: owner, failAfter: 2}, 5)
+	require.Error(t, err)
+	assert.False(t, learner.CaughtUp(learned), "half a range reported as a whole one")
+
+	_, err = learner.Backfill(t.Context(), learned, owner, 5)
+	require.NoError(t, err)
+	assert.True(t, learner.CaughtUp(learned))
+}
+
+// TestCaughtUpIsForgottenWhenTheRangeStopsBeingLearned is the completion's
+// lifetime, and it is why followed and learned are separate lists.
+//
+// A node promoted out of a range and later made a learner of it again may have
+// dropped what it held in between. Inheriting the old claim would have it report
+// ready without copying anything — a promotion onto data it does not have.
+func TestCaughtUpIsForgottenWhenTheRangeStopsBeingLearned(t *testing.T) {
+	owner := openShard(t, learned)
+	fill(t, owner, "photos", 8)
+
+	learner := openShardAt(t, t.TempDir(), learned)
+
+	_, err := learner.Backfill(t.Context(), learned, owner, 4)
+	require.NoError(t, err)
+	require.True(t, learner.CaughtUp(learned))
+
+	// Promoted: a follower of the range now, not a learner of it.
+	learner.Configure(nil, []rangemap.Range{learned}, nil)
+	assert.False(t, learner.CaughtUp(learned))
+
+	// And made a learner of it again.
+	learner.Configure(nil, nil, []rangemap.Range{learned})
+	assert.False(t, learner.CaughtUp(learned),
+		"a completion from before the node stopped learning the range survived")
+}
+
+// TestCaughtUpIsForgottenWhenTheOwnerChanged: a copy is a copy of a particular
+// node's contents. After a failover the range has the same bounds and different
+// contents, and a completion remembered against the old owner would skip the
+// difference.
+func TestCaughtUpIsForgottenWhenTheOwnerChanged(t *testing.T) {
+	owner := openShard(t, learned)
+	fill(t, owner, "photos", 8)
+
+	learner := openShardAt(t, t.TempDir(), learned)
+
+	_, err := learner.Backfill(t.Context(), learned, owner, 4)
+	require.NoError(t, err)
+	require.True(t, learner.CaughtUp(learned))
+
+	promoted := learned
+	promoted.Owner = "n2"
+
+	learner.Configure(nil, nil, []rangemap.Range{promoted})
+	assert.False(t, learner.CaughtUp(promoted))
+}
+
+// TestCaughtUpSurvivesAnUnrelatedMapChange: the completion is pruned by what the
+// node still learns, not cleared on every map the router adopts — otherwise a
+// cluster that splits a range somewhere else would restart every move in flight.
+func TestCaughtUpSurvivesAnUnrelatedMapChange(t *testing.T) {
+	owner := openShard(t, learned)
+	fill(t, owner, "photos", 8)
+
+	learner := openShardAt(t, t.TempDir(), learned)
+
+	_, err := learner.Backfill(t.Context(), learned, owner, 4)
+	require.NoError(t, err)
+
+	// The same range, still learned, alongside a new one this node owns.
+	learner.Configure(
+		[]rangemap.Range{{Start: "oz", End: "", Owner: "n1"}},
+		nil,
+		[]rangemap.Range{learned})
+
+	assert.True(t, learner.CaughtUp(learned))
 }

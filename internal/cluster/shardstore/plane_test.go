@@ -258,7 +258,7 @@ func shardBuckets(t *testing.T, s *shardstore.Shard) []string {
 // for.
 func TestOwningBeatsFollowing(t *testing.T) {
 	s := openShard(t)
-	s.Configure([]rangemap.Range{whole}, []rangemap.Range{whole})
+	s.Configure([]rangemap.Range{whole}, []rangemap.Range{whole}, nil)
 
 	err := s.ApplyBatch(t.Context(), whole, []byte("from someone who thinks it owns this"))
 	require.ErrorIs(t, err, shardstore.ErrNotFollowed)

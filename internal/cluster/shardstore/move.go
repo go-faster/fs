@@ -74,8 +74,8 @@ func (s *Shard) Backfill(
 	// The map is the instruction. A shard pulling a range it was not told to
 	// learn would fill itself with data nothing routes to it — and Learn would
 	// refuse every entry anyway, one step later and less clearly.
-	if !s.replicates(r) {
-		return BackfillResult{}, ErrNotFollowed
+	if !s.learns(r) {
+		return BackfillResult{}, ErrNotLearned
 	}
 
 	cursor, err := s.backfillCursor(r)
@@ -112,6 +112,10 @@ func (s *Shard) Backfill(
 			if err := s.clearBackfillCursor(r); err != nil {
 				return out, err
 			}
+
+			// Recorded only now, with the walk finished and every entry it
+			// carried already stored. This is what a promotion is decided on.
+			s.markCaughtUp(r)
 
 			out.Done = true
 
