@@ -106,6 +106,7 @@ func (s *Shard) Configure(owned, followed, learned []rangemap.Range) {
 
 	s.owned, s.followed, s.learned = o, f, l
 	s.retainCaughtUp(l)
+	s.trackLoad(o)
 }
 
 // Following returns the ranges this shard replicates for another node — as a
