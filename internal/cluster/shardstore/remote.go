@@ -133,6 +133,26 @@ func Serve(shard *Shard) transport.ShardFunc {
 
 			return transport.ShardResponse{Bytes: size.Bytes, SplitAt: at}, nil
 
+		case transport.ShardOpBackfill:
+			if req.Range == nil {
+				return transport.ShardResponse{}, errors.New("backfill without a range")
+			}
+
+			step, err := shard.ReadBackfill(ctx, *req.Range, req.Cursor, req.Limit)
+			if resp, handled := ownership(err); handled {
+				return resp, nil
+			}
+
+			if err != nil {
+				return transport.ShardResponse{}, err
+			}
+
+			return transport.ShardResponse{
+				Entries: step.Entries,
+				Cursor:  step.Cursor,
+				Done:    step.Done,
+			}, nil
+
 		case transport.ShardOpReset:
 			return transport.ShardResponse{}, shard.Reset(ctx)
 
@@ -208,6 +228,34 @@ func (p *Peer) ApplyBatch(ctx context.Context, r rangemap.Range, repr []byte) er
 	})
 
 	return err
+}
+
+// ReadBackfill reads one step of a range out of this peer, which owns it.
+//
+// The step arrives whole rather than streamed, for the reason the step exists:
+// it is bounded so that a killed backfill repeats one step's work, and a bound
+// small enough for that is small enough to carry in one response.
+func (p *Peer) ReadBackfill(
+	ctx context.Context,
+	r rangemap.Range,
+	cursor string,
+	limit int,
+) (BackfillStep, error) {
+	resp, err := p.call(ctx, transport.ShardRequest{
+		Op:     transport.ShardOpBackfill,
+		Range:  &r,
+		Cursor: cursor,
+		Limit:  limit,
+	})
+	if err != nil {
+		return BackfillStep{}, err
+	}
+
+	return BackfillStep{
+		Entries: resp.Entries,
+		Cursor:  resp.Cursor,
+		Done:    resp.Done,
+	}, nil
 }
 
 // Put implements Backend.
