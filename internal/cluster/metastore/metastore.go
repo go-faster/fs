@@ -75,6 +75,66 @@ const (
 	StateReady
 )
 
+// BuildCause is why a store is not ready.
+//
+// It exists because the two ways a store ends up unbuilt want different
+// answers, and nothing could tell them apart. A plane that has never been built
+// is waiting for a decision an operator makes — they turned it on, they can pick
+// the window for the walk of every disk that follows. A plane that lost a range
+// to a failure is degraded *now*, and every listing in the cluster is paying the
+// slow path until it is rebuilt; waiting for a human there is waiting for
+// nothing.
+type BuildCause uint8
+
+const (
+	// CauseUnspecified is a store that is building with nothing recorded about
+	// why — an older cluster, an unreadable flag, or a rebuild someone started
+	// deliberately.
+	//
+	// It is the zero value and it is the cautious one. A rebuild is hours of
+	// I/O competing with serving traffic, so a cause nobody can vouch for is not
+	// grounds to start one.
+	CauseUnspecified BuildCause = iota
+	// CauseNeverBuilt is a store no build has ever completed: the plane was
+	// switched on over a cluster that already held objects, so it describes only
+	// what has been written since.
+	CauseNeverBuilt
+	// CauseOrphaned is a store that was ready and is not any more, because a
+	// failure left a range with no copy of its data.
+	CauseOrphaned
+)
+
+// String names the cause, for the flag an operator reads and for logs.
+func (c BuildCause) String() string {
+	switch c {
+	case CauseNeverBuilt:
+		return "never-built"
+	case CauseOrphaned:
+		return "orphaned"
+	case CauseUnspecified:
+		return "unspecified"
+	default:
+		return "unspecified"
+	}
+}
+
+// Build is what a store believes about itself: whether it is usable, and when it
+// is not, why.
+type Build struct {
+	State State
+	// Cause is meaningful only while State is StateBuilding. A ready store has
+	// no reason to be unready.
+	Cause BuildCause
+}
+
+// Ready is the built state.
+func Ready() Build { return Build{State: StateReady} }
+
+// Building is the unbuilt state, with why.
+func Building(cause BuildCause) Build {
+	return Build{State: StateBuilding, Cause: cause}
+}
+
 // Entry is one object as the store holds it.
 type Entry struct {
 	Bucket string `json:"bucket"`

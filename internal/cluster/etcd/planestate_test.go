@@ -64,12 +64,12 @@ func TestTheFlagIsClusterWide(t *testing.T) {
 	writer := planeState(t, client, "/shared")
 	reader := planeState(t, client, "/shared")
 
-	require.NoError(t, writer.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, writer.Set(t.Context(), metastore.Ready()))
 
 	eventually(t, reader, metastore.StateReady)
 	eventually(t, writer, metastore.StateReady)
 
-	require.NoError(t, reader.Set(t.Context(), metastore.StateBuilding))
+	require.NoError(t, reader.Set(t.Context(), metastore.Building(metastore.CauseUnspecified)))
 
 	eventually(t, writer, metastore.StateBuilding)
 	eventually(t, reader, metastore.StateBuilding)
@@ -85,7 +85,7 @@ func TestAWriterLearnsThroughTheWatch(t *testing.T) {
 
 	p := planeState(t, client, "/writer")
 
-	require.NoError(t, p.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, p.Set(t.Context(), metastore.Ready()))
 	eventually(t, p, metastore.StateReady)
 }
 
@@ -96,7 +96,7 @@ func TestANewNodeSeesWhatWasAlreadyThere(t *testing.T) {
 	client := startEtcd(t)
 
 	first := planeState(t, client, "/joining")
-	require.NoError(t, first.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, first.Set(t.Context(), metastore.Ready()))
 	eventually(t, first, metastore.StateReady)
 
 	joined := planeState(t, client, "/joining")
@@ -126,7 +126,7 @@ func TestGarbageReadsAsBuilding(t *testing.T) {
 	client := startEtcd(t)
 
 	p := planeState(t, client, "/garbage")
-	require.NoError(t, p.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, p.Set(t.Context(), metastore.Ready()))
 	eventually(t, p, metastore.StateReady)
 
 	_, err := client.Put(t.Context(), "/garbage/metaplane/state", "READY")
@@ -141,7 +141,7 @@ func TestDeletingTheFlagIsBuilding(t *testing.T) {
 	client := startEtcd(t)
 
 	p := planeState(t, client, "/deleted")
-	require.NoError(t, p.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, p.Set(t.Context(), metastore.Ready()))
 	eventually(t, p, metastore.StateReady)
 
 	_, err := client.Delete(t.Context(), "/deleted/metaplane/state")
@@ -165,7 +165,7 @@ func TestABrokenWatchReportsBuilding(t *testing.T) {
 	client := startEtcd(t)
 
 	p := planeState(t, client, "/broken")
-	require.NoError(t, p.Set(t.Context(), metastore.StateReady))
+	require.NoError(t, p.Set(t.Context(), metastore.Ready()))
 	eventually(t, p, metastore.StateReady)
 
 	// Losing the client is losing the watch: nothing will deliver the next
@@ -185,4 +185,130 @@ func TestCloseIsIdempotent(t *testing.T) {
 
 	require.NoError(t, p.Close())
 	require.NoError(t, p.Close())
+}
+
+// raw publishes a value written by something other than Set — an operator, or a
+// version that named its causes differently — and waits for the watch to deliver
+// it.
+//
+// The plane is marked ready first, and that is the whole point of the helper. A
+// fresh prefix already reads as building, so waiting for "building" after
+// writing a building value returns before the watch has delivered anything, and
+// the cause read afterwards is whatever was there before. Every one of these
+// tests passed that way while asserting nothing.
+func raw(t *testing.T, client *clientv3.Client, p *etcd.PlaneState, prefix, value string) {
+	t.Helper()
+
+	require.NoError(t, p.Set(t.Context(), metastore.Ready()))
+	eventually(t, p, metastore.StateReady)
+
+	_, err := client.Put(t.Context(), prefix+"/metaplane/state", value)
+	require.NoError(t, err)
+
+	eventually(t, p, metastore.StateBuilding)
+}
+
+// status reads the flag with its cause.
+func status(t *testing.T, p *etcd.PlaneState) metastore.Build {
+	t.Helper()
+
+	b, err := p.Status(t.Context())
+	require.NoError(t, err)
+
+	return b
+}
+
+// TestTheCauseTravelsWithTheFlag: the reason a plane is building is what decides
+// whether a rebuild starts without an operator, and it has to reach every node
+// the flag does.
+func TestTheCauseTravelsWithTheFlag(t *testing.T) {
+	client := startEtcd(t)
+
+	writer := planeState(t, client, "/cause")
+	reader := planeState(t, client, "/cause")
+
+	require.NoError(t, writer.Set(t.Context(), metastore.Building(metastore.CauseOrphaned)))
+	eventually(t, reader, metastore.StateBuilding)
+
+	require.Eventually(t, func() bool {
+		return status(t, reader).Cause == metastore.CauseOrphaned
+	}, 10*time.Second, 5*time.Millisecond)
+}
+
+// TestAReadyPlaneCarriesNoCause: the flag and the reason are one value, so a
+// node cannot see "building" from one revision and a cause from another — which
+// is what a second key would allow, and which would have a rebuild start on the
+// reason for a state the cluster had already left.
+func TestAReadyPlaneCarriesNoCause(t *testing.T) {
+	client := startEtcd(t)
+
+	p := planeState(t, client, "/atomic")
+
+	require.NoError(t, p.Set(t.Context(), metastore.Building(metastore.CauseOrphaned)))
+	eventually(t, p, metastore.StateBuilding)
+
+	require.NoError(t, p.Set(t.Context(), metastore.Ready()))
+	eventually(t, p, metastore.StateReady)
+
+	got := status(t, p)
+	assert.Equal(t, metastore.StateReady, got.State)
+	assert.Equal(t, metastore.CauseUnspecified, got.Cause,
+		"a ready plane carried the reason it used to be unready")
+}
+
+// TestAnOlderMarkerReadsAsBuildingWithNoCause: a cluster mid-upgrade has nodes
+// writing "building" without a reason. A newer node must read that as building —
+// which it always did — and as no grounds to start hours of I/O.
+func TestAnOlderMarkerReadsAsBuildingWithNoCause(t *testing.T) {
+	client := startEtcd(t)
+
+	p := planeState(t, client, "/older")
+
+	raw(t, client, p, "/older", "building")
+	assert.Equal(t, metastore.CauseUnspecified, status(t, p).Cause)
+}
+
+// TestABareCauseNameIsNotACause: the reason is only a reason when it arrives in
+// the shape this writes.
+//
+// The case is an operator putting the key by hand — "orphaned", say, meaning to
+// describe rather than to instruct. Read loosely that is a command to walk every
+// disk in the cluster. Read as this does, it is a value nobody recognizes, which
+// is building with no cause and no rebuild.
+func TestABareCauseNameIsNotACause(t *testing.T) {
+	client := startEtcd(t)
+
+	p := planeState(t, client, "/bare")
+
+	raw(t, client, p, "/bare", "orphaned")
+	assert.Equal(t, metastore.CauseUnspecified, status(t, p).Cause,
+		"a hand-written note read as an instruction to rebuild")
+}
+
+// TestAnUnknownCauseReadsAsUnspecified: a value written by a version that names
+// its causes differently must not be guessed at.
+func TestAnUnknownCauseReadsAsUnspecified(t *testing.T) {
+	client := startEtcd(t)
+
+	p := planeState(t, client, "/unknown")
+
+	raw(t, client, p, "/unknown", "building:something-else")
+	assert.Equal(t, metastore.CauseUnspecified, status(t, p).Cause)
+}
+
+// TestTheFlagStaysReadableByHand: an operator reads this key with etcdctl while
+// deciding whether a cluster is healthy, and "1" is not an answer to that
+// question.
+func TestTheFlagStaysReadableByHand(t *testing.T) {
+	client := startEtcd(t)
+
+	p := planeState(t, client, "/readable")
+
+	require.NoError(t, p.Set(t.Context(), metastore.Building(metastore.CauseOrphaned)))
+
+	resp, err := client.Get(t.Context(), "/readable/metaplane/state")
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1)
+
+	assert.Equal(t, "building:orphaned", string(resp.Kvs[0].Value))
 }

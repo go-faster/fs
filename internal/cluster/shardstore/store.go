@@ -48,8 +48,13 @@ type Resolver func(ctx context.Context, node cluster.NodeID) (Backend, error)
 // fraction of the cluster as all of it — the one outcome worse than refusing to
 // answer.
 type Readiness interface {
-	State(ctx context.Context) (metastore.State, error)
-	Set(ctx context.Context, state metastore.State) error
+	// Status is the flag and, when it is building, why.
+	//
+	// One method rather than a state and a separate cause, because the two are
+	// read together by everything that acts on them and a caller that saw one
+	// without the other would be deciding from half an answer.
+	Status(ctx context.Context) (metastore.Build, error)
+	Set(ctx context.Context, build metastore.Build) error
 }
 
 // Store is the sharded pebble metadata plane as one metastore.Store.
@@ -427,17 +432,29 @@ func (s *Store) Coverage(ctx context.Context) (metastore.Coverage, error) {
 
 // State implements metastore.Store.
 func (s *Store) State(ctx context.Context) (metastore.State, error) {
-	return s.ready.State(ctx)
+	build, err := s.ready.Status(ctx)
+
+	return build.State, err
+}
+
+// Building reports the flag and why it is set, for a caller deciding whether to
+// rebuild without being asked.
+func (s *Store) Building(ctx context.Context) (metastore.Build, error) {
+	return s.ready.Status(ctx)
 }
 
 // MarkReady implements metastore.Store.
 func (s *Store) MarkReady(ctx context.Context) error {
-	return s.ready.Set(ctx, metastore.StateReady)
+	return s.ready.Set(ctx, metastore.Ready())
 }
 
 // MarkBuilding implements metastore.Store.
+//
+// Unspecified rather than one of the named causes: a caller reaching for the
+// metastore.Store interface is starting a rebuild deliberately, and the causes
+// exist to describe the ones nobody chose.
 func (s *Store) MarkBuilding(ctx context.Context) error {
-	return s.ready.Set(ctx, metastore.StateBuilding)
+	return s.ready.Set(ctx, metastore.Building(metastore.CauseUnspecified))
 }
 
 // Reset implements metastore.Store, emptying every shard.
@@ -478,23 +495,23 @@ func (s *Store) Reset(ctx context.Context) error {
 // node would have each of them believing its own share is the cluster.
 type MemoryReadiness struct {
 	mu    sync.Mutex
-	state metastore.State
+	build metastore.Build
 }
 
-// State implements Readiness.
-func (m *MemoryReadiness) State(context.Context) (metastore.State, error) {
+// Status implements Readiness.
+func (m *MemoryReadiness) Status(context.Context) (metastore.Build, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.state, nil
+	return m.build, nil
 }
 
 // Set implements Readiness.
-func (m *MemoryReadiness) Set(_ context.Context, state metastore.State) error {
+func (m *MemoryReadiness) Set(_ context.Context, build metastore.Build) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.state = state
+	m.build = build
 
 	return nil
 }
