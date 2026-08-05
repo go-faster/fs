@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"hash/fnv"
 	"path/filepath"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/go-faster/errors"
@@ -66,6 +68,8 @@ type Shard struct {
 	// ship sends what this shard applies to its ranges' followers. Nil is the
 	// unreplicated configuration.
 	ship Shipper
+	// clock is what load rates are measured against. Nil means time.Now.
+	clock func() time.Time
 
 	mu sync.RWMutex
 	// owned is what this shard serves. followed and learned are what it
@@ -77,6 +81,9 @@ type Shard struct {
 	// caught is the ranges whose copy has finished, in this process. See
 	// CaughtUp for why it is not persisted.
 	caught map[rangeID]bool
+	// loads is how much traffic each owned range is taking. See rangeLoad for
+	// why it is a decaying rate and why it does not survive a restart.
+	loads map[rangeID]*rangeLoad
 
 	locks [stripes]sync.Mutex
 }
@@ -164,12 +171,13 @@ func (s *Shard) Flush() error {
 // Adopting does not move data. What a shard holds outside its ranges is stale
 // and unreachable, and dropping it is a separate operation with its own cost.
 func (s *Shard) Adopt(ranges []rangemap.Range) {
-	owned := make([]rangemap.Range, len(ranges))
-	copy(owned, ranges)
+	owned := slices.Clone(ranges)
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.owned = owned
-	s.mu.Unlock()
+	s.trackLoad(owned)
 }
 
 // Ranges returns what this shard serves, in key order.
@@ -225,6 +233,13 @@ func (s *Shard) Put(ctx context.Context, e metastore.Entry) error {
 		// write the owner has not made, or a failover could promote one holding
 		// something the disks never had.
 		s.shipTo(ctx, key, repr)
+
+		// Counted here rather than at the top, so a write that was refused or
+		// superseded does not make a range look busy. Only the owner's own path
+		// counts: a learner storing a backfill is doing this node's work, not
+		// answering a client, and counting it would make every destination of a
+		// move look like the busiest node in the cluster.
+		s.observe(key)
 	})
 }
 
@@ -307,6 +322,11 @@ func (s *Shard) Delete(ctx context.Context, bucket, key string) error {
 	if !s.owns(encoded) {
 		return ErrNotOwned
 	}
+
+	// A delete is a write: it takes the same batch, the same counter update and
+	// the same shipping as a put. A range being emptied fast is a busy range,
+	// and one measured on puts alone would read as idle while it was.
+	defer s.observe(encoded)
 
 	l := s.lock(bucket)
 	l.Lock()

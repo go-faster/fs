@@ -58,6 +58,13 @@ type Measurement struct {
 	// a range with nothing in it, or one whose boundary is already deeper than
 	// the descent can reach.
 	SplitAt string
+	// Writes is how many writes a second the owner is taking for the range.
+	//
+	// Size says how much a range costs to move; this says how much is gained by
+	// moving it. They are different questions and a sequential-key workload
+	// makes them opposite ones — every write lands at the top of the key space,
+	// so the newest range is the smallest and the busiest.
+	Writes float64
 }
 
 // Measure reports a range's size and split point together.
@@ -72,7 +79,7 @@ func (s *Shard) Measure(_ context.Context, r rangemap.Range) (Measurement, error
 		return Measurement{}, err
 	}
 
-	return Measurement{Bytes: size.Bytes, SplitAt: at}, nil
+	return Measurement{Bytes: size.Bytes, SplitAt: at, Writes: s.WriteRate(r)}, nil
 }
 
 // RangeSize estimates what a range holds.

@@ -120,6 +120,9 @@ type ShardResponse struct {
 
 	// Bytes is a range's estimated size, for ShardOpMeasure.
 	Bytes uint64 `json:"bytes,omitempty"`
+	// Writes is how many writes a second the owner is taking for a range, for
+	// ShardOpMeasure.
+	Writes float64 `json:"writes,omitempty"`
 	// SplitAt is where the range would divide, empty when the owner found no
 	// point — a range with nothing in it, or one whose boundary is already
 	// deeper than the search can reach.
