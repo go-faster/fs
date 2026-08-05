@@ -46,8 +46,8 @@ func (s *Shard) Learn(ctx context.Context, r rangemap.Range, entries []metastore
 		return errors.Wrap(err, "learn entries")
 	}
 
-	if !s.replicates(r) {
-		return ErrNotFollowed
+	if !s.learns(r) {
+		return ErrNotLearned
 	}
 
 	for _, e := range entries {

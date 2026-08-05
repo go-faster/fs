@@ -3,7 +3,6 @@ package shardstore
 import (
 	"context"
 	"slices"
-	"sync"
 
 	"github.com/go-faster/errors"
 
@@ -37,11 +36,6 @@ type Plane struct {
 	router *Router
 	store  *Store
 	dial   Dialer
-
-	mu sync.RWMutex
-	// caught is the ranges this node has finished learning, in this process.
-	// See CatchUp for why it is not persisted.
-	caught map[rangeID]bool
 }
 
 // NewPlane wires this node's shard, routing and store together.
@@ -116,21 +110,29 @@ func (p *Plane) apply(m *rangemap.Map) {
 		return
 	}
 
-	var followed []rangemap.Range
+	var followed, learned []rangemap.Range
 
 	for _, r := range m.Ranges {
 		// Owning wins: a map that named this node both owner and follower of one
 		// range would have it replaying its own writes from someone else.
-		//
+		if r.Owner == p.self {
+			continue
+		}
+
 		// Learners are held the same way followers are — the shard serves
-		// neither — because holding is what receiving the log means. What
-		// separates them is promotion, which reads the map rather than this.
-		if r.Owner != p.self && r.Replicates(p.self) {
+		// neither — because holding is what receiving the log means. They are
+		// passed separately because what separates them is promotion, and the
+		// shard is the node's half of deciding it: only the destination of a
+		// copy knows whether the copy finished.
+		switch {
+		case slices.Contains(r.Learners, p.self):
+			learned = append(learned, r)
+		case slices.Contains(r.Followers, p.self):
 			followed = append(followed, r)
 		}
 	}
 
-	p.shard.Configure(m.RangesFor(p.self), followed)
+	p.shard.Configure(m.RangesFor(p.self), followed, learned)
 }
 
 // resolve returns the backend serving a node: this node's own shard directly,

@@ -2,10 +2,12 @@ package shardstore
 
 import (
 	"context"
+	"slices"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
@@ -17,6 +19,14 @@ import (
 // from a stale follower set, and applying it would leave this shard holding
 // data nothing will ever ask it for and nothing will clean up.
 var ErrNotFollowed = errors.New("range is not followed by this shard")
+
+// ErrNotLearned reports that a range is not one this shard is being copied into.
+//
+// Narrower than ErrNotFollowed and a different mistake again. A follower is
+// current from the log and is the destination of no move, so a backfill aimed at
+// one is a sender working from a map where this node is something it is not —
+// and the entries would land on a node that will never be asked to hold them.
+var ErrNotLearned = errors.New("range is not being learned by this shard")
 
 // Shipper sends a batch an owner applied to the range's followers.
 //
@@ -65,38 +75,57 @@ func (s *Shard) Follow(ranges []rangemap.Range) {
 	s.mu.Unlock()
 }
 
-// Configure sets what this shard serves and what it replicates, together.
+// Configure sets what this shard serves, what it follows and what it is
+// learning, together.
 //
 // Together rather than as an Adopt followed by a Follow, because between those
 // two the shard would be running on half of one map and half of another. The
 // half that matters is promotion: a node that has just taken over a range would
 // briefly both own it and follow it, and the deposed owner is exactly the node
 // most likely to still be shipping batches for it.
-func (s *Shard) Configure(owned, followed []rangemap.Range) {
-	o := make([]rangemap.Range, len(owned))
-	copy(o, owned)
-
-	f := make([]rangemap.Range, len(followed))
-	copy(f, followed)
+//
+// # Followed and learned are separate here, not just in the map
+//
+// The shard used to be told only "these are the ranges you replicate", with the
+// difference between a follower and a learner living entirely in rangemap. That
+// made the shard unable to answer the one question a move turns on — *am I still
+// being copied into?* — and it made a follower accept backfilled entries, which
+// is data it was never told to receive.
+//
+// Keeping the two apart also gives the caught-up record its lifetime for free: a
+// completion is remembered only while the range is still being learned, so a
+// node promoted out of a range and later made a learner of it again cannot
+// inherit a claim from before.
+func (s *Shard) Configure(owned, followed, learned []rangemap.Range) {
+	o := slices.Clone(owned)
+	f := slices.Clone(followed)
+	l := slices.Clone(learned)
 
 	s.mu.Lock()
-	s.owned, s.followed = o, f
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+
+	s.owned, s.followed, s.learned = o, f, l
+	s.retainCaughtUp(l)
 }
 
-// Following returns the ranges this shard replicates, in key order.
+// Following returns the ranges this shard replicates for another node — as a
+// follower or as a learner — in key order.
+//
+// Both, because replicating is what they have in common: each is a range this
+// node holds and does not serve. What separates them is promotion, and the
+// paths that care ask about that directly.
 func (s *Shard) Following() []rangemap.Range {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := make([]rangemap.Range, len(s.followed))
-	copy(out, s.followed)
+	out := make([]rangemap.Range, 0, len(s.followed)+len(s.learned))
+	out = append(out, s.followed...)
 
-	return out
+	return append(out, s.learned...)
 }
 
-// replicates reports whether this shard may replay a batch for a range: it is
-// in the followed set, and it is not one this shard owns.
+// replicates reports whether this shard may replay a batch for a range: it
+// follows or learns it, and it is not one this shard owns.
 //
 // The second half is the split-brain guard, and it is the case that actually
 // happens. A node promoted into a range is the authority for it; the node it
@@ -111,19 +140,122 @@ func (s *Shard) replicates(r rangemap.Range) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, o := range s.owned {
-		if o.Start == r.Start && o.End == r.End {
-			return false
-		}
+	if s.servesLocked(r) {
+		return false
 	}
 
-	for _, f := range s.followed {
-		if f.Start == r.Start && f.End == r.End {
+	return covers(s.followed, r) || covers(s.learned, r)
+}
+
+// learns reports whether this shard is being copied into for a range: it is in
+// the learned set, and not one this shard owns.
+//
+// Narrower than replicates on purpose. A follower is kept current by the log and
+// is not the destination of any move, so backfilled entries arriving for one are
+// either a bug or a sender working from a map where this node is something it is
+// not — and storing them would leave data on a node that will never be asked to
+// hold it.
+func (s *Shard) learns(r rangemap.Range) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.servesLocked(r) {
+		return false
+	}
+
+	return covers(s.learned, r)
+}
+
+// servesLocked reports whether this shard was told to serve exactly this range.
+// The caller holds the lock.
+func (s *Shard) servesLocked(r rangemap.Range) bool {
+	return covers(s.owned, r)
+}
+
+// covers reports whether a list names exactly this range.
+func covers(ranges []rangemap.Range, r rangemap.Range) bool {
+	for _, c := range ranges {
+		if c.Start == r.Start && c.End == r.End {
 			return true
 		}
 	}
 
 	return false
+}
+
+// CaughtUp reports whether this shard has finished being copied into for a
+// range: the backfill walked it to the end, and the log has kept it current
+// since.
+//
+// This is what a promotion is decided on, and it is deliberately the only way to
+// ask. A learner holding *some* of a range is the one state that must not be
+// served — a promoted learner answers "no such object" for every key the copy
+// has not reached, and nothing reports it, because a partial range is a range
+// that simply says no.
+//
+// # In memory, and only while the range is still being learned
+//
+// Not persisted, and the omission is the safety. A durable claim of doneness
+// outlives the data behind it: a node promoted, later moved away and later still
+// made a learner of that range again would read its own old claim and report
+// ready without copying anything. So a restart forgets, and forgetting costs one
+// re-copy — against a promotion onto data this node does not have.
+//
+// Configure prunes it to the ranges still being learned, which gives the same
+// protection without a restart: a completion survives exactly as long as the
+// instruction that produced it.
+func (s *Shard) CaughtUp(r rangemap.Range) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.caught[idOf(r)]
+}
+
+// markCaughtUp records that a range has been copied in full.
+func (s *Shard) markCaughtUp(r rangemap.Range) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.caught == nil {
+		s.caught = make(map[rangeID]bool, 1)
+	}
+
+	s.caught[idOf(r)] = true
+}
+
+// retainCaughtUp drops every completion that is not for one of these ranges. The
+// caller holds the lock.
+func (s *Shard) retainCaughtUp(learning []rangemap.Range) {
+	if len(s.caught) == 0 {
+		return
+	}
+
+	keep := make(map[rangeID]bool, len(learning))
+
+	for _, r := range learning {
+		if id := idOf(r); s.caught[id] {
+			keep[id] = true
+		}
+	}
+
+	s.caught = keep
+}
+
+// rangeID identifies a range for the purpose of remembering it was copied.
+//
+// The owner is part of it because a copy is a copy of a particular node's
+// contents: after a failover the range has the same bounds and different
+// contents — the promoted node holds the records it received and not the ones it
+// did not — and a completion remembered against the old owner would skip the
+// difference.
+type rangeID struct {
+	start string
+	end   string
+	owner cluster.NodeID
+}
+
+func idOf(r rangemap.Range) rangeID {
+	return rangeID{start: r.Start, end: r.End, owner: r.Owner}
 }
 
 // ApplyBatch replays an owner's batch into this shard.

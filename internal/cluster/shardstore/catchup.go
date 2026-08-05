@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
@@ -79,11 +78,6 @@ func (p *Plane) CatchUp(ctx context.Context) (CatchUpResult, error) {
 
 	var out CatchUpResult
 
-	// Rebuilt rather than mutated, so a range that stopped being learned —
-	// promoted, moved elsewhere, split under it — drops out without a rule of
-	// its own. The same shape the controller's absence tracking uses.
-	done := make(map[rangeID]bool)
-
 	for _, r := range m.Ranges {
 		if !slices.Contains(r.Learners, p.self) {
 			continue
@@ -91,11 +85,11 @@ func (p *Plane) CatchUp(ctx context.Context) (CatchUpResult, error) {
 
 		out.Learning++
 
-		id := idOf(r)
-
-		if p.caughtUp(id) {
-			done[id] = true
-
+		// The completion lives on the shard, which is where the copy landed and
+		// what a peer can be asked about. Refresh above has already pruned it to
+		// the ranges this node is still learning, so a claim from before a
+		// promotion cannot be read here.
+		if p.shard.CaughtUp(r) {
 			out.Ready = append(out.Ready, r)
 
 			continue
@@ -113,14 +107,10 @@ func (p *Plane) CatchUp(ctx context.Context) (CatchUpResult, error) {
 		out.Entries += res.Entries
 
 		if res.Done {
-			done[id] = true
-
 			out.Copied = append(out.Copied, r)
 			out.Ready = append(out.Ready, r)
 		}
 	}
-
-	p.setCaughtUp(done)
 
 	return out, nil
 }
@@ -141,35 +131,4 @@ func (p *Plane) backfill(ctx context.Context, r rangemap.Range) (BackfillResult,
 	}
 
 	return p.shard.Backfill(ctx, r, from, DefaultBackfillBatch)
-}
-
-// rangeID identifies a range for the purpose of remembering it was copied.
-//
-// The owner is part of it because a copy is a copy of a particular node's
-// contents: after a failover the range has the same bounds and different
-// contents, and a completion remembered against the old owner would skip the
-// difference.
-type rangeID struct {
-	start string
-	end   string
-	owner cluster.NodeID
-}
-
-func idOf(r rangemap.Range) rangeID {
-	return rangeID{start: r.Start, end: r.End, owner: r.Owner}
-}
-
-// caughtUp reports whether this process has already finished copying a range.
-func (p *Plane) caughtUp(id rangeID) bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	return p.caught[id]
-}
-
-// setCaughtUp replaces what this node considers copied.
-func (p *Plane) setCaughtUp(done map[rangeID]bool) {
-	p.mu.Lock()
-	p.caught = done
-	p.mu.Unlock()
 }

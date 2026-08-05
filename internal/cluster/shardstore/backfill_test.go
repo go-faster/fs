@@ -51,7 +51,7 @@ func TestBackfillCopiesTheRange(t *testing.T) {
 	owner := openShard(t, learned)
 
 	learner := openShard(t)
-	learner.Follow([]rangemap.Range{learned})
+	learner.Configure(nil, nil, []rangemap.Range{learned})
 
 	for i := range 20 {
 		require.NoError(t, owner.Put(t.Context(),
@@ -83,7 +83,7 @@ func TestBackfillDoesNotOverwriteANewerRecord(t *testing.T) {
 	owner := openShard(t, learned)
 
 	learner := openShard(t)
-	learner.Follow([]rangemap.Range{learned})
+	learner.Configure(nil, nil, []rangemap.Range{learned})
 
 	old := entry("photos", "a.jpg", 100, 1)
 	require.NoError(t, owner.Put(t.Context(), old))
@@ -125,7 +125,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 	owner := openShard(t, learned)
 
 	learner := openShard(t)
-	learner.Follow([]rangemap.Range{learned})
+	learner.Configure(nil, nil, []rangemap.Range{learned})
 
 	for i := range 10 {
 		require.NoError(t, owner.Put(t.Context(),
@@ -143,7 +143,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 
 	// The whole thing again, as a resume from a lost cursor would do.
 	learner.Adopt(nil)
-	learner.Follow([]rangemap.Range{learned})
+	learner.Configure(nil, nil, []rangemap.Range{learned})
 	copyRange(t, owner, learner, learned, 3)
 
 	learner.Adopt([]rangemap.Range{learned})
@@ -160,7 +160,7 @@ func TestBackfillResumesFromItsCursor(t *testing.T) {
 	owner := openShard(t, learned)
 
 	learner := openShard(t)
-	learner.Follow([]rangemap.Range{learned})
+	learner.Configure(nil, nil, []rangemap.Range{learned})
 
 	for i := range 12 {
 		require.NoError(t, owner.Put(t.Context(),
@@ -198,7 +198,7 @@ func TestLearnRefusesARangeItDoesNotReplicate(t *testing.T) {
 	learner := openShard(t)
 
 	err := learner.Learn(t.Context(), learned, []metastore.Entry{entry("photos", "a.jpg", 1, 1)})
-	require.ErrorIs(t, err, shardstore.ErrNotFollowed)
+	require.ErrorIs(t, err, shardstore.ErrNotLearned)
 }
 
 // TestLearnRefusesAnEntryOutsideTheRange: a backfill copies one range, and an
@@ -208,7 +208,7 @@ func TestLearnRefusesAnEntryOutsideTheRange(t *testing.T) {
 	bounded := rangemap.Range{Start: "ob", End: "oc", Owner: "n0", Learners: []cluster.NodeID{"n1"}}
 
 	learner := openShard(t)
-	learner.Follow([]rangemap.Range{bounded})
+	learner.Configure(nil, nil, []rangemap.Range{bounded})
 
 	err := learner.Learn(t.Context(), bounded, []metastore.Entry{entry("zulu", "a.jpg", 1, 1)})
 	require.ErrorContains(t, err, "outside the range")
@@ -298,7 +298,7 @@ func TestALearnerShipsNothing(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = learner.Close() })
 
-	learner.Follow([]rangemap.Range{learned})
+	learner.Configure(nil, nil, []rangemap.Range{learned})
 
 	require.NoError(t, learner.Learn(t.Context(), learned,
 		[]metastore.Entry{entry("photos", "a.jpg", 100, 1)}))
