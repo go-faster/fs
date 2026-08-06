@@ -57,6 +57,15 @@ type Measurement struct {
 	// a range with nothing in it, or one whose boundary is already deeper than
 	// the descent can reach.
 	SplitAt string
+	// AccessedAt is where the range's *recent writes* divide, empty when the
+	// owner has not seen enough of them to say.
+	//
+	// The other median, and for the workload this phase exists for the only
+	// useful one. Sequential keys all land at the top of the key space, so
+	// SplitAt — which divides the bytes — sits far below the traffic, and a
+	// split there halves the storage and leaves the upper half taking every
+	// write. This divides the traffic instead.
+	AccessedAt string
 	// Writes is how many writes a second the owner is taking for the range.
 	//
 	// Size says how much a range costs to move; this says how much is gained by
@@ -78,7 +87,12 @@ func (s *Shard) Measure(_ context.Context, r rangemap.Range) (Measurement, error
 		return Measurement{}, err
 	}
 
-	return Measurement{Bytes: size.Bytes, SplitAt: at, Writes: s.WriteRate(r)}, nil
+	return Measurement{
+		Bytes:      size.Bytes,
+		SplitAt:    at,
+		AccessedAt: s.AccessPoint(r),
+		Writes:     s.WriteRate(r),
+	}, nil
 }
 
 // RangeSize estimates what a range holds.
@@ -334,8 +348,37 @@ func (p SplitPolicy) maxPerPass() int {
 	return p.MaxSplitsPerPass
 }
 
+// SplitPlan is one boundary worth creating, and which median chose it.
+//
+// Which one is not bookkeeping. A split by stored size and a split by traffic
+// put the boundary in very different places on the same range, and an operator
+// looking at a partition that keeps getting finer needs to know which question
+// the cluster was answering.
+type SplitPlan struct {
+	// At is the boundary to create.
+	At string
+	// ByAccess reports that the boundary divides the range's recent writes
+	// rather than its stored bytes.
+	ByAccess bool
+	// Bytes is what the range held when it was measured.
+	Bytes uint64
+}
+
 // PlanSplits returns the boundaries worth creating, largest range first, from a
 // survey already taken.
+//
+// # The accessed median is preferred when there is one
+//
+// A range is split because it is too large, and where it divides decides
+// whether that helped. Dividing the bytes halves the storage; on a
+// sequential-key workload it leaves the upper half taking every write, so the
+// next pass splits that half, and the one after splits half of it — the
+// boundary walks toward the hot end one control-plane write at a time. Dividing
+// the traffic puts it near the hot end on the first split.
+//
+// The stored median remains the fallback, and it is not a lesser one: a range
+// nobody is writing to has no accessed median to compute, and its split point
+// is exactly the question of where its bytes are.
 //
 // Pure, and taking the measurements rather than a way to make them, because the
 // pass that splits also rebalances and both want the same numbers. Two planners
@@ -348,13 +391,8 @@ func (p SplitPolicy) maxPerPass() int {
 // earliest, because the cap is reached long before the work is done on a
 // cluster that has just been switched on — and finishing the alphabet while the
 // one enormous range waits is the wrong order to make progress in.
-func PlanSplits(m *rangemap.Map, survey Survey, policy SplitPolicy) []string {
-	type candidate struct {
-		at    string
-		bytes uint64
-	}
-
-	var found []candidate
+func PlanSplits(m *rangemap.Map, survey Survey, policy SplitPolicy) []SplitPlan {
+	var found []SplitPlan
 
 	for i := range m.Ranges {
 		if i >= len(survey) || survey[i] == nil {
@@ -367,11 +405,22 @@ func PlanSplits(m *rangemap.Map, survey Survey, policy SplitPolicy) []string {
 
 		got := survey[i]
 
-		if got.Bytes <= policy.maxBytes() || got.SplitAt == "" {
+		if got.Bytes <= policy.maxBytes() {
 			continue
 		}
 
-		found = append(found, candidate{at: got.SplitAt, bytes: got.Bytes})
+		// Size decides *whether* to split; the accessed median decides where,
+		// when the owner has seen enough writes to have one.
+		plan := SplitPlan{At: got.AccessedAt, ByAccess: true, Bytes: got.Bytes}
+		if plan.At == "" {
+			plan = SplitPlan{At: got.SplitAt, Bytes: got.Bytes}
+		}
+
+		if plan.At == "" {
+			continue
+		}
+
+		found = append(found, plan)
 	}
 
 	// Sorted by size alone. What the plan owes is that two controllers racing
@@ -382,18 +431,13 @@ func PlanSplits(m *rangemap.Map, survey Survey, policy SplitPolicy) []string {
 	// Stable rather than not, because it costs nothing here and leaves equal
 	// ranges in map order, which is key order. That is a nicety, not the
 	// guarantee.
-	slices.SortStableFunc(found, func(a, b candidate) int {
-		return cmp.Compare(b.bytes, a.bytes)
+	slices.SortStableFunc(found, func(a, b SplitPlan) int {
+		return cmp.Compare(b.Bytes, a.Bytes)
 	})
 
 	if len(found) > policy.maxPerPass() {
 		found = found[:policy.maxPerPass()]
 	}
 
-	out := make([]string, 0, len(found))
-	for _, c := range found {
-		out = append(out, c.at)
-	}
-
-	return out
+	return found
 }

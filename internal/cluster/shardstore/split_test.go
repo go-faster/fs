@@ -322,6 +322,16 @@ func (m *measurements) survey(t *testing.T, in *rangemap.Map) shardstore.Survey 
 	return out
 }
 
+// boundaries is a plan's keys, for the tests that only care where it split.
+func boundaries(plan []shardstore.SplitPlan) []string {
+	out := make([]string, 0, len(plan))
+	for _, p := range plan {
+		out = append(out, p.At)
+	}
+
+	return out
+}
+
 // TestPlanSplitsTakesTheLargestFirst: the cap is reached long before the work is
 // done on a cluster that has just been switched on, so finishing the alphabet
 // while one enormous range waits is the wrong order to make progress in.
@@ -341,7 +351,7 @@ func TestPlanSplitsTakesTheLargestFirst(t *testing.T) {
 
 	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100, MaxSplitsPerPass: 2})
 
-	assert.Equal(t, []string{"obm", "ocm"}, plan, "the two largest, in that order")
+	assert.Equal(t, []string{"obm", "ocm"}, boundaries(plan), "the two largest, in that order")
 }
 
 // TestPlanSplitsLeavesSmallRangesAlone: a partition finer than the data warrants
@@ -389,7 +399,7 @@ func TestPlanSplitsSkipsAnUnreachableOwner(t *testing.T) {
 
 	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100})
 
-	assert.Equal(t, []string{"obm"}, plan,
+	assert.Equal(t, []string{"obm"}, boundaries(plan),
 		"the unreachable owner's range is skipped, not assumed")
 	assert.Contains(t, table.asked, cluster.NodeID("gone"), "it was asked, and it failed")
 }
@@ -470,7 +480,7 @@ func TestPlanSplitsIsAFunctionOfTheMeasurements(t *testing.T) {
 	second := shardstore.PlanSplits(m, table.survey(t, m), policy)
 
 	require.Equal(t, first, second, "the same measurements must give the same plan")
-	assert.Equal(t, []string{"o01m", "o06m", "o04m"}, first,
+	assert.Equal(t, []string{"o01m", "o06m", "o04m"}, boundaries(first),
 		"largest first: 9000, 8000, 5000")
 }
 
@@ -506,4 +516,41 @@ func TestPlanSplitsBoundsMapChurn(t *testing.T) {
 
 	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 1})
 	assert.Len(t, plan, shardstore.DefaultMaxSplitsPerPass)
+}
+
+// TestPlanSplitsPrefersTheAccessedMedian: size decides *whether* to split; where
+// it divides decides whether that helped.
+//
+// On a sequential-key workload the stored median sits far below the traffic, so
+// a split there halves the bytes and leaves the upper half taking every write.
+func TestPlanSplitsPrefersTheAccessedMedian(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{Start: "", End: "", Owner: "n0"}}}
+	require.NoError(t, m.Validate())
+
+	table := &measurements{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 900, SplitAt: "om", AccessedAt: "ow"},
+	}}
+
+	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100})
+
+	require.Len(t, plan, 1)
+	assert.Equal(t, "ow", plan[0].At, "split by stored size while the writes were elsewhere")
+	assert.True(t, plan[0].ByAccess, "the plan does not say which median chose the boundary")
+}
+
+// TestPlanSplitsFallsBackToTheStoredMedian: a range nobody is writing to has no
+// traffic to divide, and where its bytes are is exactly the right question.
+func TestPlanSplitsFallsBackToTheStoredMedian(t *testing.T) {
+	m := &rangemap.Map{Ranges: []rangemap.Range{{Start: "", End: "", Owner: "n0"}}}
+	require.NoError(t, m.Validate())
+
+	table := &measurements{byStart: map[string]shardstore.Measurement{
+		"": {Bytes: 900, SplitAt: "om"},
+	}}
+
+	plan := shardstore.PlanSplits(m, table.survey(t, m), shardstore.SplitPolicy{MaxBytes: 100})
+
+	require.Len(t, plan, 1)
+	assert.Equal(t, "om", plan[0].At, "a quiet range was left unsplit for want of a traffic median")
+	assert.False(t, plan[0].ByAccess)
 }

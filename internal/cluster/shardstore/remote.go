@@ -132,9 +132,10 @@ func Serve(shard *Shard) transport.ShardFunc {
 			}
 
 			return transport.ShardResponse{
-				Bytes:   size.Bytes,
-				SplitAt: at,
-				Writes:  shard.WriteRate(*req.Range),
+				Bytes:      size.Bytes,
+				SplitAt:    at,
+				AccessedAt: shard.AccessPoint(*req.Range),
+				Writes:     shard.WriteRate(*req.Range),
 			}, nil
 
 		case transport.ShardOpBackfill:
@@ -428,7 +429,12 @@ func (p *Peer) Measure(ctx context.Context, r rangemap.Range) (Measurement, erro
 		return Measurement{}, err
 	}
 
-	return Measurement{Bytes: resp.Bytes, SplitAt: resp.SplitAt, Writes: resp.Writes}, nil
+	return Measurement{
+		Bytes:      resp.Bytes,
+		SplitAt:    resp.SplitAt,
+		AccessedAt: resp.AccessedAt,
+		Writes:     resp.Writes,
+	}, nil
 }
 
 // Reset implements Backend.

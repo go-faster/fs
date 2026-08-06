@@ -84,6 +84,9 @@ type Shard struct {
 	// loads is how much traffic each owned range is taking. See rangeLoad for
 	// why it is a decaying rate and why it does not survive a restart.
 	loads map[rangeID]*rangeLoad
+	// access is where each owned range's recent writes landed, which is what
+	// divides its *traffic* rather than its bytes.
+	access map[rangeID]*rangeAccess
 
 	locks [stripes]sync.Mutex
 }
@@ -178,6 +181,7 @@ func (s *Shard) Adopt(ranges []rangemap.Range) {
 
 	s.owned = owned
 	s.trackLoad(owned)
+	s.trackAccess(owned)
 }
 
 // Ranges returns what this shard serves, in key order.

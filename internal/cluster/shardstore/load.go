@@ -76,8 +76,18 @@ func (s *Shard) observe(key []byte) {
 			continue
 		}
 
-		if l := s.loads[idOf(r)]; l != nil {
+		id := idOf(r)
+
+		if l := s.loads[id]; l != nil {
 			l.writes.Add(1)
+		}
+
+		// How much and where, together. They answer different questions — how
+		// busy a range is, and which half of it is busy — and a write that
+		// counted for one and not the other would make the two describe
+		// different traffic.
+		if a := s.access[id]; a != nil {
+			a.observe(key)
 		}
 
 		return

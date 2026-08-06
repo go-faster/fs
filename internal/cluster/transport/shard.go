@@ -120,6 +120,9 @@ type ShardResponse struct {
 
 	// Bytes is a range's estimated size, for ShardOpMeasure.
 	Bytes uint64 `json:"bytes,omitempty"`
+	// AccessedAt is where a range's recent writes divide, for ShardOpMeasure.
+	// Empty when the owner has not seen enough of them to say.
+	AccessedAt string `json:"accessed_at,omitempty"`
 	// Writes is how many writes a second the owner is taking for a range, for
 	// ShardOpMeasure.
 	Writes float64 `json:"writes,omitempty"`

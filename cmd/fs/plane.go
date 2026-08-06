@@ -310,9 +310,22 @@ func servePlaneLeadership(
 		}
 
 		if len(out.Split) > 0 {
+			byAccess := 0
+
+			for _, plan := range out.Split {
+				if plan.ByAccess {
+					byAccess++
+				}
+			}
+
+			// Which median chose the boundary is worth logging. The two put it
+			// in very different places on the same range, and an operator
+			// watching a partition get finer needs to know which question the
+			// cluster was answering.
 			lg.Info("Metadata plane split",
 				zap.Int("boundaries", len(out.Split)),
-				zap.String("first", out.Split[0]))
+				zap.Int("by_traffic", byAccess),
+				zap.String("first", out.Split[0].At))
 		}
 
 		if len(out.Promoted)+len(out.Orphaned)+len(out.Held) > 0 {

@@ -139,8 +139,8 @@ type Reconciliation struct {
 	Promoted []rangemap.Range
 	Held     []rangemap.Range
 	Orphaned []rangemap.Range
-	// Split are the boundaries this pass created.
-	Split []string
+	// Split are the boundaries this pass created, and which median chose each.
+	Split []SplitPlan
 	// Learned are the ranges whose learner finished its copy and became an
 	// ordinary follower this pass.
 	Learned []rangemap.Range
@@ -604,20 +604,20 @@ func (c *Controller) improve(
 
 	next := m
 
-	for _, at := range boundaries {
+	for _, plan := range boundaries {
 		// Applied one at a time onto the result of the last, because two
 		// boundaries can land in the same range: the plan is computed from one
 		// map, and the first split of a range invalidates the second's view of
 		// it. Split rejects what it cannot apply, and a rejected boundary is
 		// skipped rather than fatal — the range is measured again next pass.
-		split, err := next.Split(at)
+		split, err := next.Split(plan.At)
 		if err != nil {
 			continue
 		}
 
 		next = split
 
-		result.Split = append(result.Split, at)
+		result.Split = append(result.Split, plan)
 	}
 
 	if len(result.Split) == 0 {
