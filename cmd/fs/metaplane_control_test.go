@@ -12,7 +12,9 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/go-faster/fs/internal/adminhandler"
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
 // planeFixture is a controller over a walk a test drives by hand.
@@ -220,4 +222,154 @@ func TestStatusReportsThePolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, RebuildOnFailure, got.Policy)
+}
+
+// planeMap is a two-range partitioning owned by n0 and n1.
+func planeMap(t *testing.T, revision int64) *rangemap.Map {
+	t.Helper()
+
+	m := &rangemap.Map{Revision: revision, Ranges: []rangemap.Range{
+		{Start: "", End: "om", Owner: "n0", Followers: []cluster.NodeID{"n1"}},
+		{Start: "om", End: "", Owner: "n1", Learners: []cluster.NodeID{"n0"}, MoveTo: "n0"},
+	}}
+	require.NoError(t, m.Validate())
+
+	return m
+}
+
+// registry is a topology a test dictates.
+type registry struct{ nodes []cluster.Node }
+
+func (r *registry) Topology() *cluster.Topology { return &cluster.Topology{Nodes: r.nodes} }
+
+func members(ids ...cluster.NodeID) *registry {
+	out := &registry{}
+	for _, id := range ids {
+		out.nodes = append(out.nodes, cluster.Node{ID: id})
+	}
+
+	return out
+}
+
+// TestThePlaneViewReportsThePartitioning: every question #192 asks starts with
+// being able to see the map at all, which no metric exposes — they are per node,
+// and the partitioning is a cluster-wide object.
+func TestThePlaneViewReportsThePartitioning(t *testing.T) {
+	f := newPlaneFixture(t, metastore.Ready())
+	f.topo = members("n0", "n1")
+	f.loadMap = func(context.Context) (*rangemap.Map, error) { return planeMap(t, 42), nil }
+
+	got, err := f.Status(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(42), got.Revision)
+	require.Len(t, got.Ranges, 2)
+
+	assert.Equal(t, "n0", got.Ranges[0].Owner)
+	assert.Equal(t, []string{"n1"}, got.Ranges[0].Followers)
+	assert.False(t, got.Ranges[0].Held)
+
+	assert.Equal(t, []string{"n0"}, got.Ranges[1].Learners)
+	assert.Equal(t, "n0", got.Ranges[1].MoveTo, "a move in flight is visible")
+}
+
+// TestAHeldRangeIsVisible is the one #192 calls out as having no signal at all.
+//
+// Its owner is gone and the controller is still inside the grace before
+// reassigning, so nobody is serving that part of the key space. From a node's
+// own shard it is indistinguishable from a range owned by a node that is fine,
+// which is why the metrics cannot show it and this must.
+func TestAHeldRangeIsVisible(t *testing.T) {
+	f := newPlaneFixture(t, metastore.Ready())
+	f.topo = members("n0") // n1 is gone
+	f.loadMap = func(context.Context) (*rangemap.Map, error) { return planeMap(t, 42), nil }
+
+	got, err := f.Status(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, got.Ranges, 2)
+	assert.False(t, got.Ranges[0].Held, "n0 is registered and serving")
+	assert.True(t, got.Ranges[1].Held, "n1 is gone and nobody is answering for its range")
+}
+
+// TestAnUnreadableMapDoesNotBreakTheRest: the flag and the rebuild state are
+// what this endpoint owes. An operator looking at a plane during an etcd outage
+// still wants to know whether this node is rebuilding — which is exactly when
+// they look.
+func TestAnUnreadableMapDoesNotBreakTheRest(t *testing.T) {
+	f := newPlaneFixture(t, metastore.Building(metastore.CauseOrphaned))
+	f.loadMap = func(context.Context) (*rangemap.Map, error) {
+		return nil, errors.New("etcd unreachable")
+	}
+
+	got, err := f.Status(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, "orphaned", got.Cause)
+	assert.Zero(t, got.Revision)
+	assert.Empty(t, got.Ranges)
+}
+
+// TestThePlaneViewWithoutAMapLoader: a controller with no way to read the map
+// reports the node-local half and nothing invented.
+func TestThePlaneViewWithoutAMapLoader(t *testing.T) {
+	f := newPlaneFixture(t, metastore.Ready())
+
+	got, err := f.Status(t.Context())
+	require.NoError(t, err)
+
+	assert.True(t, got.Ready)
+	assert.Empty(t, got.Ranges)
+	assert.Empty(t, got.Nodes)
+}
+
+// TestAStaleNodeIsVisible: routing is lazy by design — a node refreshes when a
+// peer tells it that it is behind, and not otherwise — so a node taking no
+// traffic for a range that moved can sit on a stale map indefinitely. Nothing
+// else in the cluster says so.
+func TestAStaleNodeIsVisible(t *testing.T) {
+	m := planeMap(t, 4127)
+
+	rows := planeNodeRows(m, members("n0", "n1", "n2").nodes,
+		map[cluster.NodeID]nodeLiveResult{
+			"n0": {Live: &adminhandler.NodeLive{PlaneRevision: 4127, PlaneOwned: 1, PlaneReplicated: 1}},
+			"n1": {Live: &adminhandler.NodeLive{PlaneRevision: 4100}},
+			// n2 did not answer.
+			"n2": {Err: "unreachable"},
+		})
+
+	require.Len(t, rows, 3)
+
+	assert.False(t, rows[0].Behind)
+	assert.Equal(t, 1, rows[0].Owned)
+
+	assert.True(t, rows[1].Behind, "a node routing by an older map read as current")
+
+	assert.False(t, rows[2].Reporting)
+	assert.False(t, rows[2].Behind, "silence read as staleness")
+}
+
+// TestANodeWithNoMapIsBehind: it is routing by nothing, which is the same
+// problem as routing by something old and has the same fix.
+func TestANodeWithNoMapIsBehind(t *testing.T) {
+	rows := planeNodeRows(planeMap(t, 7), members("n0").nodes,
+		map[cluster.NodeID]nodeLiveResult{"n0": {Live: &adminhandler.NodeLive{}}})
+
+	require.Len(t, rows, 1)
+	assert.True(t, rows[0].Behind)
+}
+
+// TestANodeAheadOfTheMapIsNotBehind: the map is read at one revision and the
+// nodes are asked at another, so a node that refreshed in between reports a
+// newer one. That is the cluster working, not a node to go and look at —
+// flagging it would put a false alarm on the list an operator scans for real
+// ones.
+func TestANodeAheadOfTheMapIsNotBehind(t *testing.T) {
+	rows := planeNodeRows(planeMap(t, 4127), members("n0").nodes,
+		map[cluster.NodeID]nodeLiveResult{
+			"n0": {Live: &adminhandler.NodeLive{PlaneRevision: 4128}},
+		})
+
+	require.Len(t, rows, 1)
+	assert.False(t, rows[0].Behind, "a node that refreshed first read as stale")
 }

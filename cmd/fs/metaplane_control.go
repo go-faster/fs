@@ -7,8 +7,11 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/go-faster/fs/clusterstore"
 	"github.com/go-faster/fs/internal/adminhandler"
+	"github.com/go-faster/fs/internal/cluster"
 	"github.com/go-faster/fs/internal/cluster/metastore"
+	"github.com/go-faster/fs/internal/cluster/rangemap"
 )
 
 // planeController is the sharded metadata plane behind the admin API, and the
@@ -29,6 +32,16 @@ type planeController struct {
 	// policy is the configured automatic-rebuild policy, reported so an
 	// operator can see why nothing has happened on its own.
 	policy string
+	// loadMap reads the partitioning from the control plane, which is the
+	// authoritative one: every node's own copy is a cache that lazy routing is
+	// allowed to leave behind.
+	loadMap func(context.Context) (*rangemap.Map, error)
+	// topo is the registered membership, which is what makes a range "held":
+	// an owner that is not in it is an owner nothing can reach.
+	topo clusterstore.TopologySource
+	// live asks the nodes themselves which revision they are routing by. Nil
+	// leaves the per-node view empty rather than wrong.
+	live *peerStatus
 	// baseCtx bounds every run: the server's lifetime, not the API request's.
 	//
 	// A rebuild outlives the request that asked for it by hours. Run on the
@@ -67,7 +80,142 @@ func (c *planeController) Status(ctx context.Context) (adminhandler.PlaneStatus,
 		out.Cause = build.Cause.String()
 	}
 
+	c.describe(ctx, &out)
+
 	return out, nil
+}
+
+// describe fills in the partitioning and what each node believes about it.
+//
+// Best effort, and deliberately: the flag and the rebuild state above are what
+// the endpoint owes, and a control plane that cannot be read must not turn the
+// whole answer into an error. An operator looking at a plane during an etcd
+// outage still wants to know whether this node is rebuilding.
+func (c *planeController) describe(ctx context.Context, out *adminhandler.PlaneStatus) {
+	if c.loadMap == nil {
+		return
+	}
+
+	m, err := c.loadMap(ctx)
+	if err != nil || m == nil {
+		return
+	}
+
+	out.Revision = m.Revision
+
+	var registered []cluster.Node
+
+	if c.topo != nil {
+		if topo := c.topo.Topology(); topo != nil {
+			registered = topo.Nodes
+		}
+	}
+
+	out.Ranges = planeRanges(m, registered)
+	out.Nodes = c.planeNodes(ctx, m, registered)
+}
+
+// planeRanges renders the partitioning, marking the ranges nobody is serving.
+//
+// A range is held when its owner is not registered. That is the one plane
+// question with no other signal: the metrics are per node, and from a node's
+// own shard a range owned by a node that is gone looks exactly like a range
+// owned by a node that is fine.
+func planeRanges(m *rangemap.Map, registered []cluster.Node) []adminhandler.PlaneRange {
+	live := make(map[cluster.NodeID]bool, len(registered))
+	for _, n := range registered {
+		live[n.ID] = true
+	}
+
+	out := make([]adminhandler.PlaneRange, 0, len(m.Ranges))
+
+	for _, r := range m.Ranges {
+		out = append(out, adminhandler.PlaneRange{
+			Start:     r.Start,
+			End:       r.End,
+			Owner:     string(r.Owner),
+			Followers: nodeIDs(r.Followers),
+			Learners:  nodeIDs(r.Learners),
+			MoveTo:    string(r.MoveTo),
+			// Registered nodes only. A map naming an owner the registry has
+			// never heard of is held for the same reason one naming a departed
+			// node is: nothing can reach it.
+			Held: !live[r.Owner],
+		})
+	}
+
+	return out
+}
+
+// planeNodes asks each node which revision it is routing by.
+//
+// The disagreement is the point. Routing is lazy — a node refreshes when a peer
+// says it is behind, and not otherwise — so a node taking no traffic for a
+// range that moved can sit on a stale map indefinitely, and nothing else would
+// say so.
+func (c *planeController) planeNodes(
+	ctx context.Context,
+	m *rangemap.Map,
+	registered []cluster.Node,
+) []adminhandler.PlaneNode {
+	if c.live == nil {
+		return nil
+	}
+
+	return planeNodeRows(m, registered, c.live.Fetch(ctx, registered))
+}
+
+// planeNodeRows renders what each node said about the map against what the map
+// actually is.
+//
+// Separated from the fetching so the comparison — the part with a rule in it —
+// can be tested without a cluster to ask.
+func planeNodeRows(
+	m *rangemap.Map,
+	registered []cluster.Node,
+	fetched map[cluster.NodeID]nodeLiveResult,
+) []adminhandler.PlaneNode {
+	out := make([]adminhandler.PlaneNode, 0, len(registered))
+
+	for _, n := range registered {
+		got, ok := fetched[n.ID]
+
+		node := adminhandler.PlaneNode{ID: string(n.ID), Live: true, Reporting: ok && got.Live != nil}
+		if !node.Reporting {
+			// Nothing is inferred from silence. A node that did not answer is
+			// not a node routing by revision zero, and reporting it as behind
+			// would put every unreachable node on the list of stale ones.
+			out = append(out, node)
+
+			continue
+		}
+
+		node.Revision = got.Live.PlaneRevision
+		node.Owned = got.Live.PlaneOwned
+		node.Replicated = got.Live.PlaneReplicated
+		// A node with no map at all is behind by definition: it is routing by
+		// nothing. Reported the same way as one behind by a revision, because
+		// the operator's next move is the same.
+		node.Behind = node.Revision < m.Revision
+
+		out = append(out, node)
+	}
+
+	return out
+}
+
+// nodeIDs renders a node list for the wire.
+func nodeIDs(in []cluster.NodeID) []string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(in))
+	for _, id := range in {
+		out = append(out, string(id))
+	}
+
+	return out
 }
 
 // Rebuild implements adminhandler.PlaneControl: start now, whatever the policy.

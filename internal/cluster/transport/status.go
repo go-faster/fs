@@ -43,6 +43,28 @@ type NodeStatus struct {
 	// itself can answer this: the control plane records capacity, and capacity
 	// cannot tell an emptied disk from a lightly used one.
 	Disks []NodeDisk `json:"disks,omitempty"`
+	// Plane is which partitioning this node is actually routing by.
+	Plane NodePlane `json:"plane,omitempty"`
+}
+
+// NodePlane is the sharded metadata plane as one node sees it.
+//
+// Only the node can answer this, and it is the one plane question the control
+// plane cannot. Routing is lazy by design — a node refreshes its map when a
+// peer tells it that it is behind, and not otherwise — so a node that takes no
+// traffic for a range that moved can sit on a stale revision indefinitely with
+// nothing to notice. etcd holds the map; this is what each node believes about
+// it, and the disagreement is the thing worth seeing.
+type NodePlane struct {
+	// Enabled reports whether this node runs the sharded plane at all.
+	Enabled bool `json:"enabled,omitempty"`
+	// Revision is the map revision this node is routing by. Zero means it has
+	// not loaded one.
+	Revision int64 `json:"revision,omitempty"`
+	// Owned is how many ranges the node serves, Replicated how many it holds
+	// for someone else as a follower or a learner.
+	Owned      int `json:"owned,omitempty"`
+	Replicated int `json:"replicated,omitempty"`
 }
 
 // NodeDisk is what one of the node's disks holds right now. It is the drain

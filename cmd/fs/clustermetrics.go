@@ -15,6 +15,10 @@ import (
 // capacity across the whole topology (every node reports its usage into the
 // registry), placement skew, this node's repair backlog and scrub totals, and
 // its rebalance runner progress.
+
+// unitRange is the UCUM-style unit for a gauge counting ranges.
+const unitRange = "{range}"
+
 func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 	meter := provider.Meter("go-faster/fs/cluster")
 
@@ -45,6 +49,7 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		planeOwned  metric.Int64ObservableGauge
 		planeFollow metric.Int64ObservableGauge
 		planeReady  metric.Int64ObservableGauge
+		planeHeld   metric.Int64ObservableGauge
 		listPages   metric.Int64ObservableCounter
 		listQueries metric.Int64ObservableCounter
 	)
@@ -75,12 +80,18 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 		// change some node never noticed, which is the split lazy routing trades
 		// a watch for.
 		{&planeRev, "fs.cluster.plane.revision", "Range map revision this node is routing by.", "1"},
-		{&planeOwned, "fs.cluster.plane.ranges.owned", "Ranges this node serves.", "{range}"},
-		{&planeFollow, "fs.cluster.plane.ranges.followed", "Ranges this node replicates for another node.", "{range}"},
+		{&planeOwned, "fs.cluster.plane.ranges.owned", "Ranges this node serves.", unitRange},
+		{&planeFollow, "fs.cluster.plane.ranges.followed", "Ranges this node replicates for another node.", unitRange},
 		// Building means every listing in the cluster is walking sidecars: the
 		// difference between the plane working and the plane merely being
 		// configured.
 		{&planeReady, "fs.cluster.plane.ready", "1 when the metadata plane is ready, 0 while it is building.", "1"},
+		// A held range is a live partial outage with no other signal: the other
+		// plane gauges are per node, and from a node's own shard a range owned
+		// by a node that is gone looks exactly like one owned by a node that is
+		// fine. Only the controller can tell them apart, so only the node
+		// holding the plane election reports a non-zero value here.
+		{&planeHeld, "fs.cluster.plane.ranges.held", "Ranges whose owner is gone and which nobody is serving, as seen by the elected controller.", unitRange},
 	}
 
 	for _, ins := range instruments {
@@ -216,6 +227,7 @@ func (rt *clusterRuntime) RegisterMetrics(provider metric.MeterProvider) error {
 			}
 
 			o.ObserveInt64(planeReady, ready)
+			o.ObserveInt64(planeHeld, rt.planeHeld.Load())
 		}
 
 		listing := rt.coord.ListingStats()

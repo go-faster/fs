@@ -223,6 +223,11 @@ func servePlaneLeadership(
 		return err
 	}
 
+	// Zeroed on the way out, not just on the way in. A node that stops
+	// reconciling stops having a view, and a count left behind would report an
+	// outage that is now somebody else's to see — or nobody's.
+	defer rt.planeHeld.Store(0)
+
 	ctl, err := shardstore.NewController(shardstore.ControllerConfig{
 		Load: rt.metaPlane.loadMap,
 		Save: func(ctx context.Context, m *rangemap.Map) error {
@@ -272,6 +277,10 @@ func servePlaneLeadership(
 
 			continue
 		}
+
+		// Recorded every pass, including the quiet ones: this is a gauge, and a
+		// pass that found nothing held is exactly the pass that must say zero.
+		rt.planeHeld.Store(int64(len(out.Held)))
 
 		if !out.Changed {
 			continue

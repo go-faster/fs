@@ -53,7 +53,32 @@ func (rt *clusterRuntime) nodeStatus(ctx context.Context) (transport.NodeStatus,
 			Held:             coverage.Objects,
 		},
 		Disks: rt.diskStatus(ctx),
+		Plane: rt.planeStatus(),
 	}, nil
+}
+
+// planeStatus is which partitioning this node is routing by.
+//
+// Read from the router's cache rather than from etcd, and that is the point: an
+// operator asking this is asking what the node believes, not what is true. The
+// two differ exactly when lazy routing has left a node behind, which is the
+// case with no other signal.
+func (rt *clusterRuntime) planeStatus() transport.NodePlane {
+	if rt.metaPlane == nil {
+		return transport.NodePlane{}
+	}
+
+	out := transport.NodePlane{
+		Enabled:    true,
+		Owned:      len(rt.metaPlane.shard.Ranges()),
+		Replicated: len(rt.metaPlane.shard.Following()),
+	}
+
+	if m := rt.metaPlane.plane.Router().Map(); m != nil {
+		out.Revision = m.Revision
+	}
+
+	return out
 }
 
 // liveDisks maps a peer's reported disks into the admin domain type.
@@ -328,5 +353,8 @@ func (p *peerStatus) fetchOne(ctx context.Context, node cluster.Node) (*adminhan
 		NeverVerified:      st.Scrub.NeverVerified,
 		Held:               st.Scrub.Held,
 		Disks:              liveDisks(st.Disks),
+		PlaneRevision:      st.Plane.Revision,
+		PlaneOwned:         st.Plane.Owned,
+		PlaneReplicated:    st.Plane.Replicated,
 	}, nil
 }

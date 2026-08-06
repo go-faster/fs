@@ -8,6 +8,8 @@
  */
 import type { MetadataPlaneState } from './metadataPlaneState';
 import type { MetadataPlaneCause } from './metadataPlaneCause';
+import type { MetadataPlaneRange } from './metadataPlaneRange';
+import type { MetadataPlaneNode } from './metadataPlaneNode';
 
 export interface MetadataPlaneStatus {
   state: MetadataPlaneState;
@@ -22,4 +24,10 @@ export interface MetadataPlaneStatus {
   finished_at?: string;
   /** Why this node's last rebuild failed. */
   error_message?: string;
+  /** Map revision in the control plane — the partitioning as it actually is. */
+  revision?: number;
+  /** The partitioning, in key order. */
+  ranges?: MetadataPlaneRange[];
+  /** What each node believes about the partitioning. */
+  nodes?: MetadataPlaneNode[];
 }
