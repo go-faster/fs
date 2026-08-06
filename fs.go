@@ -326,6 +326,16 @@ type CreateMultipartUploadRequest struct {
 	ServerSideEncryption string
 	// Owner is the principal starting the upload; it owns the completed object.
 	Owner Owner
+	// ChecksumAlgorithm names the client-visible checksum every part of this
+	// upload carries, and ChecksumType whether the completed object's digest is
+	// a digest of the part digests (COMPOSITE) or of the whole body
+	// (FULL_OBJECT).
+	//
+	// Settled when the upload starts rather than at completion, for the same
+	// reason encryption is: the parts are digested as they arrive, so what to
+	// digest them with has to be known before the first one does.
+	ChecksumAlgorithm string
+	ChecksumType      string
 }
 
 // Part represents a part of a multipart upload.
@@ -334,6 +344,10 @@ type Part struct {
 	ETag         string
 	Size         int64
 	LastModified time.Time
+	// Checksum is the part's own client-visible digest, base64, empty when the
+	// upload asked for none. It is the part's alone: the completed object's is
+	// composed from these rather than taken over the assembled body.
+	Checksum string
 }
 
 // ObjectPart is one part of a *completed* multipart object, retained after the
@@ -343,6 +357,10 @@ type ObjectPart struct {
 	PartNumber int
 	Size       int64
 	ETag       string
+	// Checksum is the digest this part carried when it was uploaded, kept so a
+	// ranged read of one part can still report it — which is what a client
+	// verifying a download part by part asks for.
+	Checksum string
 }
 
 // ObjectAttributes describes an object without opening its body: what
@@ -399,12 +417,21 @@ type UploadPartRequest struct {
 	PartNumber int
 	Reader     io.Reader
 	Size       int64
+	// ChecksumAlgorithm and Checksum are as on PutObjectRequest: what to
+	// compute over this part, and what the client claims it will be. A claim
+	// that does not match is BadDigest and the part is not stored.
+	ChecksumAlgorithm string
+	Checksum          string
 }
 
 // CompletedPart represents a completed part for completing multipart upload.
 type CompletedPart struct {
 	PartNumber int
 	ETag       string
+	// Checksum is the digest the client says this part had. Checked against
+	// what the part actually carried, for the same reason the ETag is: a
+	// completion naming parts it did not upload must not assemble them.
+	Checksum string
 }
 
 // CompleteMultipartUploadRequest represents a request to complete multipart upload.
@@ -418,6 +445,11 @@ type CompleteMultipartUploadRequest struct {
 	// the write, exactly as it does for a conditional PutObject; the zero value
 	// imposes no condition.
 	Conditions Conditions
+	// Checksum is the completed object's digest as the client computed it, and
+	// ChecksumType which kind it is. Both are claims: the server composes its
+	// own from the parts and refuses a completion that disagrees.
+	Checksum     string
+	ChecksumType string
 }
 
 // CompleteMultipartUploadResponse represents the response for completing multipart upload.
@@ -429,6 +461,13 @@ type CompleteMultipartUploadResponse struct {
 	// ServerSideEncryption echoes the algorithm the completed object was
 	// encrypted with, empty when it was stored in the clear.
 	ServerSideEncryption string
+	// ChecksumAlgorithm, Checksum and ChecksumType describe the completed
+	// object's client-visible digest. A completion echoes them unconditionally,
+	// as a write does: the client just supplied the parts and is entitled to
+	// see what they added up to.
+	ChecksumAlgorithm string
+	Checksum          string
+	ChecksumType      string
 }
 
 // FoldVersionPage turns a bucket's gathered versions into one page: applies

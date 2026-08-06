@@ -42,6 +42,11 @@ type multipartMetadata struct {
 	// abandoned leaves parts on disk, and those must be ciphertext too, so the
 	// parts are sealed on arrival rather than at completion.
 	Encryption *encryptionInfo `json:"encryption,omitempty"`
+	// ChecksumAlgorithm is what every part of this upload is digested with, and
+	// ChecksumType what the completed object's digest means. Settled here
+	// rather than at completion because the parts are digested as they arrive.
+	ChecksumAlgorithm string `json:"checksum_algorithm,omitempty"`
+	ChecksumType      string `json:"checksum_type,omitempty"`
 }
 
 // multipartManager manages multipart uploads with disk-based persistence.
@@ -121,6 +126,14 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipa
 		return nil, fs.ErrBucketNotFound
 	}
 
+	// Refused here rather than at the first part: an upload started with an
+	// algorithm nothing can compute would take parts for as long as the client
+	// cared to send them and fail only at the end.
+	algorithm, kind, err := uploadChecksum(req.ChecksumAlgorithm, req.ChecksumType)
+	if err != nil {
+		return nil, err
+	}
+
 	uploadID := uuid.New().String()
 	uploadPath := s.multipart.uploadPath(uploadID)
 
@@ -137,6 +150,9 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipa
 		Tags:      req.Tags,
 		ACL:       req.ACL,
 		Owner:     req.Owner,
+
+		ChecksumAlgorithm: string(algorithm),
+		ChecksumType:      string(kind),
 	}
 
 	if req.ServerSideEncryption != "" {
@@ -190,6 +206,23 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 	// before the seal, exactly as it is for a single PUT.
 	hash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
+	// A part is digested with the upload's algorithm, not the request's. The
+	// completed object's checksum is composed from the parts, so parts digested
+	// with different algorithms could not be composed into anything — and the
+	// client that chose the algorithm chose it once, when the upload started.
+	algorithm := meta.ChecksumAlgorithm
+	if algorithm == "" {
+		algorithm = req.ChecksumAlgorithm
+	}
+
+	cks, err := newChecksum(algorithm)
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(partPath)
+
+		return nil, err
+	}
+
 	partWriter, err := s.sealPart(f, meta, req.PartNumber)
 	if err != nil {
 		_ = f.Close()
@@ -198,7 +231,7 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 		return nil, err
 	}
 
-	size, err := io.Copy(io.MultiWriter(partWriter, hash), req.Reader)
+	size, err := io.Copy(io.MultiWriter(partWriter, hash, cks), req.Reader)
 	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(partPath)
@@ -217,12 +250,29 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 		return nil, errors.Wrap(err, "close part file")
 	}
 
+	// Checked before the part is allowed to count, so a part that is not what
+	// the client says it is never becomes one a completion can name.
+	if err := cks.verify(req.Checksum); err != nil {
+		_ = os.Remove(partPath)
+
+		return nil, err
+	}
+
+	if err := recordPartChecksum(
+		s.multipart.uploadPath(req.UploadID), req.PartNumber, cks.algorithm, cks.value(),
+	); err != nil {
+		_ = os.Remove(partPath)
+
+		return nil, err
+	}
+
 	etag := hex.EncodeToString(hash.Sum(nil))
 
 	part := &fs.Part{
 		PartNumber: req.PartNumber,
 		ETag:       etag,
 		Size:       size,
+		Checksum:   cks.value(),
 	}
 
 	if info, err := os.Stat(partPath); err == nil {
@@ -426,6 +476,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	contentHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	layout := make([]fs.ObjectPart, 0, len(parts))
+	partDigests := make([]string, 0, len(parts))
 
 	var totalSize int64
 
@@ -471,10 +522,28 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 
 		totalSize += written
 
+		// Carried into the layout because the upload directory — and with it
+		// the file this digest was read from — is deleted at the end of this
+		// function. After that the layout is the only record there is.
+		partDigest := loadPartChecksum(uploadPath, part.PartNumber)
+
+		// The client names the parts it thinks it uploaded; a name that does
+		// not match what arrived is a completion assembling something other
+		// than what it claims to be assembling.
+		if part.Checksum != "" && partDigest != "" && part.Checksum != partDigest {
+			cleanup()
+
+			return nil, errors.Wrapf(fs.ErrBadDigest,
+				"part %d checksum does not match what was uploaded", part.PartNumber)
+		}
+
+		partDigests = append(partDigests, partDigest)
+
 		layout = append(layout, fs.ObjectPart{
 			PartNumber: part.PartNumber,
 			Size:       written,
 			ETag:       hex.EncodeToString(partHash.Sum(nil)),
+			Checksum:   partDigest,
 		})
 
 		_, _ = hash.Write(partHash.Sum(nil))
@@ -537,10 +606,18 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	// Persist the multipart ETag, content checksum and the metadata captured at
 	// initiation, plus the part layout: the upload directory is gone by now, so
 	// this is the only remaining record of where the part boundaries are.
+	objectDigest, kind, err := completionChecksum(meta, partDigests, req.Checksum)
+	if err != nil {
+		return nil, err
+	}
+
 	sc := newSidecar(meta.Key, etag, checksum, meta.Metadata, meta.Tags, meta.ACL, meta.Owner)
 	sc.Parts = layout
 	sc.UploadID = req.UploadID
 	sc.Encryption = objectWriter.finish(totalSize)
+	sc.ChecksumAlgorithm = meta.ChecksumAlgorithm
+	sc.ClientChecksum = objectDigest
+	sc.ChecksumType = string(kind)
 
 	if err := s.writeSidecar(meta.Bucket, sc); err != nil {
 		return nil, err
@@ -554,6 +631,9 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		Key:                  meta.Key,
 		ETag:                 etag,
 		ServerSideEncryption: completionAlgorithm(meta),
+		ChecksumAlgorithm:    meta.ChecksumAlgorithm,
+		Checksum:             objectDigest,
+		ChecksumType:         string(kind),
 	}, nil
 }
 
