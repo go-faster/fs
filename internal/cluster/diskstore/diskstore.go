@@ -16,6 +16,7 @@ package diskstore
 import (
 	"context"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -162,14 +163,9 @@ func (s *Store) Create(_ context.Context, disk cluster.DiskID, name string) (io.
 		return nil, err
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, dirPermissions); err != nil {
-		return nil, errors.Wrap(err, "create fragment directory")
-	}
-
-	tmp, err := os.CreateTemp(dir, tmpPattern)
+	tmp, err := stageFragment(filepath.Dir(path))
 	if err != nil {
-		return nil, errors.Wrap(err, "create temp file")
+		return nil, err
 	}
 
 	return &fileWriter{store: s, disk: disk, name: name, tmp: tmp, path: path}, nil
@@ -279,11 +275,80 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 // namespace to reserve.
 func skipEntry(name string) bool { return strings.HasPrefix(name, ".") }
 
-// pruneEmptyDirs removes now-empty parents of a deleted fragment, stopping at
-// the disk root or the first non-empty directory. Best-effort: a concurrent
-// create racing the prune simply keeps the directory.
+// mkdirAttempts is how many times a fragment directory is made before the
+// failure is the caller's.
+//
+// Two would do — one prune can only lose one race — but a disk being emptied
+// has many deletes in flight at once, and the cost of another attempt is a
+// syscall against the cost of a 500 on a write that was going to succeed.
+const mkdirAttempts = 4
+
+// stageFragment makes a fragment's directory and opens the temp file inside it,
+// retrying whichever of the two lost a directory underneath it.
+//
+// # Why either can lose one
+//
+// Neither step is atomic against concurrent removal. MkdirAll walks up, finds a
+// parent that exists, and then makes the leaf; CreateTemp opens a file in a
+// directory that existed a moment ago. A prune landing in either window fails
+// with ENOENT — and nothing is wrong with either party, because they are a
+// write and a delete of two different objects, which is what a busy disk does
+// continuously.
+//
+// # Why the pair retries together
+//
+// Retrying only the mkdir leaves the second window open, and it is the same
+// race with a smaller mouth: rarer, and therefore worse, because it would show
+// up as the same unreproducible 500 long after the first was fixed.
+//
+// Returning the error is what go-faster/fs#170 was — a random conformance test
+// failing every few runs, always a different one, because any write can be the
+// one whose directory is pruned mid-create.
+func stageFragment(dir string) (*os.File, error) {
+	var err error
+
+	for range mkdirAttempts {
+		if err = os.MkdirAll(dir, dirPermissions); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+
+			return nil, errors.Wrap(err, "create fragment directory")
+		}
+
+		var tmp *os.File
+
+		if tmp, err = os.CreateTemp(dir, tmpPattern); err == nil {
+			return tmp, nil
+		}
+
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, errors.Wrap(err, "create temp file")
+		}
+	}
+
+	return nil, errors.Wrap(err, "stage fragment")
+}
+
+// pruneEmptyDirs removes now-empty parents of a deleted fragment, stopping
+// below the disk root or at the first non-empty directory. Best-effort: a
+// concurrent create racing the prune simply keeps the directory.
+//
+// # It stops one level below the root
+//
+// The directories directly under a disk root are the namespaces every fragment
+// path is minted into — "obj", "meta". Pruning one when a disk goes empty is
+// correct in the sense that the next create makes it again, and wrong in every
+// other sense: it is the directory *every* write needs, so removing it turns
+// "the disk went briefly empty" into a race that every concurrent write can
+// lose. On a conformance suite, where a disk goes empty at every teardown, that
+// is constant.
+//
+// The race one level down survives this and is closed by the create's retry.
+// Both are needed: this removes the case that happens all the time, and the
+// retry covers the rest.
 func (*Store) pruneEmptyDirs(dir, root string) {
-	for dir != root && strings.HasPrefix(dir, root+string(filepath.Separator)) {
+	for filepath.Dir(dir) != root && strings.HasPrefix(dir, root+string(filepath.Separator)) {
 		if os.Remove(dir) != nil {
 			return
 		}

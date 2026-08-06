@@ -159,11 +159,22 @@ func TestDeletePrunesEmptyDirs(t *testing.T) {
 	_, err = os.Stat(filepath.Join(root, "obj", "aa"))
 	require.NoError(t, err, "shared dir must survive")
 
-	// Deleting the last fragment prunes the empty namespace up to the root.
+	// Deleting the last fragment prunes the object's own directories.
 	require.NoError(t, s.Delete(t.Context(), "d0", "obj/aa/g1.f1"))
 
+	_, err = os.Stat(filepath.Join(root, "obj", "aa"))
+	require.ErrorIs(t, err, os.ErrNotExist, "emptied object dirs must be pruned")
+
+	// But not the namespace root, which this used to assert it did.
+	//
+	// Pruning it is correct in the narrow sense — the next create makes it
+	// again — and wrong in every other: it is the directory *every* write needs,
+	// so removing it turns "the disk went briefly empty" into a race that each
+	// concurrent write can lose. That is go-faster/fs#170, where a conformance
+	// run failed on a random test every few hours because some write's MkdirAll
+	// was interrupted by a teardown emptying the disk.
 	_, err = os.Stat(filepath.Join(root, "obj"))
-	require.ErrorIs(t, err, os.ErrNotExist, "empty namespace dirs must be pruned")
+	require.NoError(t, err, "the namespace root every write needs must survive")
 
 	_, err = os.Stat(root)
 	require.NoError(t, err, "the disk root must survive")
