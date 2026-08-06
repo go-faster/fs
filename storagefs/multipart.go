@@ -369,6 +369,17 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		return nil, err
 	}
 
+	// The bucket is checked here as well as at CreateMultipartUpload, because
+	// an upload outlives the request that started it and the bucket can go in
+	// between. Without this the completion did not merely report the wrong
+	// thing — MkdirAll of the key's directory creates every parent, so it
+	// *recreated the bucket*, reported success, and left an object readable in
+	// a bucket the client had deleted.
+	bucketPath := filepath.Join(s.root, meta.Bucket)
+	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
+		return nil, fs.ErrBucketNotFound
+	}
+
 	// Sort parts by part number.
 	parts := make([]fs.CompletedPart, len(req.Parts))
 	copy(parts, req.Parts)
@@ -504,7 +515,11 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 
 	if err := os.Rename(tmpName, objectPath); err != nil {
 		_ = os.Remove(tmpName)
-		return nil, errors.Wrap(err, "rename final object")
+
+		// And once more for the window this cannot close by checking: the
+		// bucket can go while the parts are being assembled, which leaves the
+		// rename with nowhere to put them.
+		return nil, s.vanished(bucketPath, errors.Wrap(err, "rename final object"))
 	}
 
 	if err := s.syncDir(objectDir); err != nil {
