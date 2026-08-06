@@ -18,3 +18,6 @@ export const USAGE_POLL = 30_000;
 
 /** Schema state only changes during an upgrade. */
 export const MIGRATION_POLL = 10_000;
+
+/** The partitioning changes on splits, moves and failovers: operator-visible events. */
+export const PLANE_POLL = 5_000;
