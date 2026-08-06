@@ -60,6 +60,13 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 		// Settled here rather than at completion: by then the parts are
 		// already on disk, and would have been staged in the clear.
 		ServerSideEncryption: h.requestedEncryption(r, bucket),
+
+		// Same reason for the checksum: the parts are digested as they arrive,
+		// so what to digest them with has to be known before the first one
+		// does. Only the algorithm is taken from the request here — a create
+		// carries no body, so there is no digest to check against.
+		ChecksumAlgorithm: uploadChecksumAlgorithm(r),
+		ChecksumType:      strings.TrimSpace(r.Header.Get(checksumTypeHeader)),
 	})
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -75,6 +82,18 @@ func (h *handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/xml")
 	writeSSE(w, h.requestedEncryption(r, bucket))
+
+	// Echoed as headers, which is where the S3 API puts them on a create: a
+	// client that asked by algorithm alone learns which type it got, and one
+	// that asked by neither sees nothing at all.
+	if upload.ChecksumAlgorithm != "" {
+		w.Header().Set(checksumAlgorithmHeader, upload.ChecksumAlgorithm)
+	}
+
+	if upload.ChecksumType != "" {
+		w.Header().Set(checksumTypeHeader, upload.ChecksumType)
+	}
+
 	w.WriteHeader(http.StatusOK)
 	_ = xml.NewEncoder(w).Encode(result)
 }

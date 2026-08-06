@@ -55,6 +55,14 @@ func (h *handler) servePartNumber(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	// The checksum is the exception to that: the client is verifying the bytes
+	// it just received, and those are the part's. The object's digest is
+	// composed from the part digests and describes none of them, so reporting
+	// it here would hand back a number that cannot check what arrived.
+	if digest := attrs.PartChecksum(part); digest != "" {
+		resp.Checksum = digest
+	}
+
 	// The part list is a property of the whole object, so the response reports
 	// the object's ETag and the part count, not the part's own identity — the
 	// same thing S3 does.

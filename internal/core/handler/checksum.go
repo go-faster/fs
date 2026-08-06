@@ -79,3 +79,17 @@ func writeChecksum(w http.ResponseWriter, r *http.Request, algorithm, digest, ki
 		w.Header().Set(checksumTypeHeader, kind)
 	}
 }
+
+// uploadChecksumAlgorithm is the algorithm a multipart upload asks for.
+//
+// Only the two naming headers, never the presence of a digest header: a create
+// carries no body, so a digest on it would describe nothing, and treating one
+// as a request for an algorithm would let a stray header decide how every part
+// of the upload is digested.
+func uploadChecksumAlgorithm(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get(checksumAlgorithmHeader)); v != "" {
+		return v
+	}
+
+	return strings.TrimSpace(r.Header.Get(sdkChecksumAlgorithmHeader))
+}

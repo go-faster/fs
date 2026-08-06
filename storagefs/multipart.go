@@ -182,6 +182,9 @@ func (s *Storage) CreateMultipartUpload(_ context.Context, req *fs.CreateMultipa
 		Bucket:    req.Bucket,
 		Key:       req.Key,
 		Initiated: meta.Initiated,
+
+		ChecksumAlgorithm: meta.ChecksumAlgorithm,
+		ChecksumType:      meta.ChecksumType,
 	}, nil
 }
 
@@ -273,6 +276,8 @@ func (s *Storage) UploadPart(_ context.Context, req *fs.UploadPartRequest) (*fs.
 		ETag:       etag,
 		Size:       size,
 		Checksum:   cks.value(),
+
+		ChecksumAlgorithm: string(cks.algorithm),
 	}
 
 	if info, err := os.Stat(partPath); err == nil {
@@ -478,6 +483,17 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	layout := make([]fs.ObjectPart, 0, len(parts))
 	partDigests := make([]string, 0, len(parts))
 
+	// A FULL_OBJECT checksum is the digest of the assembled body, so it is
+	// taken here — the parts stream past exactly once, in order, and this is
+	// that stream. There is no way to reach the same number from the part
+	// digests: that is what makes the type a different kind of answer rather
+	// than a different formatting of the same one.
+	whole, err := newChecksum(fullObjectAlgorithm(meta))
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+
 	var totalSize int64
 
 	// The completed object is sealed as one uniform chunk stream under its own
@@ -512,7 +528,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 		}
 
 		partHash := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-		written, err := io.Copy(io.MultiWriter(objectWriter, partHash, contentHash), partReader)
+		written, err := io.Copy(io.MultiWriter(objectWriter, partHash, contentHash, whole), partReader)
 		_ = partFile.Close()
 
 		if err != nil {
@@ -606,7 +622,7 @@ func (s *Storage) CompleteMultipartUpload(_ context.Context, req *fs.CompleteMul
 	// Persist the multipart ETag, content checksum and the metadata captured at
 	// initiation, plus the part layout: the upload directory is gone by now, so
 	// this is the only remaining record of where the part boundaries are.
-	objectDigest, kind, err := completionChecksum(meta, partDigests, req.Checksum)
+	objectDigest, kind, err := completionChecksum(meta, partDigests, whole.value(), req.Checksum)
 	if err != nil {
 		return nil, err
 	}

@@ -309,6 +309,11 @@ type MultipartUpload struct {
 	Bucket    string
 	Key       string
 	Initiated time.Time
+	// ChecksumAlgorithm and ChecksumType echo what the upload settled on, so a
+	// client that asked by one header and got the default of the other can see
+	// both without waiting until completion to find out.
+	ChecksumAlgorithm string
+	ChecksumType      string
 }
 
 // CreateMultipartUploadRequest represents a request to start a multipart
@@ -348,6 +353,11 @@ type Part struct {
 	// upload asked for none. It is the part's alone: the completed object's is
 	// composed from these rather than taken over the assembled body.
 	Checksum string
+	// ChecksumAlgorithm names what Checksum was computed with — the upload's
+	// algorithm, not the request's. A part inherits it from the upload, so a
+	// caller that named nothing on this request still gets a digest and needs
+	// to be told which one it is.
+	ChecksumAlgorithm string
 }
 
 // ObjectPart is one part of a *completed* multipart object, retained after the
@@ -378,6 +388,29 @@ type ObjectAttributes struct {
 	// Parts is the completed part layout in ascending part-number order, or
 	// nil when the object was written by a single PUT.
 	Parts []ObjectPart
+	// ChecksumAlgorithm, Checksum and ChecksumType are the object's
+	// client-visible digest, as GetObjectAttributes reports it. For a
+	// multipart object the digest is composed from the parts, so it is a
+	// different number from any part's own.
+	ChecksumAlgorithm string
+	Checksum          string
+	ChecksumType      string
+}
+
+// PartChecksum is the digest part number n carried when it was uploaded, empty
+// when the object has no per-part digests.
+//
+// A ?partNumber read reports this rather than the object's, because the client
+// is verifying the bytes it just received and those are the part's — the
+// object's digest is of the part digests and describes none of them.
+func (a *ObjectAttributes) PartChecksum(n int) string {
+	for _, p := range a.Parts {
+		if p.PartNumber == n {
+			return p.Checksum
+		}
+	}
+
+	return ""
 }
 
 // PartRange returns the byte range covered by part number n (1-based) and

@@ -27,7 +27,7 @@ const (
 const partSize = 5 * 1024 * 1024
 
 // threeParts uploads the suite's three bodies and returns the completed parts.
-func threeParts(t *testing.T, s *storagefs.Storage, bucket, key, uploadID string) []fs.CompletedPart {
+func threeParts(t *testing.T, s *storagefs.Storage, uploadID string) []fs.CompletedPart {
 	t.Helper()
 
 	ctx := context.Background()
@@ -37,7 +37,7 @@ func threeParts(t *testing.T, s *storagefs.Storage, bucket, key, uploadID string
 		body := strings.Repeat(fill, partSize)
 
 		part, err := s.UploadPart(ctx, &fs.UploadPartRequest{
-			Bucket: bucket, Key: key, UploadID: uploadID,
+			Bucket: "bucket-a", Key: "big", UploadID: uploadID,
 			PartNumber: i + 1,
 			Reader:     strings.NewReader(body),
 			Size:       int64(len(body)),
@@ -72,7 +72,7 @@ func TestMultipartComposesTheChecksumAWSDoes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	parts := threeParts(t, s, "bucket-a", "big", up.UploadID)
+	parts := threeParts(t, s, up.UploadID)
 
 	assert.Equal(t, partA, parts[0].Checksum, "part 1 is not what the suite computed")
 	assert.Equal(t, partB, parts[1].Checksum)
@@ -125,7 +125,7 @@ func TestACompletionThatDisagreesWithItsPartsIsRefused(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	parts := threeParts(t, s, "bucket-a", "big", up.UploadID)
+	parts := threeParts(t, s, up.UploadID)
 
 	_, err = s.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket: "bucket-a", Key: "big", UploadID: up.UploadID,
@@ -148,7 +148,7 @@ func TestAnUploadWithNoAlgorithmComposesNothing(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	parts := threeParts(t, s, "bucket-a", "big", up.UploadID)
+	parts := threeParts(t, s, up.UploadID)
 
 	for _, p := range parts {
 		assert.Empty(t, p.Checksum)
@@ -185,4 +185,40 @@ func TestFullObjectIsRefusedForAlgorithmsThatCannotCompose(t *testing.T) {
 		ChecksumAlgorithm: "CRC32", ChecksumType: "FULL_OBJECT",
 	})
 	require.NoError(t, err)
+}
+
+// TestFullObjectDigestsTheBodyNotThePartDigests is the distinction the two
+// checksum types actually make, and the one that is easy to get wrong by
+// treating the type as a formatting choice.
+//
+// A COMPOSITE value is a digest *of the part digests*, and says so with its
+// "-N" suffix. A FULL_OBJECT value is the digest of the assembled body — the
+// same number a client gets by hashing what it downloads — and carries no
+// suffix. Composing the parts for a FULL_OBJECT upload produces a different
+// number and an unwanted suffix, which is precisely what the CRC tests in
+// ceph/s3-tests catch.
+func TestFullObjectDigestsTheBodyNotThePartDigests(t *testing.T) {
+	ctx := context.Background()
+
+	s, err := storagefs.New(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, s.CreateBucket(ctx, "bucket-a"))
+
+	up, err := s.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{
+		Bucket: "bucket-a", Key: "big",
+		ChecksumAlgorithm: "CRC32", ChecksumType: "FULL_OBJECT",
+	})
+	require.NoError(t, err)
+
+	parts := threeParts(t, s, up.UploadID)
+
+	done, err := s.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket: "bucket-a", Key: "big", UploadID: up.UploadID, Parts: parts,
+	})
+	require.NoError(t, err)
+
+	// ceph/s3-tests' own expected value for CRC32 over the three bodies.
+	assert.Equal(t, "WgDhBQ==", done.Checksum)
+	assert.Equal(t, "FULL_OBJECT", done.ChecksumType)
+	assert.NotContains(t, done.Checksum, "-", "a full-object digest carried a part count")
 }

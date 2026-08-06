@@ -8,6 +8,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/s3err"
 )
 
@@ -19,6 +20,31 @@ type CompleteMultipartUploadResult struct {
 	Bucket   string   `xml:"Bucket"`
 	Key      string   `xml:"Key"`
 	ETag     string   `xml:"ETag"`
+	// The completed object's client-visible digest, in the body rather than a
+	// header — which is where the S3 API puts it for this one operation, and
+	// what botocore reads. Only one of the algorithm elements is ever set.
+	ChecksumCRC32     string `xml:"ChecksumCRC32,omitempty"`
+	ChecksumCRC32C    string `xml:"ChecksumCRC32C,omitempty"`
+	ChecksumCRC64NVME string `xml:"ChecksumCRC64NVME,omitempty"`
+	ChecksumSHA1      string `xml:"ChecksumSHA1,omitempty"`
+	ChecksumSHA256    string `xml:"ChecksumSHA256,omitempty"`
+	ChecksumType      string `xml:"ChecksumType,omitempty"`
+}
+
+// setChecksum puts a digest under the element its algorithm owns.
+func (r *CompleteMultipartUploadResult) setChecksum(algorithm, digest string) {
+	switch checksum.Algorithm(algorithm) {
+	case checksum.CRC32:
+		r.ChecksumCRC32 = digest
+	case checksum.CRC32C:
+		r.ChecksumCRC32C = digest
+	case checksum.CRC64NVME:
+		r.ChecksumCRC64NVME = digest
+	case checksum.SHA1:
+		r.ChecksumSHA1 = digest
+	case checksum.SHA256:
+		r.ChecksumSHA256 = digest
+	}
 }
 
 // CompleteMultipartUploadXML represents the XML request body for completing multipart upload.
@@ -31,6 +57,27 @@ type CompleteMultipartUploadXML struct {
 type CompletedPartXML struct {
 	PartNumber int    `xml:"PartNumber"`
 	ETag       string `xml:"ETag"`
+	// The digest the client says this part had. One element per algorithm, and
+	// the client sends whichever its upload used; digest() picks out the one
+	// that is set rather than requiring the reader to know which to look at.
+	ChecksumCRC32     string `xml:"ChecksumCRC32,omitempty"`
+	ChecksumCRC32C    string `xml:"ChecksumCRC32C,omitempty"`
+	ChecksumCRC64NVME string `xml:"ChecksumCRC64NVME,omitempty"`
+	ChecksumSHA1      string `xml:"ChecksumSHA1,omitempty"`
+	ChecksumSHA256    string `xml:"ChecksumSHA256,omitempty"`
+}
+
+// digest is whichever per-algorithm element the client filled in.
+func (p CompletedPartXML) digest() string {
+	for _, v := range []string{
+		p.ChecksumCRC32, p.ChecksumCRC32C, p.ChecksumCRC64NVME, p.ChecksumSHA1, p.ChecksumSHA256,
+	} {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
 }
 
 func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
@@ -57,6 +104,7 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		parts[i] = fs.CompletedPart{
 			PartNumber: p.PartNumber,
 			ETag:       etag,
+			Checksum:   p.digest(),
 		}
 
 		if i > 0 && parts[i].PartNumber <= parts[i-1].PartNumber {
@@ -81,6 +129,12 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		Conditions: cond,
 	}
 
+	// The completion may name the digest it expects the object to have. It is a
+	// claim like any other: the server composes its own from the parts and
+	// refuses a completion that disagrees.
+	_, req.Checksum = requestChecksum(r)
+	req.ChecksumType = strings.TrimSpace(r.Header.Get(checksumTypeHeader))
+
 	resp, err := h.service.CompleteMultipartUpload(ctx, req)
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -88,12 +142,15 @@ func (h *handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	result := CompleteMultipartUploadResult{
-		Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
-		Location: resp.Location,
-		Bucket:   resp.Bucket,
-		Key:      resp.Key,
-		ETag:     `"` + resp.ETag + `"`,
+		Xmlns:        "http://s3.amazonaws.com/doc/2006-03-01/",
+		Location:     resp.Location,
+		Bucket:       resp.Bucket,
+		Key:          resp.Key,
+		ETag:         `"` + resp.ETag + `"`,
+		ChecksumType: resp.ChecksumType,
 	}
+
+	result.setChecksum(resp.ChecksumAlgorithm, resp.Checksum)
 
 	w.Header().Set("Content-Type", "application/xml")
 	writeSSE(w, resp.ServerSideEncryption)
