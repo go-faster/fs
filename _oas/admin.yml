@@ -705,6 +705,93 @@ components:
         error_message:
           type: string
           description: "Why this node's last rebuild failed."
+        revision:
+          type: integer
+          format: int64
+          description: "Map revision in the control plane — the partitioning as it actually is."
+        ranges:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetadataPlaneRange"
+          description: "The partitioning, in key order."
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetadataPlaneNode"
+          description: "What each node believes about the partitioning."
+    MetadataPlaneRangeStatus:
+      type: string
+      enum:
+        - served
+        - held
+      description: >
+        "served" means the range's owner is registered and answering for it.
+        "held" means its owner is gone and the controller is still inside the
+        grace before reassigning: nobody is serving that part of the key space
+        right now. A held range is a live partial outage and has no other
+        signal — the metrics are per-node, and from a node's own shard a range
+        owned by a node that is gone is indistinguishable from one owned
+        elsewhere.
+    MetadataPlaneRange:
+      type: object
+      required:
+        - start
+        - end
+        - owner
+        - status
+      properties:
+        start:
+          type: string
+          description: "First key in the range, inclusive. Empty is the start of the key space."
+        end:
+          type: string
+          description: "First key past the range, exclusive. Empty is the end of the key space."
+        owner:
+          type: string
+          description: "Node serving reads and applying writes for this range."
+        followers:
+          type: array
+          items:
+            type: string
+          description: "Nodes receiving the owner's log, ready to be promoted."
+        learners:
+          type: array
+          items:
+            type: string
+          description: "Nodes being copied into, which must never be promoted: they hold only part of the range."
+        move_to:
+          type: string
+          description: "Node this range is being handed to, when a move is in flight."
+        status:
+          $ref: "#/components/schemas/MetadataPlaneRangeStatus"
+    MetadataPlaneNode:
+      type: object
+      required:
+        - id
+        - live
+        - reporting
+      properties:
+        id:
+          type: string
+        live:
+          type: boolean
+          description: "Whether the node is registered in the control plane."
+        reporting:
+          type: boolean
+          description: "Whether the node answered; the rest of its fields are meaningless when false."
+        revision:
+          type: integer
+          format: int64
+          description: "Map revision this node is routing by. Behind the plane revision means lazy routing has left it stale."
+        behind:
+          type: boolean
+          description: "Whether this node is routing by an older revision than the control plane holds."
+        owned:
+          type: integer
+          description: "Ranges this node serves."
+        replicated:
+          type: integer
+          description: "Ranges this node holds for another node, as a follower or a learner."
     RebalanceAction:
       type: string
       enum:

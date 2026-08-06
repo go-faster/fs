@@ -29,6 +29,40 @@ type PlaneStatus struct {
 	StartedAt, FinishedAt time.Time
 	// Err is why this node's last rebuild failed.
 	Err string
+
+	// Revision is the map revision in the control plane — the partitioning as
+	// it actually is, against which each node's own belief is measured.
+	Revision int64
+	// Ranges is the partitioning, in key order.
+	Ranges []PlaneRange
+	// Nodes is what each node believes about it.
+	Nodes []PlaneNode
+}
+
+// PlaneRange is one interval of the key space and who answers for it.
+type PlaneRange struct {
+	Start, End string
+	Owner      string
+	Followers  []string
+	Learners   []string
+	// MoveTo is the node this range is being handed to, when a move is in
+	// flight.
+	MoveTo string
+	// Held reports that the owner is not registered: nobody is serving this
+	// part of the key space right now.
+	Held bool
+}
+
+// PlaneNode is one node's view of the partitioning.
+type PlaneNode struct {
+	ID string
+	// Live is whether the node is registered; Reporting whether it answered.
+	Live, Reporting bool
+	// Revision is the map this node is routing by, and Behind whether that is
+	// older than the control plane's.
+	Revision          int64
+	Behind            bool
+	Owned, Replicated int
 }
 
 // PlaneControl is the sharded metadata plane behind the admin API. Implemented
@@ -118,6 +152,48 @@ func planeStatus(s PlaneStatus) *adminapi.MetadataPlaneStatus {
 
 	if s.Err != "" {
 		out.ErrorMessage = adminapi.NewOptString(s.Err)
+	}
+
+	if s.Revision != 0 {
+		out.Revision = adminapi.NewOptInt64(s.Revision)
+	}
+
+	for _, r := range s.Ranges {
+		out.Ranges = append(out.Ranges, planeRange(r))
+	}
+
+	for _, n := range s.Nodes {
+		out.Nodes = append(out.Nodes, adminapi.MetadataPlaneNode{
+			ID:         n.ID,
+			Live:       n.Live,
+			Reporting:  n.Reporting,
+			Revision:   adminapi.NewOptInt64(n.Revision),
+			Behind:     adminapi.NewOptBool(n.Behind),
+			Owned:      adminapi.NewOptInt(n.Owned),
+			Replicated: adminapi.NewOptInt(n.Replicated),
+		})
+	}
+
+	return out
+}
+
+// planeRange renders one range for the wire.
+func planeRange(r PlaneRange) adminapi.MetadataPlaneRange {
+	out := adminapi.MetadataPlaneRange{
+		Start:     r.Start,
+		End:       r.End,
+		Owner:     r.Owner,
+		Followers: r.Followers,
+		Learners:  r.Learners,
+		Status:    adminapi.MetadataPlaneRangeStatusServed,
+	}
+
+	if r.Held {
+		out.Status = adminapi.MetadataPlaneRangeStatusHeld
+	}
+
+	if r.MoveTo != "" {
+		out.MoveTo = adminapi.NewOptString(r.MoveTo)
 	}
 
 	return out

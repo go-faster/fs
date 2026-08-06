@@ -1312,6 +1312,228 @@ func (s *MetadataPlaneCause) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/MetadataPlaneNode
+type MetadataPlaneNode struct {
+	ID string `json:"id"`
+	// Whether the node is registered in the control plane.
+	Live bool `json:"live"`
+	// Whether the node answered; the rest of its fields are meaningless when false.
+	Reporting bool `json:"reporting"`
+	// Map revision this node is routing by. Behind the plane revision means lazy routing has left it
+	// stale.
+	Revision OptInt64 `json:"revision"`
+	// Whether this node is routing by an older revision than the control plane holds.
+	Behind OptBool `json:"behind"`
+	// Ranges this node serves.
+	Owned OptInt `json:"owned"`
+	// Ranges this node holds for another node, as a follower or a learner.
+	Replicated OptInt `json:"replicated"`
+}
+
+// GetID returns the value of ID.
+func (s *MetadataPlaneNode) GetID() string {
+	return s.ID
+}
+
+// GetLive returns the value of Live.
+func (s *MetadataPlaneNode) GetLive() bool {
+	return s.Live
+}
+
+// GetReporting returns the value of Reporting.
+func (s *MetadataPlaneNode) GetReporting() bool {
+	return s.Reporting
+}
+
+// GetRevision returns the value of Revision.
+func (s *MetadataPlaneNode) GetRevision() OptInt64 {
+	return s.Revision
+}
+
+// GetBehind returns the value of Behind.
+func (s *MetadataPlaneNode) GetBehind() OptBool {
+	return s.Behind
+}
+
+// GetOwned returns the value of Owned.
+func (s *MetadataPlaneNode) GetOwned() OptInt {
+	return s.Owned
+}
+
+// GetReplicated returns the value of Replicated.
+func (s *MetadataPlaneNode) GetReplicated() OptInt {
+	return s.Replicated
+}
+
+// SetID sets the value of ID.
+func (s *MetadataPlaneNode) SetID(val string) {
+	s.ID = val
+}
+
+// SetLive sets the value of Live.
+func (s *MetadataPlaneNode) SetLive(val bool) {
+	s.Live = val
+}
+
+// SetReporting sets the value of Reporting.
+func (s *MetadataPlaneNode) SetReporting(val bool) {
+	s.Reporting = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *MetadataPlaneNode) SetRevision(val OptInt64) {
+	s.Revision = val
+}
+
+// SetBehind sets the value of Behind.
+func (s *MetadataPlaneNode) SetBehind(val OptBool) {
+	s.Behind = val
+}
+
+// SetOwned sets the value of Owned.
+func (s *MetadataPlaneNode) SetOwned(val OptInt) {
+	s.Owned = val
+}
+
+// SetReplicated sets the value of Replicated.
+func (s *MetadataPlaneNode) SetReplicated(val OptInt) {
+	s.Replicated = val
+}
+
+// Ref: #/components/schemas/MetadataPlaneRange
+type MetadataPlaneRange struct {
+	// First key in the range, inclusive. Empty is the start of the key space.
+	Start string `json:"start"`
+	// First key past the range, exclusive. Empty is the end of the key space.
+	End string `json:"end"`
+	// Node serving reads and applying writes for this range.
+	Owner string `json:"owner"`
+	// Nodes receiving the owner's log, ready to be promoted.
+	Followers []string `json:"followers"`
+	// Nodes being copied into, which must never be promoted: they hold only part of the range.
+	Learners []string `json:"learners"`
+	// Node this range is being handed to, when a move is in flight.
+	MoveTo OptString                `json:"move_to"`
+	Status MetadataPlaneRangeStatus `json:"status"`
+}
+
+// GetStart returns the value of Start.
+func (s *MetadataPlaneRange) GetStart() string {
+	return s.Start
+}
+
+// GetEnd returns the value of End.
+func (s *MetadataPlaneRange) GetEnd() string {
+	return s.End
+}
+
+// GetOwner returns the value of Owner.
+func (s *MetadataPlaneRange) GetOwner() string {
+	return s.Owner
+}
+
+// GetFollowers returns the value of Followers.
+func (s *MetadataPlaneRange) GetFollowers() []string {
+	return s.Followers
+}
+
+// GetLearners returns the value of Learners.
+func (s *MetadataPlaneRange) GetLearners() []string {
+	return s.Learners
+}
+
+// GetMoveTo returns the value of MoveTo.
+func (s *MetadataPlaneRange) GetMoveTo() OptString {
+	return s.MoveTo
+}
+
+// GetStatus returns the value of Status.
+func (s *MetadataPlaneRange) GetStatus() MetadataPlaneRangeStatus {
+	return s.Status
+}
+
+// SetStart sets the value of Start.
+func (s *MetadataPlaneRange) SetStart(val string) {
+	s.Start = val
+}
+
+// SetEnd sets the value of End.
+func (s *MetadataPlaneRange) SetEnd(val string) {
+	s.End = val
+}
+
+// SetOwner sets the value of Owner.
+func (s *MetadataPlaneRange) SetOwner(val string) {
+	s.Owner = val
+}
+
+// SetFollowers sets the value of Followers.
+func (s *MetadataPlaneRange) SetFollowers(val []string) {
+	s.Followers = val
+}
+
+// SetLearners sets the value of Learners.
+func (s *MetadataPlaneRange) SetLearners(val []string) {
+	s.Learners = val
+}
+
+// SetMoveTo sets the value of MoveTo.
+func (s *MetadataPlaneRange) SetMoveTo(val OptString) {
+	s.MoveTo = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MetadataPlaneRange) SetStatus(val MetadataPlaneRangeStatus) {
+	s.Status = val
+}
+
+// "served" means the range's owner is registered and answering for it. "held" means its owner is gone
+// and the controller is still inside the grace before reassigning: nobody is serving that part of the
+// key space right now. A held range is a live partial outage and has no other signal — the metrics
+// are per-node, and from a node's own shard a range owned by a node that is gone is indistinguishable
+// from one owned elsewhere.
+// Ref: #/components/schemas/MetadataPlaneRangeStatus
+type MetadataPlaneRangeStatus string
+
+const (
+	MetadataPlaneRangeStatusServed MetadataPlaneRangeStatus = "served"
+	MetadataPlaneRangeStatusHeld   MetadataPlaneRangeStatus = "held"
+)
+
+// AllValues returns all MetadataPlaneRangeStatus values.
+func (MetadataPlaneRangeStatus) AllValues() []MetadataPlaneRangeStatus {
+	return []MetadataPlaneRangeStatus{
+		MetadataPlaneRangeStatusServed,
+		MetadataPlaneRangeStatusHeld,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MetadataPlaneRangeStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MetadataPlaneRangeStatusServed:
+		return []byte(s), nil
+	case MetadataPlaneRangeStatusHeld:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MetadataPlaneRangeStatus) UnmarshalText(data []byte) error {
+	switch MetadataPlaneRangeStatus(data) {
+	case MetadataPlaneRangeStatusServed:
+		*s = MetadataPlaneRangeStatusServed
+		return nil
+	case MetadataPlaneRangeStatusHeld:
+		*s = MetadataPlaneRangeStatusHeld
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // "ready" means listings are served from the plane. "building" means they fall back to walking
 // sidecars: correct, and slower. "disabled" means this server does not run the sharded plane.
 // Ref: #/components/schemas/MetadataPlaneState
@@ -1377,6 +1599,12 @@ type MetadataPlaneStatus struct {
 	FinishedAt OptDateTime `json:"finished_at"`
 	// Why this node's last rebuild failed.
 	ErrorMessage OptString `json:"error_message"`
+	// Map revision in the control plane — the partitioning as it actually is.
+	Revision OptInt64 `json:"revision"`
+	// The partitioning, in key order.
+	Ranges []MetadataPlaneRange `json:"ranges"`
+	// What each node believes about the partitioning.
+	Nodes []MetadataPlaneNode `json:"nodes"`
 }
 
 // GetState returns the value of State.
@@ -1414,6 +1642,21 @@ func (s *MetadataPlaneStatus) GetErrorMessage() OptString {
 	return s.ErrorMessage
 }
 
+// GetRevision returns the value of Revision.
+func (s *MetadataPlaneStatus) GetRevision() OptInt64 {
+	return s.Revision
+}
+
+// GetRanges returns the value of Ranges.
+func (s *MetadataPlaneStatus) GetRanges() []MetadataPlaneRange {
+	return s.Ranges
+}
+
+// GetNodes returns the value of Nodes.
+func (s *MetadataPlaneStatus) GetNodes() []MetadataPlaneNode {
+	return s.Nodes
+}
+
 // SetState sets the value of State.
 func (s *MetadataPlaneStatus) SetState(val MetadataPlaneState) {
 	s.State = val
@@ -1447,6 +1690,21 @@ func (s *MetadataPlaneStatus) SetFinishedAt(val OptDateTime) {
 // SetErrorMessage sets the value of ErrorMessage.
 func (s *MetadataPlaneStatus) SetErrorMessage(val OptString) {
 	s.ErrorMessage = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *MetadataPlaneStatus) SetRevision(val OptInt64) {
+	s.Revision = val
+}
+
+// SetRanges sets the value of Ranges.
+func (s *MetadataPlaneStatus) SetRanges(val []MetadataPlaneRange) {
+	s.Ranges = val
+}
+
+// SetNodes sets the value of Nodes.
+func (s *MetadataPlaneStatus) SetNodes(val []MetadataPlaneNode) {
+	s.Nodes = val
 }
 
 // A pending schema migration.

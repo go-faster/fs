@@ -130,3 +130,42 @@ func TestRebuildFailureIsA500(t *testing.T) {
 	require.ErrorAs(t, err, &status)
 	assert.Equal(t, http.StatusInternalServerError, status.StatusCode)
 }
+
+// TestPlaneRangesReachTheWire: the map is the answer to most of #192's
+// questions, and it has to survive rendering.
+func TestPlaneRangesReachTheWire(t *testing.T) {
+	plane := &fakePlane{status: PlaneStatus{
+		Ready:    true,
+		Revision: 4127,
+		Ranges: []PlaneRange{
+			{Start: "", End: "om", Owner: "n0", Followers: []string{"n1"}},
+			{Start: "om", End: "", Owner: "n1", Learners: []string{"n2"}, MoveTo: "n2", Held: true},
+		},
+		Nodes: []PlaneNode{
+			{ID: "n0", Live: true, Reporting: true, Revision: 4127, Owned: 1, Replicated: 1},
+			{ID: "n1", Live: true, Reporting: true, Revision: 4100, Behind: true},
+			{ID: "n2", Live: true},
+		},
+	}}
+
+	a := NewAdminAPI(Options{Plane: plane})
+
+	got, err := a.GetMetadataPlaneStatus(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(4127), got.Revision.Value)
+	require.Len(t, got.Ranges, 2)
+
+	assert.Equal(t, adminapi.MetadataPlaneRangeStatusServed, got.Ranges[0].Status)
+	assert.Equal(t, []string{"n1"}, got.Ranges[0].Followers)
+
+	assert.Equal(t, adminapi.MetadataPlaneRangeStatusHeld, got.Ranges[1].Status,
+		"a range nobody is serving read as served")
+	assert.Equal(t, "n2", got.Ranges[1].MoveTo.Value)
+	assert.Equal(t, []string{"n2"}, got.Ranges[1].Learners)
+
+	require.Len(t, got.Nodes, 3)
+	assert.False(t, got.Nodes[0].Behind.Value)
+	assert.True(t, got.Nodes[1].Behind.Value, "a node routing by a stale map read as current")
+	assert.False(t, got.Nodes[2].Reporting, "a node that did not answer read as reporting")
+}

@@ -46,9 +46,15 @@ type clusterRuntime struct {
 	// plane guards the metadata plane's rebuild: the timed policy and an
 	// operator's request both start one through it, so "already running on this
 	// node" is one fact rather than two that have to agree.
-	plane    *planeController
-	nodeID   cluster.NodeID
-	schemeID string
+	plane *planeController
+	// planeHeld is how many ranges the last reconciliation left unserved —
+	// owner gone, still inside its grace. Published by whichever node holds the
+	// plane election and zeroed when it loses it: a node that is not
+	// reconciling has no view to report, and a remembered count would outlive
+	// the outage it described.
+	planeHeld atomic.Int64
+	nodeID    cluster.NodeID
+	schemeID  string
 	// version and started stamp the live state this node reports to peers.
 	version string
 	started time.Time
@@ -438,6 +444,12 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 			status:  rt.metaPlane.state.Status,
 			policy:  cfg.MetadataRebuild(),
 			baseCtx: ctx,
+			// The map from the control plane rather than this node's cache:
+			// the endpoint answers what the partitioning *is*, against which
+			// each node's own belief is what the per-node rows measure.
+			loadMap: rt.metaPlane.loadMap,
+			topo:    coord,
+			live:    newPeerStatus(rt.nodeID, secret),
 		}
 	}
 

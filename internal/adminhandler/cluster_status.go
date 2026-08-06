@@ -58,6 +58,12 @@ type NodeLive struct {
 	Held           int64
 	// Disks is what each of the node's disks holds, as only the node can know.
 	Disks []NodeDisk
+	// PlaneRevision is the map revision this node is routing by, and
+	// PlaneOwned/PlaneReplicated what it serves and holds under it. Only the
+	// node can answer: etcd holds the map, this is what the node believes
+	// about it, and lazy routing is allowed to leave the two apart.
+	PlaneRevision               int64
+	PlaneOwned, PlaneReplicated int
 }
 
 // NodeDisk is what one of a node's disks holds right now, reported by the node

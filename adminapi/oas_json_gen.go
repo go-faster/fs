@@ -3034,6 +3034,466 @@ func (s *MetadataPlaneCause) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode implements json.Marshaler.
+func (s *MetadataPlaneNode) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MetadataPlaneNode) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("id")
+		e.Str(s.ID)
+	}
+	{
+		e.FieldStart("live")
+		e.Bool(s.Live)
+	}
+	{
+		e.FieldStart("reporting")
+		e.Bool(s.Reporting)
+	}
+	{
+		if s.Revision.Set {
+			e.FieldStart("revision")
+			s.Revision.Encode(e)
+		}
+	}
+	{
+		if s.Behind.Set {
+			e.FieldStart("behind")
+			s.Behind.Encode(e)
+		}
+	}
+	{
+		if s.Owned.Set {
+			e.FieldStart("owned")
+			s.Owned.Encode(e)
+		}
+	}
+	{
+		if s.Replicated.Set {
+			e.FieldStart("replicated")
+			s.Replicated.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfMetadataPlaneNode = [7]string{
+	0: "id",
+	1: "live",
+	2: "reporting",
+	3: "revision",
+	4: "behind",
+	5: "owned",
+	6: "replicated",
+}
+
+// Decode decodes MetadataPlaneNode from json.
+func (s *MetadataPlaneNode) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MetadataPlaneNode to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "id":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.ID = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"id\"")
+			}
+		case "live":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Live = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"live\"")
+			}
+		case "reporting":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Bool()
+				s.Reporting = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reporting\"")
+			}
+		case "revision":
+			if err := func() error {
+				s.Revision.Reset()
+				if err := s.Revision.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"revision\"")
+			}
+		case "behind":
+			if err := func() error {
+				s.Behind.Reset()
+				if err := s.Behind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"behind\"")
+			}
+		case "owned":
+			if err := func() error {
+				s.Owned.Reset()
+				if err := s.Owned.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"owned\"")
+			}
+		case "replicated":
+			if err := func() error {
+				s.Replicated.Reset()
+				if err := s.Replicated.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"replicated\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MetadataPlaneNode")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMetadataPlaneNode) {
+					name = jsonFieldsNameOfMetadataPlaneNode[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MetadataPlaneNode) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MetadataPlaneNode) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MetadataPlaneRange) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MetadataPlaneRange) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("start")
+		e.Str(s.Start)
+	}
+	{
+		e.FieldStart("end")
+		e.Str(s.End)
+	}
+	{
+		e.FieldStart("owner")
+		e.Str(s.Owner)
+	}
+	{
+		if s.Followers != nil {
+			e.FieldStart("followers")
+			e.ArrStart()
+			for _, elem := range s.Followers {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.Learners != nil {
+			e.FieldStart("learners")
+			e.ArrStart()
+			for _, elem := range s.Learners {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.MoveTo.Set {
+			e.FieldStart("move_to")
+			s.MoveTo.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("status")
+		s.Status.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfMetadataPlaneRange = [7]string{
+	0: "start",
+	1: "end",
+	2: "owner",
+	3: "followers",
+	4: "learners",
+	5: "move_to",
+	6: "status",
+}
+
+// Decode decodes MetadataPlaneRange from json.
+func (s *MetadataPlaneRange) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MetadataPlaneRange to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "start":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Start = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"start\"")
+			}
+		case "end":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.End = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"end\"")
+			}
+		case "owner":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Str()
+				s.Owner = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"owner\"")
+			}
+		case "followers":
+			if err := func() error {
+				s.Followers = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Followers = append(s.Followers, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"followers\"")
+			}
+		case "learners":
+			if err := func() error {
+				s.Learners = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Learners = append(s.Learners, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"learners\"")
+			}
+		case "move_to":
+			if err := func() error {
+				s.MoveTo.Reset()
+				if err := s.MoveTo.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"move_to\"")
+			}
+		case "status":
+			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				if err := s.Status.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"status\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MetadataPlaneRange")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b01000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMetadataPlaneRange) {
+					name = jsonFieldsNameOfMetadataPlaneRange[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MetadataPlaneRange) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MetadataPlaneRange) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MetadataPlaneRangeStatus as json.
+func (s MetadataPlaneRangeStatus) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes MetadataPlaneRangeStatus from json.
+func (s *MetadataPlaneRangeStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MetadataPlaneRangeStatus to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch MetadataPlaneRangeStatus(v) {
+	case MetadataPlaneRangeStatusServed:
+		*s = MetadataPlaneRangeStatusServed
+	case MetadataPlaneRangeStatusHeld:
+		*s = MetadataPlaneRangeStatusHeld
+	default:
+		*s = MetadataPlaneRangeStatus(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s MetadataPlaneRangeStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MetadataPlaneRangeStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes MetadataPlaneState as json.
 func (s MetadataPlaneState) Encode(e *jx.Encoder) {
 	e.Str(string(s))
@@ -3123,9 +3583,35 @@ func (s *MetadataPlaneStatus) encodeFields(e *jx.Encoder) {
 			s.ErrorMessage.Encode(e)
 		}
 	}
+	{
+		if s.Revision.Set {
+			e.FieldStart("revision")
+			s.Revision.Encode(e)
+		}
+	}
+	{
+		if s.Ranges != nil {
+			e.FieldStart("ranges")
+			e.ArrStart()
+			for _, elem := range s.Ranges {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.Nodes != nil {
+			e.FieldStart("nodes")
+			e.ArrStart()
+			for _, elem := range s.Nodes {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
 }
 
-var jsonFieldsNameOfMetadataPlaneStatus = [7]string{
+var jsonFieldsNameOfMetadataPlaneStatus = [10]string{
 	0: "state",
 	1: "cause",
 	2: "rebuilding",
@@ -3133,6 +3619,9 @@ var jsonFieldsNameOfMetadataPlaneStatus = [7]string{
 	4: "started_at",
 	5: "finished_at",
 	6: "error_message",
+	7: "revision",
+	8: "ranges",
+	9: "nodes",
 }
 
 // Decode decodes MetadataPlaneStatus from json.
@@ -3140,7 +3629,7 @@ func (s *MetadataPlaneStatus) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode MetadataPlaneStatus to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -3216,6 +3705,50 @@ func (s *MetadataPlaneStatus) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"error_message\"")
 			}
+		case "revision":
+			if err := func() error {
+				s.Revision.Reset()
+				if err := s.Revision.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"revision\"")
+			}
+		case "ranges":
+			if err := func() error {
+				s.Ranges = make([]MetadataPlaneRange, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MetadataPlaneRange
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Ranges = append(s.Ranges, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ranges\"")
+			}
+		case "nodes":
+			if err := func() error {
+				s.Nodes = make([]MetadataPlaneNode, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MetadataPlaneNode
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Nodes = append(s.Nodes, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nodes\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -3225,8 +3758,9 @@ func (s *MetadataPlaneStatus) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b00000101,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
