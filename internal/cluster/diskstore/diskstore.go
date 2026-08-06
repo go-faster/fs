@@ -16,11 +16,11 @@ package diskstore
 import (
 	"context"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/go-faster/errors"
 
@@ -70,6 +70,29 @@ type Store struct {
 	// index tracks per-disk occupancy so a drain can be watched without
 	// walking the tree for every poll. One entry per root, created in New.
 	index map[cluster.DiskID]*diskIndex
+	// tree serializes the directory metadata operations on one disk: staging a
+	// fragment, and pruning the parents of a deleted one.
+	//
+	// # Why a lock and not a retry
+	//
+	// They are two writers to the same directory tree and neither is wrong:
+	// MkdirAll walks up, finds a parent, and then makes the leaf, and a prune
+	// landing between those steps makes the leaf's mkdir fail with ENOENT. That
+	// is a mutual-exclusion problem, and the first fix for go-faster/fs#170
+	// treated it as a transient one — a bounded retry, which is a number that a
+	// slower machine defeats. It did: under -race, four attempts lost in a row.
+	//
+	// # Why it is affordable
+	//
+	// It covers metadata calls and nothing else. Staging is a MkdirAll and an
+	// open; pruning is a few unlinks. The data path — writing the fragment,
+	// fsyncing it, renaming it into place — is outside, so concurrent writes to
+	// one disk still stream in parallel and only their directory bookkeeping
+	// takes turns.
+	//
+	// Per disk rather than per store, because independent disks share no tree
+	// and have no reason to wait on each other.
+	tree map[cluster.DiskID]*sync.Mutex
 }
 
 var _ transport.Store = (*Store)(nil)
@@ -98,6 +121,7 @@ func New(roots map[cluster.DiskID]string, opts ...Option) (*Store, error) {
 	s := &Store{
 		roots: make(map[cluster.DiskID]string, len(roots)),
 		index: make(map[cluster.DiskID]*diskIndex, len(roots)),
+		tree:  make(map[cluster.DiskID]*sync.Mutex, len(roots)),
 	}
 
 	for disk, root := range roots {
@@ -116,6 +140,7 @@ func New(roots map[cluster.DiskID]string, opts ...Option) (*Store, error) {
 
 		s.roots[disk] = abs
 		s.index[disk] = newDiskIndex(abs)
+		s.tree[disk] = &sync.Mutex{}
 	}
 
 	for _, o := range opts {
@@ -163,7 +188,7 @@ func (s *Store) Create(_ context.Context, disk cluster.DiskID, name string) (io.
 		return nil, err
 	}
 
-	tmp, err := stageFragment(filepath.Dir(path))
+	tmp, err := s.stage(disk, filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +282,7 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 	}
 
 	s.index[disk].removed(size)
-	s.pruneEmptyDirs(filepath.Dir(path), s.roots[disk])
+	s.pruneEmptyDirs(disk, filepath.Dir(path), s.roots[disk])
 
 	if record != nil {
 		s.observer.Deleted(disk, name, record)
@@ -275,59 +300,31 @@ func (s *Store) Delete(_ context.Context, disk cluster.DiskID, name string) erro
 // namespace to reserve.
 func skipEntry(name string) bool { return strings.HasPrefix(name, ".") }
 
-// mkdirAttempts is how many times a fragment directory is made before the
-// failure is the caller's.
+// stage makes a fragment's directory and opens the temp file inside it, with
+// the disk's tree held so no prune can remove either underneath.
 //
-// Two would do — one prune can only lose one race — but a disk being emptied
-// has many deletes in flight at once, and the cost of another attempt is a
-// syscall against the cost of a 500 on a write that was going to succeed.
-const mkdirAttempts = 4
-
-// stageFragment makes a fragment's directory and opens the temp file inside it,
-// retrying whichever of the two lost a directory underneath it.
-//
-// # Why either can lose one
-//
-// Neither step is atomic against concurrent removal. MkdirAll walks up, finds a
-// parent that exists, and then makes the leaf; CreateTemp opens a file in a
-// directory that existed a moment ago. A prune landing in either window fails
-// with ENOENT — and nothing is wrong with either party, because they are a
-// write and a delete of two different objects, which is what a busy disk does
-// continuously.
-//
-// # Why the pair retries together
-//
-// Retrying only the mkdir leaves the second window open, and it is the same
-// race with a smaller mouth: rarer, and therefore worse, because it would show
-// up as the same unreproducible 500 long after the first was fixed.
-//
-// Returning the error is what go-faster/fs#170 was — a random conformance test
-// failing every few runs, always a different one, because any write can be the
-// one whose directory is pruned mid-create.
-func stageFragment(dir string) (*os.File, error) {
-	var err error
-
-	for range mkdirAttempts {
-		if err = os.MkdirAll(dir, dirPermissions); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-
-			return nil, errors.Wrap(err, "create fragment directory")
-		}
-
-		var tmp *os.File
-
-		if tmp, err = os.CreateTemp(dir, tmpPattern); err == nil {
-			return tmp, nil
-		}
-
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, errors.Wrap(err, "create temp file")
-		}
+// The two steps are both vulnerable and for the same reason — MkdirAll makes a
+// leaf under a parent it checked a moment ago, CreateTemp opens a file in a
+// directory that existed a moment ago — so they are held together rather than
+// separately. Holding only the first leaves the same race with a smaller mouth,
+// which is worse: it returns as the same unreproducible 500 long after this
+// looks closed.
+func (s *Store) stage(disk cluster.DiskID, dir string) (*os.File, error) {
+	if lock := s.tree[disk]; lock != nil {
+		lock.Lock()
+		defer lock.Unlock()
 	}
 
-	return nil, errors.Wrap(err, "stage fragment")
+	if err := os.MkdirAll(dir, dirPermissions); err != nil {
+		return nil, errors.Wrap(err, "create fragment directory")
+	}
+
+	tmp, err := os.CreateTemp(dir, tmpPattern)
+	if err != nil {
+		return nil, errors.Wrap(err, "create temp file")
+	}
+
+	return tmp, nil
 }
 
 // pruneEmptyDirs removes now-empty parents of a deleted fragment, stopping
@@ -347,7 +344,12 @@ func stageFragment(dir string) (*os.File, error) {
 // The race one level down survives this and is closed by the create's retry.
 // Both are needed: this removes the case that happens all the time, and the
 // retry covers the rest.
-func (*Store) pruneEmptyDirs(dir, root string) {
+func (s *Store) pruneEmptyDirs(disk cluster.DiskID, dir, root string) {
+	if lock := s.tree[disk]; lock != nil {
+		lock.Lock()
+		defer lock.Unlock()
+	}
+
 	for filepath.Dir(dir) != root && strings.HasPrefix(dir, root+string(filepath.Separator)) {
 		if os.Remove(dir) != nil {
 			return
