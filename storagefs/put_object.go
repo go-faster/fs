@@ -15,6 +15,32 @@ import (
 	"github.com/go-faster/fs"
 )
 
+// vanished turns a failure that is really "the bucket went away" into the
+// answer for it.
+//
+// The bucket is checked before the body is read and the object is renamed into
+// place after, so a bucket deleted while the body streams leaves the rename with
+// nowhere to go. That surfaced as 500 InternalError (go-faster/fs#143) — a
+// server apologizing for something the client did. AWS answers 404
+// NoSuchBucket, and so does this.
+//
+// Narrow on purpose: only a missing path, and only when the bucket is the thing
+// that is missing. A rename that fails for any other reason, or one whose bucket
+// is still there, keeps the error it had — because "not found" for a full disk
+// or a permission problem would be a lie in the other direction, and a quieter
+// one.
+func (s *Storage) vanished(bucketPath string, err error) error {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if _, statErr := os.Stat(bucketPath); os.IsNotExist(statErr) {
+		return fs.ErrBucketNotFound
+	}
+
+	return err
+}
+
 func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
 	bucketPath := filepath.Join(s.root, req.Bucket)
 	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
@@ -148,7 +174,8 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 
 	if err := os.Rename(tmp.Name(), objectPath); err != nil {
 		_ = os.Remove(tmp.Name())
-		return nil, errors.Wrap(err, "rename object")
+
+		return nil, s.vanished(bucketPath, errors.Wrap(err, "rename object"))
 	}
 
 	// Persist the rename (per policy) so the object is durably visible.
