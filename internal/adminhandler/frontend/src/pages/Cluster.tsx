@@ -23,6 +23,7 @@ import {
   type Band,
 } from "../components/ui";
 import { fmtAge, fmtBytes, fmtNum } from "../lib/format";
+import { MetadataPlane } from "../components/MetadataPlane";
 import { CLUSTER_POLL, MIGRATION_POLL } from "../lib/poll";
 
 const HALF: ColProps["size"] = [12, { l: 6 }];
@@ -575,6 +576,8 @@ export default function Cluster() {
           </Row>
         </Panel>
       </Flex>
+
+      <MetadataPlane />
 
       <Migrations />
     </Flex>
