@@ -449,7 +449,8 @@ func TestControllerSplitsAnOversizedRange(t *testing.T) {
 
 	out := f.reconcile(t)
 	require.True(t, out.Changed)
-	assert.Equal(t, []string{"om"}, out.Split)
+	require.Len(t, out.Split, 1)
+	assert.Equal(t, "om", out.Split[0].At)
 
 	require.Len(t, f.ctl.m.Ranges, 2)
 	assert.Equal(t, "om", f.ctl.m.Ranges[1].Start)
@@ -520,7 +521,7 @@ func TestFailoverAndSplitDoNotShareAPass(t *testing.T) {
 	// And the next pass, with the membership settled, does the split.
 	next := f.reconcile(t)
 	require.True(t, next.Changed)
-	assert.Equal(t, []string{"om"}, next.Split)
+	assert.Equal(t, []string{"om"}, boundaries(next.Split))
 	assert.Len(t, f.ctl.m.Ranges, 2)
 	assert.Equal(t, cluster.NodeID("n1"), f.ctl.m.Ranges[0].Owner,
 		"the promotion held; the split did not undo it")
@@ -563,7 +564,7 @@ func TestTwoBoundariesInOneRange(t *testing.T) {
 
 	out := f.reconcile(t)
 	require.True(t, out.Changed)
-	assert.Equal(t, []string{"om", "ow"}, out.Split)
+	assert.Equal(t, []string{"om", "ow"}, boundaries(out.Split))
 	assert.Len(t, f.ctl.m.Ranges, 4)
 	require.NoError(t, f.ctl.m.Validate())
 }
@@ -601,7 +602,7 @@ func TestABogusBoundaryIsSkippedNotFatal(t *testing.T) {
 
 	out = f.reconcile(t)
 	require.True(t, out.Changed)
-	assert.Equal(t, []string{"om"}, out.Split)
+	assert.Equal(t, []string{"om"}, boundaries(out.Split))
 	assert.Len(t, f.ctl.m.Ranges, 3)
 }
 
