@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/etcd"
+	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/internal/lifecycle"
 )
 
@@ -18,13 +19,19 @@ import (
 // bucket metadata either way — so an operator who turns enforcement off has a
 // server that stores expiry rules and deletes nothing, and that has to be
 // visible in the log rather than discovered from objects that never went away.
-func runLifecycle(ctx context.Context, lg *zap.Logger, storage fs.Storage, cfg LifecycleConfig) {
+func runLifecycle(
+	ctx context.Context,
+	lg *zap.Logger,
+	storage fs.Storage,
+	cfg LifecycleConfig,
+	state lastrun.Store,
+) {
 	if cfg.Interval <= 0 {
 		lg.Warn("Lifecycle enforcement is disabled; rules clients set will be stored but never applied")
 		return
 	}
 
-	sweeper := &lifecycle.Sweeper{Storage: storage, Log: lg}
+	sweeper := &lifecycle.Sweeper{Storage: storage, Log: lg, State: state}
 	sweeper.Run(ctx, cfg.Interval)
 }
 
@@ -41,7 +48,14 @@ func (rt *clusterRuntime) RunLifecycle(ctx context.Context, cfg LifecycleConfig)
 		return
 	}
 
-	sweeper := &lifecycle.Sweeper{Storage: rt.Storage, Log: rt.lg}
+	// The record lives in etcd, and the key is cluster-wide: leadership moves
+	// between nodes, and a sweeper that remembered its passes on local disk
+	// would start the interval over every time it changed hands.
+	sweeper := &lifecycle.Sweeper{
+		Storage: rt.Storage,
+		Log:     rt.lg,
+		State:   etcd.NewLastRunStore(rt.client, rt.etcdCfg),
+	}
 
 	for ctx.Err() == nil {
 		lead, err := etcd.CampaignLifecycle(ctx, rt.client, rt.etcdCfg, string(rt.nodeID))

@@ -129,8 +129,11 @@ storage:
 # deletes expired objects and aborts abandoned multipart uploads.
 # lifecycle:
 #   # How often the sweep runs. Expiry is eventual by design: S3 promises the
-#   # object goes away, not when. Zero turns enforcement off, which leaves any
-#   # rule a client sets stored but inert — the server warns loudly at startup.
+#   # object goes away, not when. The next pass is due one interval after the
+#   # last one completed — recorded in <root>/.lastrun (etcd in cluster mode) —
+#   # so restarting neither postpones the sweep by a whole interval nor repeats
+#   # it every time. Zero turns enforcement off, which leaves any rule a client
+#   # sets stored but inert — the server warns loudly at startup.
 #   interval: 12h
 
 # Observability configuration

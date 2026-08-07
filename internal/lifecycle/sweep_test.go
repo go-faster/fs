@@ -3,6 +3,7 @@ package lifecycle_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -195,6 +196,143 @@ func TestSweepSkipsRewrittenObject(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, got.Reader.Close())
 	require.Equal(t, []string{"logs/racy.txt"}, keys(t, storage))
+}
+
+// expiringBucket sets up one bucket whose single object is already past a
+// one-day rule.
+func expiringBucket(t *testing.T) *storagemem.Storage {
+	t.Helper()
+
+	storage := storagemem.New()
+	require.NoError(t, storage.CreateBucket(t.Context(), testBucket))
+	put(t, storage, "logs/old.txt", "old")
+	require.NoError(t, storage.SetBucketLifecycle(t.Context(), testBucket, []fs.LifecycleRule{
+		{ID: "logs", Status: fs.LifecycleEnabled, Prefix: "logs/", ExpirationDays: 1},
+	}))
+
+	return storage
+}
+
+// TestRunSweepsWhenOverdue is the guard on restart behavior.
+//
+// Run must not wait a whole interval for a sweep that is already due: a node
+// restarted more often than the interval would then never sweep at all, and on
+// a deployment that redeploys hourly with a 12h interval, lifecycle rules would
+// silently stop applying.
+func TestRunSweepsWhenOverdue(t *testing.T) {
+	t.Parallel()
+
+	storage := expiringBucket(t)
+
+	sweeper := &lifecycle.Sweeper{
+		Storage: storage,
+		Now:     func() time.Time { return time.Now().Add(3 * fs.LifecycleDay) },
+		State:   &memState{},
+		Floor:   time.Millisecond,
+	}
+
+	runCtx, stop := context.WithCancel(t.Context())
+	defer stop()
+
+	go sweeper.Run(runCtx, time.Hour)
+
+	// The interval is an hour; the object has to be gone long before that.
+	require.Eventually(t, func() bool {
+		return len(keys(t, storage)) == 0
+	}, 5*time.Second, 5*time.Millisecond, "an overdue sweep must not wait a full interval")
+}
+
+// TestRunHonorsARecentSweep is the other half, and the reason the record
+// exists: a pass that just ran must not be repeated because the process
+// restarted. Without it, a node that restarts every few minutes re-lists every
+// bucket in the deployment each time.
+func TestRunHonorsARecentSweep(t *testing.T) {
+	t.Parallel()
+
+	storage := expiringBucket(t)
+
+	// The object is three days old by the sweeper's clock, and would expire on
+	// any pass that ran — so if it survives, it is the schedule that spared it.
+	now := time.Now().Add(3 * fs.LifecycleDay)
+
+	// Recorded as swept a moment ago on that same clock, so the next pass is a
+	// full interval away.
+	state := &memState{}
+	require.NoError(t, state.SetLastRun(t.Context(), lifecycle.DefaultTask, now))
+
+	sweeper := &lifecycle.Sweeper{
+		Storage: storage,
+		Now:     func() time.Time { return now },
+		State:   state,
+		Floor:   time.Millisecond,
+	}
+
+	runCtx, stop := context.WithCancel(t.Context())
+	defer stop()
+
+	go sweeper.Run(runCtx, time.Hour)
+
+	require.Never(t, func() bool {
+		return len(keys(t, storage)) == 0
+	}, 250*time.Millisecond, 25*time.Millisecond, "a sweep recorded moments ago must not run again on start")
+}
+
+// TestRunRecordsAQuietSweep: a pass that found nothing to delete is still a
+// pass. If it were not recorded, every deployment with no expiring objects
+// would re-list its buckets on each restart — the cost the record exists to
+// avoid, paid by exactly the deployments with nothing to gain from it.
+func TestRunRecordsAQuietSweep(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	storage := storagemem.New()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	put(t, storage, "keep/mine.txt", "keep")
+	require.NoError(t, storage.SetBucketLifecycle(ctx, testBucket, []fs.LifecycleRule{
+		{ID: "logs", Status: fs.LifecycleEnabled, Prefix: "logs/", ExpirationDays: 1},
+	}))
+
+	state := &memState{}
+	sweeper := &lifecycle.Sweeper{Storage: storage, State: state, Floor: time.Millisecond}
+
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	go sweeper.Run(runCtx, time.Hour)
+
+	require.Eventually(t, func() bool {
+		at, err := state.LastRun(ctx, lifecycle.DefaultTask)
+		require.NoError(t, err)
+
+		return !at.IsZero()
+	}, 5*time.Second, 5*time.Millisecond, "a sweep that deleted nothing must still be recorded")
+}
+
+// memState is an in-memory lastrun.Store.
+type memState struct {
+	mu    sync.Mutex
+	times map[string]time.Time
+}
+
+func (m *memState) LastRun(_ context.Context, task string) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.times[task], nil
+}
+
+func (m *memState) SetLastRun(_ context.Context, task string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.times == nil {
+		m.times = make(map[string]time.Time)
+	}
+
+	m.times[task] = at
+
+	return nil
 }
 
 // rewriteOnList overwrites the listed key once, right after the listing the

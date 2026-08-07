@@ -23,6 +23,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster/objindex"
 	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/cluster/transport"
+	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/storagefs"
 )
 
@@ -650,16 +651,27 @@ func (rt *clusterRuntime) RunScrubber(ctx context.Context, interval time.Duratio
 		return
 	}
 
+	// The record is per node, not cluster-wide: each node scrubs its own disks,
+	// so one node completing a pass says nothing about whether another node's
+	// objects have been verified. A shared key would let a busy cluster hold
+	// every node's scrub off on the strength of whichever one ran last.
+	task := clusterScrubTask(rt.nodeID)
+	state := etcd.NewLastRunStore(rt.client, rt.etcdCfg)
+
+	last, err := state.LastRun(ctx, task)
+	if err != nil {
+		rt.lg.Warn("Last scrub time unreadable; scrubbing as if it is due", zap.Error(err))
+	}
+
+	first := lastrun.Due(last, time.Now(), interval, firstPassFloor)
+
 	rt.lg.Info("Cluster scrubber enabled",
 		zap.Duration("interval", interval),
-		zap.Duration("first_pass", firstPass(interval)),
+		zap.Duration("first_pass", first),
+		zap.Time("last_scrub", last),
 	)
 
-	// Shortly after startup, then every interval — see firstPassDelay. It is
-	// the same operator-set scrub_interval as the single-node scrubber, so a
-	// ticker here would silently skip the scrub on exactly the same rolling
-	// deployment.
-	timer := time.NewTimer(firstPass(interval))
+	timer := time.NewTimer(first)
 	defer timer.Stop()
 
 	for {
@@ -698,8 +710,16 @@ func (rt *clusterRuntime) RunScrubber(ctx context.Context, interval time.Duratio
 			zap.Int("unknown_dirs", report.UnknownDirs),
 			zap.Bool("ec_unverified", report.Totals.ECUnverified),
 		)
+
+		// Recorded after the pass, so an interrupted one is still due.
+		if err := state.SetLastRun(ctx, task, time.Now()); err != nil && ctx.Err() == nil {
+			rt.lg.Warn("Could not record the scrub time; a restart will scrub again", zap.Error(err))
+		}
 	}
 }
+
+// clusterScrubTask names one node's scrub record.
+func clusterScrubTask(node cluster.NodeID) string { return scrubTask + "/" + string(node) }
 
 // close tears down the node in reverse construction order: coordinator (async
 // queue drained), topology watch, registration (lease revoked — the node

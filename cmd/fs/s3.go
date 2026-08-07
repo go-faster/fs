@@ -23,6 +23,7 @@ import (
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/internal/adminhandler"
+	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/server"
 	"github.com/go-faster/fs/storagefs"
 )
@@ -240,13 +241,19 @@ Command-line flags override YAML configuration values.`,
 
 					storage = fsStorage
 
+					// When each periodic pass last completed. On a single node
+					// that lives in the data directory: there is no control
+					// plane to ask, and the data directory is the one thing
+					// that outlives the process.
+					state := lastrun.NewFile(absRoot)
+
 					// Background integrity scrubber (no-op unless an interval is
 					// set). Cluster-mode scrub/repair is the Phase 8 repair worker.
-					go runScrubber(ctx, lg, fsStorage, cfg.Integrity)
+					go runScrubber(ctx, lg, fsStorage, cfg.Integrity, state)
 
 					// Bucket lifecycle rules: the sweep that makes a stored
 					// expiry rule actually delete something.
-					go runLifecycle(ctx, lg, fsStorage, cfg.Lifecycle)
+					go runLifecycle(ctx, lg, fsStorage, cfg.Lifecycle, state)
 				}
 
 				lg.Info("Durability",
