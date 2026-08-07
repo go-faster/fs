@@ -27,6 +27,24 @@ import (
 // unbounded and a pass must not need it in memory.
 const sweepPage = 1000
 
+// defaultFirstPass is how long Run waits before its first sweep.
+//
+// Not the interval, and not zero. Waiting a full interval means a node
+// restarted more often than the interval never sweeps at all — deploy hourly
+// with a 12h interval and lifecycle rules silently stop applying, which is the
+// failure this whole feature exists to avoid. Sweeping the instant the process
+// is up is the other extreme: a crashlooping node would re-list every bucket on
+// every restart, piling load on exactly when it is least able to carry it.
+//
+// A short delay makes a healthy restart sweep promptly and a fast crashloop
+// never get there.
+//
+// ponytail: a node restarted more often than this still never sweeps. The fix
+// is durable state — persist when the last pass ran and sweep on start when it
+// is older than the interval — which is worth it only once someone has a
+// deployment that restarts every few minutes.
+const defaultFirstPass = 5 * time.Minute
+
 // Sweeper deletes what a bucket's lifecycle rules say should be gone.
 type Sweeper struct {
 	// Storage is swept. A backend that cannot store lifecycle rules has none
@@ -37,6 +55,9 @@ type Sweeper struct {
 	// Now supplies the current time. Nil means time.Now — tests move it
 	// forward instead of waiting for a day to pass.
 	Now func() time.Time
+	// FirstPass is how long Run waits before its first sweep; zero means
+	// defaultFirstPass, and anything longer than the interval is capped to it.
+	FirstPass time.Duration
 }
 
 // Report is what one pass did.
@@ -67,25 +88,42 @@ func (s *Sweeper) log() *zap.Logger {
 	return s.Log
 }
 
-// Run sweeps every interval until ctx is canceled. A non-positive interval
-// disables enforcement, which is why the S3 layer must not accept rules when
-// the sweep is off: stored rules nothing enforces are a lie to the client.
+// Run sweeps shortly after starting and every interval thereafter, until ctx is
+// canceled. A non-positive interval disables enforcement, which is why the S3
+// layer must not accept rules when the sweep is off: stored rules nothing
+// enforces are a lie to the client.
 func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
 
-	s.log().Info("Lifecycle sweeper started", zap.Duration("interval", interval))
+	first := s.FirstPass
+	if first <= 0 {
+		first = defaultFirstPass
+	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	if first > interval {
+		first = interval
+	}
+
+	s.log().Info("Lifecycle sweeper started",
+		zap.Duration("interval", interval),
+		zap.Duration("first_pass", first),
+	)
+
+	// A timer rather than a ticker, so the first pass is not a full interval
+	// away — see defaultFirstPass.
+	timer := time.NewTimer(first)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
+
+		timer.Reset(interval)
 
 		start := s.now()
 

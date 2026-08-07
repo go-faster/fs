@@ -197,6 +197,42 @@ func TestSweepSkipsRewrittenObject(t *testing.T) {
 	require.Equal(t, []string{"logs/racy.txt"}, keys(t, storage))
 }
 
+// TestRunSweepsBeforeTheFirstInterval is the guard on restart behavior.
+//
+// Run must not wait a whole interval for its first pass: a node restarted more
+// often than the interval would then never sweep at all, and on a deployment
+// that redeploys hourly with a 12h interval, lifecycle rules would silently
+// stop applying.
+func TestRunSweepsBeforeTheFirstInterval(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	storage := storagemem.New()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	put(t, storage, "logs/old.txt", "old")
+
+	require.NoError(t, storage.SetBucketLifecycle(ctx, testBucket, []fs.LifecycleRule{
+		{ID: "logs", Status: fs.LifecycleEnabled, Prefix: "logs/", ExpirationDays: 1},
+	}))
+
+	sweeper := &lifecycle.Sweeper{
+		Storage:   storage,
+		Now:       func() time.Time { return time.Now().Add(3 * fs.LifecycleDay) },
+		FirstPass: time.Millisecond,
+	}
+
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	go sweeper.Run(runCtx, time.Hour)
+
+	// The interval is an hour; the object has to be gone long before that.
+	require.Eventually(t, func() bool {
+		return len(keys(t, storage)) == 0
+	}, 5*time.Second, 5*time.Millisecond, "the first pass must not wait a full interval")
+}
+
 // rewriteOnList overwrites the listed key once, right after the listing the
 // sweep decided from.
 //
