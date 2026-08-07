@@ -650,17 +650,26 @@ func (rt *clusterRuntime) RunScrubber(ctx context.Context, interval time.Duratio
 		return
 	}
 
-	rt.lg.Info("Cluster scrubber enabled", zap.Duration("interval", interval))
+	rt.lg.Info("Cluster scrubber enabled",
+		zap.Duration("interval", interval),
+		zap.Duration("first_pass", firstPass(interval)),
+	)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	// Shortly after startup, then every interval — see firstPassDelay. It is
+	// the same operator-set scrub_interval as the single-node scrubber, so a
+	// ticker here would silently skip the scrub on exactly the same rolling
+	// deployment.
+	timer := time.NewTimer(firstPass(interval))
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
+
+		timer.Reset(interval)
 
 		report, err := rt.repairer.Scrub(ctx)
 		if err != nil {
