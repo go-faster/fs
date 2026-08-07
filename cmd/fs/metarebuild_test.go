@@ -53,7 +53,12 @@ func clusterScoped(t *testing.T, nodes []*clusterRuntime, store metastore.Store)
 	t.Helper()
 
 	for _, rt := range nodes {
+		// Both: index is what the node describes its own disks in, and meta is
+		// what the cluster-wide rebuild acts on. A real cluster-scope
+		// deployment has them differ (the plane, and a retired local index);
+		// here one store plays both parts.
 		rt.index = store
+		rt.meta = store
 	}
 }
 

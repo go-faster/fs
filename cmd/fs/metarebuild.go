@@ -25,8 +25,22 @@ import (
 //
 // Returning is not failure: a node that has nothing to do, or that lost the
 // election to a node which then finished the job, returns nil.
+// metaStore is the store the cluster-wide rebuild reads state from and writes
+// entries into.
+//
+// meta when buildCluster set one — the sharded plane, or this node's index when
+// no plane is running — and index otherwise, which is what a runtime assembled
+// by a test without going through buildCluster has.
+func (rt *clusterRuntime) metaStore() metastore.Store {
+	if rt.meta != nil {
+		return rt.meta
+	}
+
+	return rt.index
+}
+
 func (rt *clusterRuntime) RunMetaRebuild(ctx context.Context) error {
-	if rt.index == nil || rt.index.Scope() != metastore.ScopeCluster {
+	if store := rt.metaStore(); store == nil || store.Scope() != metastore.ScopeCluster {
 		// Local scope rebuilds per node. Nothing cluster-wide to run.
 		return nil
 	}
@@ -88,7 +102,7 @@ func (rt *clusterRuntime) metaRebuildNeeded(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	state, err := rt.index.State(ctx)
+	state, err := rt.metaStore().State(ctx)
 	if err != nil {
 		return false, errors.Wrap(err, "read metadata store state")
 	}
@@ -123,7 +137,7 @@ func (rt *clusterRuntime) rebuildMetadata(ctx context.Context, lead *etcd.MetaRe
 		zap.Bool("resuming", resuming),
 	)
 
-	report, err := rt.coord.RebuildMetadata(ctx, rt.index, clusterstore.RebuildOptions{
+	report, err := rt.coord.RebuildMetadata(ctx, rt.metaStore(), clusterstore.RebuildOptions{
 		Resume:   resume,
 		Resuming: resuming,
 		Checkpoint: func(ctx context.Context, cur clusterstore.RebuildCursor) error {
