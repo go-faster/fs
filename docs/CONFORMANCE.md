@@ -5,7 +5,7 @@
 Every pull request runs the **whole** suite —
 [go-faster/s3t](https://github.com/go-faster/s3t), a Go port of
 [ceph/s3-tests](https://github.com/ceph/s3-tests) — and fails if any test outside the
-known-failures list fails, or if any of the **42** tests inside it passes.
+known-failures list fails, or if any of the **105** tests inside it passes.
 The list can therefore only shrink; a newly passing test shows up on the pull
 request that made it pass, rather than waiting to be noticed.
 
@@ -15,10 +15,14 @@ What follows is that list, grouped. Everything else in the suite passes.
 
 | Feature area | Tests not passing |
 |--------------|------------------:|
-| Full ACL grammar | 27 |
-| SSE-KMS | 13 |
-| Bucket default encryption applied to writes | 2 |
-| **Total** | **42** |
+| Full ACL grammar and bucket-level ?acl | 32 |
+| Object Lock, retention and legal hold | 36 |
+| SSE-C and SSE-KMS | 15 |
+| AWS Signature V2 | 13 |
+| Bucket policy engine | 6 |
+| Expect header handling | 2 |
+| Content-Length ordering | 1 |
+| **Total** | **105** |
 
 ## SDK & client coverage
 

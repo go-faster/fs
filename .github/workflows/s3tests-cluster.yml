@@ -34,7 +34,7 @@ concurrency:
 
 env:
   # Pinned for reproducibility; keep in lockstep with s3tests.yml.
-  S3T_REF: fbd2bac17af4e561973a91b4a3a18e796c35a506
+  S3T_REF: 51506ac904f6e35424b3ec9d38716985023beba6
 
 jobs:
   s3tests-cluster:
