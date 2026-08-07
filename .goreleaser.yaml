@@ -43,11 +43,15 @@ release:
   prerelease: auto
 
   # Templates: allowed
+  # The tag must match what dockers_v2 below actually pushes ("v{{ .Version }}",
+  # not "{{ .Version }}"): goreleaser strips the leading v from .Version, so the
+  # unprefixed form names an image tag that was never pushed, and every reader
+  # who copies it out of the release notes gets a manifest-unknown error.
   footer: |
     ## Docker images
 
     ```
-    {{ .Env.IMAGE }}:{{ .Version }}
+    docker pull {{ .Env.IMAGE }}:v{{ .Version }}
     ```
 
   github:
