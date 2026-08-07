@@ -143,6 +143,42 @@ const clusterSecret = "chaos-secret-0123456789abcdef"
 // etcdPrefix namespaces the chaos cluster in etcd.
 const etcdPrefix = "/fs-chaos"
 
+// planeOptions configures the sharded metadata plane on a node.
+//
+// The plane is off in every other chaos test, and deliberately: it is derived,
+// so a test that does not ask about it should run the same cluster every
+// release has run.
+type planeOptions struct {
+	// enabled turns the sharded plane on.
+	enabled bool
+	// replicas is how many nodes hold each range, owner included. 1 means no
+	// followers, so a lost owner cannot be promoted around and the plane owes a
+	// rebuild — the case this harness exists to reach.
+	replicas int
+	// ranges is the presplit count; small, so a four-node cluster still has
+	// several ranges per node and a kill takes out more than one.
+	ranges int
+	// rebuild is the automatic-rebuild policy (cmd/fs: on_failure, always,
+	// never).
+	rebuild string
+}
+
+type nodeOption func(*planeOptions)
+
+// withPlane runs the sharded metadata plane with the given replication.
+//
+// Plane state is read from etcd rather than from the node's admin API: the
+// admin listener refuses to start alongside auth.disabled, which every chaos
+// node uses, and etcd holds the cluster-wide truth the nodes agree on anyway.
+func withPlane(replicas, ranges int, rebuild string) nodeOption {
+	return func(o *planeOptions) {
+		o.enabled = true
+		o.replicas = replicas
+		o.ranges = ranges
+		o.rebuild = rebuild
+	}
+}
+
 // node is one fs server process.
 type node struct {
 	id          string
@@ -158,8 +194,13 @@ type node struct {
 }
 
 // newNode writes the node's config; the process starts with start().
-func newNode(t *testing.T, i int, etcdURL string) *node {
+func newNode(t *testing.T, i int, etcdURL string, opts ...nodeOption) *node {
 	t.Helper()
+
+	var plane planeOptions
+	for _, opt := range opts {
+		opt(&plane)
+	}
 
 	n := &node{
 		id:          fmt.Sprintf("n%d", i),
@@ -208,6 +249,15 @@ cluster:
     settle: 2s
     cooldown: 2s
 `, n.s3Addr, n.root, n.id, n.id, n.clusterAddr, n.clusterAddr, clusterSecret, n.diskRoot, etcdURL, etcdPrefix)
+
+	if plane.enabled {
+		cfg += fmt.Sprintf(`  metadata:
+    sharded: true
+    ranges: %d
+    replicas: %d
+    rebuild: %q
+`, plane.ranges, plane.replicas, plane.rebuild)
+	}
 
 	require.NoError(t, os.WriteFile(n.configPath, []byte(cfg), 0o644))
 

@@ -83,6 +83,16 @@ type clusterRuntime struct {
 	// cluster-scope store can take its place without a caller noticing. Which
 	// one is in place is asked of the store itself, via Scope.
 	index metastore.Store
+	// meta is the metadata store the cluster-wide rebuild acts on: the sharded
+	// plane when one is enabled, and index when it is not.
+	//
+	// Separate from index because with the plane on the two are different
+	// stores with opposite roles — index is retired and marked building, while
+	// the plane is the one every listing reads. Aiming the rebuild at index
+	// there makes it a silent no-op: it reports local scope, the rebuild
+	// returns early, and the plane stays unbuilt forever while the log says a
+	// rebuild finished.
+	meta metastore.Store
 	// indexer feeds it from the disk store, and counts what it could not take.
 	indexer *objectIndexer
 	// indexAdopted is whether the previous process handed the index over
@@ -378,6 +388,16 @@ func buildCluster(ctx context.Context, lg *zap.Logger, cfg Config, absRoot strin
 			zap.Int("ranges", cfg.MetadataRanges()),
 			zap.Int("replicas", cfg.MetadataReplicas()))
 	}
+
+	// The store the cluster-wide rebuild reads state from and writes entries
+	// into: the plane when one is running, this node's index otherwise.
+	//
+	// It is not rt.index, and that distinction is the whole point. rt.index is
+	// what this node's disks are described in, and with the plane on it has
+	// just been marked building and is no longer written to. A rebuild aimed at
+	// it would ask the wrong store whether a rebuild was needed, and fill the
+	// wrong store if it decided one was.
+	rt.meta = meta
 
 	coord, err := clusterstore.New(clusterstore.Config{
 		Topology: source,
