@@ -6,56 +6,48 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/storagefs"
 )
 
-// firstPassDelay is how long a periodic background pass waits before its first
-// run.
+// firstPassFloor is the shortest a periodic background pass will ever wait
+// before running, however overdue the last-run record says it is.
 //
-// Not the interval. A ticker puts the first pass one whole interval away, so a
-// node restarted more often than the interval never runs it at all: set
-// scrub_interval to 24h, redeploy daily, and the deployment is never scrubbed
-// once — with nothing in the log to say so, because the loop is running exactly
-// as written.
-//
-// Not zero either. Scrubbing the instant the process is up would have a
-// crashlooping node re-walk every object on each restart, which is load at the
-// moment it is least able to carry it. A short delay makes a healthy restart
-// scrub promptly and a fast crashloop never get there.
-//
-// ponytail: a node restarted more often than this still never scrubs. The fix
-// is durable state — persist when the last pass ran and run on start when it is
-// older than the interval — worth building once a deployment restarts that
-// fast.
-const firstPassDelay = 5 * time.Minute
+// It is what stops a crashlooping node from re-running an overdue pass on every
+// restart: completion is recorded only when the pass finishes, so a node that
+// dies part-way through would otherwise start another walk immediately each
+// time it came back.
+const firstPassFloor = time.Minute
 
-// firstPass is how long to wait before the first pass of a loop that thereafter
-// runs every interval. A short interval is its own answer: waiting longer than
-// the cadence the operator asked for would be its own surprise.
-func firstPass(interval time.Duration) time.Duration {
-	if interval < firstPassDelay {
-		return interval
-	}
-
-	return firstPassDelay
-}
+// scrubTask names the scrub's last-run record. The single-node scrubber walks
+// this node's own objects, and so does each cluster node's — see
+// clusterScrubTask for why the cluster record is per node.
+const scrubTask = "scrub"
 
 // runScrubber runs the background integrity scrubber until ctx is canceled,
-// logging each pass's result: shortly after startup, and every configured
-// interval thereafter. A pass that finds corruption is logged at error level (a
-// loud, single-node report).
-func runScrubber(ctx context.Context, lg *zap.Logger, storage *storagefs.Storage, cfg IntegrityConfig) {
-	scrubLoop(ctx, lg, storage, cfg, firstPass(cfg.ScrubInterval))
+// logging each pass's result. The first pass is due one interval after the last
+// one recorded in state, so restarting neither postpones the scrub by a whole
+// interval nor re-runs it on every restart. A pass that finds corruption is
+// logged at error level (a loud, single-node report).
+func runScrubber(
+	ctx context.Context,
+	lg *zap.Logger,
+	storage *storagefs.Storage,
+	cfg IntegrityConfig,
+	state lastrun.Store,
+) {
+	scrubLoop(ctx, lg, storage, cfg, state, firstPassFloor)
 }
 
-// scrubLoop is runScrubber with the delay before the first pass supplied, so a
-// test can watch that pass happen instead of waiting minutes for it.
+// scrubLoop is runScrubber with the floor on the first wait supplied, so a test
+// can watch that pass happen instead of waiting a minute for it.
 func scrubLoop(
 	ctx context.Context,
 	lg *zap.Logger,
 	storage *storagefs.Storage,
 	cfg IntegrityConfig,
-	first time.Duration,
+	state lastrun.Store,
+	floor time.Duration,
 ) {
 	if cfg.ScrubInterval <= 0 {
 		return
@@ -63,9 +55,20 @@ func scrubLoop(
 
 	opts := storagefs.ScrubOptions{Quarantine: cfg.ScrubQuarantine}
 
+	// A state store that cannot be read is not a reason to stop scrubbing: the
+	// pass falls back to "due now", which is the same answer a fresh
+	// deployment gets.
+	last, err := state.LastRun(ctx, scrubTask)
+	if err != nil {
+		lg.Warn("Last scrub time unreadable; scrubbing as if it is due", zap.Error(err))
+	}
+
+	first := lastrun.Due(last, time.Now(), cfg.ScrubInterval, floor)
+
 	lg.Info("Scrubber started",
 		zap.Duration("interval", cfg.ScrubInterval),
 		zap.Duration("first_pass", first),
+		zap.Time("last_scrub", last),
 		zap.Bool("quarantine", cfg.ScrubQuarantine),
 	)
 
@@ -81,6 +84,11 @@ func scrubLoop(
 
 		timer.Reset(cfg.ScrubInterval)
 		scrubOnce(ctx, lg, storage, opts)
+
+		// Recorded after the pass, so an interrupted one is still due.
+		if err := state.SetLastRun(ctx, scrubTask, time.Now()); err != nil && ctx.Err() == nil {
+			lg.Warn("Could not record the scrub time; a restart will scrub again", zap.Error(err))
+		}
 	}
 }
 

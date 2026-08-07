@@ -20,12 +20,26 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/lastrun"
 )
 
 // sweepPage is how many keys a listing pass asks for at a time. The sweep walks
 // whole buckets, so it pages rather than asking for everything: a bucket is
 // unbounded and a pass must not need it in memory.
 const sweepPage = 1000
+
+// DefaultTask names the sweep's last-run record. It is cluster-wide rather than
+// per node: one elected sweeper enforces the rules for everyone, so a pass by
+// whichever node holds the election is a pass for the whole cluster.
+const DefaultTask = "lifecycle"
+
+// defaultFloor is the shortest Run waits before a sweep that is already due.
+//
+// Completion is recorded only when a pass finishes, so a node that dies
+// part-way through comes back with the sweep still overdue. The floor is what
+// keeps that from becoming a re-listing of every bucket on every restart of a
+// crashlooping node.
+const defaultFloor = time.Minute
 
 // Sweeper deletes what a bucket's lifecycle rules say should be gone.
 type Sweeper struct {
@@ -37,6 +51,17 @@ type Sweeper struct {
 	// Now supplies the current time. Nil means time.Now — tests move it
 	// forward instead of waiting for a day to pass.
 	Now func() time.Time
+	// State remembers when a pass last completed, so restarting neither
+	// postpones the sweep by a whole interval nor repeats it every time.
+	//
+	// Nil gives a sweeper with no memory: every start sweeps once the floor
+	// elapses, which is what a caller that does not persist anything wants.
+	State lastrun.Store
+	// Task names the record in State; empty means DefaultTask.
+	Task string
+	// Floor is the shortest wait before an already-due sweep; zero means
+	// defaultFloor.
+	Floor time.Duration
 }
 
 // Report is what one pass did.
@@ -67,25 +92,78 @@ func (s *Sweeper) log() *zap.Logger {
 	return s.Log
 }
 
-// Run sweeps every interval until ctx is canceled. A non-positive interval
+func (s *Sweeper) task() string {
+	if s.Task == "" {
+		return DefaultTask
+	}
+
+	return s.Task
+}
+
+// lastRun reads the recorded completion; a sweeper with no State has no memory,
+// which reads as never.
+func (s *Sweeper) lastRun(ctx context.Context) (time.Time, error) {
+	if s.State == nil {
+		return time.Time{}, nil
+	}
+
+	return s.State.LastRun(ctx, s.task())
+}
+
+func (s *Sweeper) setLastRun(ctx context.Context, at time.Time) error {
+	if s.State == nil {
+		return nil
+	}
+
+	return s.State.SetLastRun(ctx, s.task(), at)
+}
+
+// Run sweeps until ctx is canceled: the first pass one interval after the last
+// one State recorded, and every interval after that. A non-positive interval
 // disables enforcement, which is why the S3 layer must not accept rules when
 // the sweep is off: stored rules nothing enforces are a lie to the client.
+//
+// Scheduling from the recorded time rather than from process start is what
+// makes the sweep survive restarts. A plain ticker would put the first pass a
+// whole interval away, so a node redeployed hourly under the 12h default would
+// never sweep at all — lifecycle rules silently inert on the deployments that
+// restart most, which is the exact failure this feature exists to prevent.
 func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
 
-	s.log().Info("Lifecycle sweeper started", zap.Duration("interval", interval))
+	floor := s.Floor
+	if floor <= 0 {
+		floor = defaultFloor
+	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	// An unreadable record is not a reason to stop sweeping: the pass falls
+	// back to "due now", the same answer a fresh deployment gets.
+	last, err := s.lastRun(ctx)
+	if err != nil {
+		s.log().Warn("Last sweep time unreadable; sweeping as if it is due", zap.Error(err))
+	}
+
+	first := lastrun.Due(last, s.now(), interval, floor)
+
+	s.log().Info("Lifecycle sweeper started",
+		zap.Duration("interval", interval),
+		zap.Duration("first_pass", first),
+		zap.Time("last_sweep", last),
+	)
+
+	timer := time.NewTimer(first)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
+
+		timer.Reset(interval)
 
 		start := s.now()
 
@@ -98,6 +176,14 @@ func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
 			s.log().Warn("Lifecycle sweep failed; rules apply again on the next pass", zap.Error(err))
 
 			continue
+		}
+
+		// Recorded after the pass, so an interrupted one is still due — and
+		// recorded even when the pass deleted nothing, because a sweep that
+		// found nothing to expire is still a sweep. Skipping it here would
+		// leave every quiet deployment re-listing its buckets on each restart.
+		if err := s.setLastRun(ctx, s.now()); err != nil && ctx.Err() == nil {
+			s.log().Warn("Could not record the sweep time; a restart will sweep again", zap.Error(err))
 		}
 
 		if report.Expired == 0 && report.Aborted == 0 {

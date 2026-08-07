@@ -294,6 +294,19 @@ reporting bit-rot and optionally quarantining corrupt objects into
 `<root>/.quarantine`; the binary runs it on a configurable interval and logs
 findings loudly.
 
+**Periodic-pass scheduling.** The scrub and the lifecycle sweep both record when
+they last completed — `<root>/.lastrun/<task>.json` on a single node, `<prefix>/
+lastrun/<task>` in etcd for a cluster — and schedule the next pass one interval
+after that rather than one interval after process start. Without the record a
+periodic loop has to pick between two wrong answers: a ticker never fires on a
+node restarted more often than the interval (redeploy hourly, never scrub), and
+running on start makes a node that restarts often re-walk everything every time.
+A pass is recorded only once it finishes, so an interrupted one is still due,
+and a short floor keeps a crashlooping node from repeating an overdue pass on
+every restart. The scrub's record is per node (each node verifies its own
+disks); the lifecycle sweep's is cluster-wide (one elected sweeper covers
+everyone).
+
 ### storagefs metadata sidecars
 
 Object metadata (ETag, representation headers, `x-amz-meta-*`, tags) lives in
@@ -302,8 +315,8 @@ bucket directories so sidecars can never collide with object keys. The
 documents carry a format version stamp. A missing or corrupt sidecar degrades
 gracefully: the object stays readable with default metadata and the ETag is
 recomputed (and cached) on read, which keeps pre-sidecar data directories
-working. Root-level dot-directories (`.meta`, `.multipart`) are internal and
-never listed as buckets.
+working. Root-level dot-directories (`.meta`, `.multipart`,
+`.lastrun`) are internal and never listed as buckets.
 
 ## Testing architecture
 
