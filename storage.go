@@ -279,6 +279,30 @@ type Versioner interface {
 	DeleteObjectVersion(ctx context.Context, bucket, key, versionID string) (DeleteResult, error)
 }
 
+// ConditionalVersionDeleter is the optional capability of deleting on a
+// versioned bucket only if the target still matches a condition. It is to
+// Versioner what ConditionalDeleter is to DeleteObject, and exists for the same
+// reason: the check and the delete must be atomic, so only a backend that can
+// evaluate cond under the lock serializing writes to the key may implement it.
+//
+// Without it a conditional delete against a versioned bucket has no correct
+// answer available to the S3 layer. Evaluating the condition in the handler and
+// then deleting would race a concurrent write — precisely the guarantee an
+// If-Match delete is asked for — so the layer reports NotImplemented rather
+// than answering as though the condition had been checked.
+type ConditionalVersionDeleter interface {
+	// DeleteObjectVersionIf performs DeleteObjectVersion only while cond holds
+	// against the version it would act on: the current one, or the one
+	// versionID names.
+	//
+	// It reports ErrPreconditionFailed when the target exists and cond does not
+	// hold, and ErrObjectNotFound when there is nothing to delete — which the
+	// S3 layer reports as success, a delete being idempotent.
+	DeleteObjectVersionIf(
+		ctx context.Context, bucket, key, versionID string, cond Conditions,
+	) (DeleteResult, error)
+}
+
 // DeleteResult describes what a delete did, which S3 reports in headers a
 // client uses to tell "the key is gone" from "the key now has a tombstone".
 type DeleteResult struct {
