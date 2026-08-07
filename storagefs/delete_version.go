@@ -142,9 +142,16 @@ func (s *Storage) DeleteObjectVersionIf(
 // deleteTargetState describes the version a delete would act on: the one
 // versionID names, or the key's current version.
 //
-// A delete marker reports as absent. The key does not resolve, so a condition
-// on "what is there now" has nothing to hold against — which is the same answer
-// an unversioned delete of a missing key gives.
+// A key that has never existed reports absent, and CheckDelete lets every
+// condition pass against it — deleting what is not there is a success in S3
+// whatever the condition says.
+//
+// A key whose current version is a **delete marker** is a different case and
+// not an absent one. S3 answers `If-Match: *` on it with success and any
+// specific ETag with 412, which is the behavior of something that exists and
+// matches nothing. Reporting it absent instead makes every condition pass, so a
+// guarded delete against an already-deleted key is accepted without the guard
+// ever being evaluated.
 func (s *Storage) deleteTargetState(bucket, key, versionID string) (fs.ObjectState, error) {
 	if versionID == "" {
 		if !s.versionedBucket(bucket) {
@@ -152,9 +159,29 @@ func (s *Storage) deleteTargetState(bucket, key, versionID string) (fs.ObjectSta
 			return s.currentObjectState(bucket, key, filepath.Join(s.root, bucket, objectRelPath(key)))
 		}
 
-		sc, _, err := s.currentVersion(bucket, key)
-		if err != nil || sc == nil {
+		sc, deleted, err := s.currentVersion(bucket, key)
+		if err != nil {
 			return fs.ObjectState{}, err
+		}
+
+		if deleted {
+			// A marker over real content is not the same as a marker over
+			// nothing, and S3 distinguishes them: with content beneath, the key
+			// exists-and-matches-nothing, so "*" holds and any specific
+			// condition is refused. With only markers — a delete of a key that
+			// was never written, which still leaves one — there is nothing to
+			// guard and every condition passes, because deleting what is not
+			// there is a success whatever the condition says.
+			content, err := s.hasContentVersion(bucket, key)
+			if err != nil || !content {
+				return fs.ObjectState{}, err
+			}
+
+			return fs.ObjectState{Exists: true}, nil
+		}
+
+		if sc == nil {
+			return fs.ObjectState{}, nil
 		}
 
 		return versionState(sc), nil
@@ -170,6 +197,28 @@ func (s *Storage) deleteTargetState(bucket, key, versionID string) (fs.ObjectSta
 	}
 
 	return versionState(sc), nil
+}
+
+// hasContentVersion reports whether the key has any version that is not a
+// delete marker.
+func (s *Storage) hasContentVersion(bucket, key string) (bool, error) {
+	ids, err := s.listVersionIDs(bucket, key)
+	if err != nil {
+		return false, err
+	}
+
+	for _, id := range ids {
+		sc, err := s.readVersionSidecar(bucket, key, id)
+		if err != nil {
+			return false, err
+		}
+
+		if sc != nil && !sc.DeleteMarker {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // versionState converts a version's sidecar to the state a condition is

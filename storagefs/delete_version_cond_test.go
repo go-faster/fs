@@ -127,3 +127,51 @@ func TestDeleteObjectVersionIfSizeAndTime(t *testing.T) {
 	_, err = s.DeleteObjectVersionIf(ctx, "b", "k", "", fs.Conditions{Size: &right})
 	require.NoError(t, err)
 }
+
+// TestDeleteObjectVersionIfDeleteMarkerSemantics pins the distinction the
+// s3-tests encode, which is subtle enough to be re-broken by anyone
+// simplifying deleteTargetState.
+//
+// A delete marker over real content means the key exists and matches nothing:
+// If-Match "*" holds, any specific ETag is refused. A delete marker over
+// nothing — the marker a delete of a never-written key still leaves — means the
+// key is absent, and every condition passes, because deleting what is not there
+// is a success whatever the condition says.
+func TestDeleteObjectVersionIfDeleteMarkerSemantics(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	t.Run("MarkerOverNothing", func(t *testing.T) {
+		s, err := storagefs.New(t.TempDir())
+		require.NoError(t, err)
+		require.NoError(t, s.CreateBucket(ctx, "b"))
+		require.NoError(t, s.SetBucketVersioning(ctx, "b", fs.VersioningEnabled))
+
+		// Deleting a key that was never written leaves a marker.
+		_, err = s.DeleteObjectVersionIf(ctx, "b", "ghost", "", fs.Conditions{IfMatch: "*"})
+		require.NoError(t, err)
+
+		// And a second guarded delete still succeeds: there is nothing there to
+		// guard, so the condition has nothing to refuse.
+		_, err = s.DeleteObjectVersionIf(ctx, "b", "ghost", "", fs.Conditions{IfMatch: `"deadbeef"`})
+		require.NoError(t, err, "a marker over nothing must not make conditions fail")
+	})
+
+	t.Run("MarkerOverContent", func(t *testing.T) {
+		s, etag := condStore(t)
+
+		// Delete the object, so a marker is current over real content.
+		_, err := s.DeleteObjectVersionIf(ctx, "b", "k", "", fs.Conditions{IfMatch: etag})
+		require.NoError(t, err)
+
+		// "*" holds: something is there.
+		_, err = s.DeleteObjectVersionIf(ctx, "b", "k", "", fs.Conditions{IfMatch: "*"})
+		require.NoError(t, err)
+
+		// A specific ETag does not: the marker matches nothing.
+		_, err = s.DeleteObjectVersionIf(ctx, "b", "k", "", fs.Conditions{IfMatch: `"deadbeef"`})
+		require.ErrorIs(t, err, fs.ErrPreconditionFailed,
+			"a marker over content exists and matches nothing")
+	})
+}
