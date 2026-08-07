@@ -187,6 +187,9 @@ Command-line flags override YAML configuration values.`,
 					// the request path.
 					go clusterRT.RunCoverage(ctx)
 
+					// Bucket lifecycle rules, enforced from one elected node.
+					go clusterRT.RunLifecycle(ctx, cfg.Lifecycle)
+
 					// Per-bucket object accounting: batched deltas from this
 					// node's writes, and the cluster-wide recount that keeps
 					// the totals honest (one elected node runs it).
@@ -240,6 +243,10 @@ Command-line flags override YAML configuration values.`,
 					// Background integrity scrubber (no-op unless an interval is
 					// set). Cluster-mode scrub/repair is the Phase 8 repair worker.
 					go runScrubber(ctx, lg, fsStorage, cfg.Integrity)
+
+					// Bucket lifecycle rules: the sweep that makes a stored
+					// expiry rule actually delete something.
+					go runLifecycle(ctx, lg, fsStorage, cfg.Lifecycle)
 				}
 
 				lg.Info("Durability",

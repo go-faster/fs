@@ -25,6 +25,9 @@ type bucketMeta struct {
 	Owner fs.Owner `json:"owner,omitzero"`
 	// CORS is the bucket's rule set, as set through the ?cors subresource.
 	CORS []fs.CORSRule `json:"cors,omitempty"`
+	// Lifecycle is the bucket's rule set, as set through the ?lifecycle
+	// subresource.
+	Lifecycle []fs.LifecycleRule `json:"lifecycle,omitempty"`
 	// PublicAccessBlock is the ?publicAccessBlock configuration; nil when the
 	// bucket has none.
 	PublicAccessBlock *fs.PublicAccessBlock `json:"public_access_block,omitempty"`
@@ -193,6 +196,38 @@ func (s *Storage) SetBucketCORS(_ context.Context, bucket string, rules []fs.COR
 // DeleteBucketCORS implements fs.BucketCORSStore.
 func (s *Storage) DeleteBucketCORS(ctx context.Context, bucket string) error {
 	return s.SetBucketCORS(ctx, bucket, nil)
+}
+
+// BucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) BucketLifecycle(_ context.Context, bucket string) ([]fs.LifecycleRule, error) {
+	if !s.bucketExists(bucket) {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+
+	return s.readBucketMeta(bucket).Lifecycle, nil
+}
+
+// SetBucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) SetBucketLifecycle(_ context.Context, bucket string, rules []fs.LifecycleRule) error {
+	if !s.bucketExists(bucket) {
+		return fs.ErrBucketNotFound
+	}
+
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+
+	meta := s.readBucketMeta(bucket)
+	meta.Lifecycle = rules
+
+	return s.writeBucketMeta(bucket, meta)
+}
+
+// DeleteBucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
+	return s.SetBucketLifecycle(ctx, bucket, nil)
 }
 
 // BucketPublicAccessBlock implements fs.BucketSettingsStore.

@@ -55,6 +55,8 @@ type bucket struct {
 	owner fs.Owner
 	// cors is the rule set set through the ?cors subresource.
 	cors []fs.CORSRule
+	// lifecycle is the rule set set through the ?lifecycle subresource.
+	lifecycle []fs.LifecycleRule
 	// publicAccessBlock is the ?publicAccessBlock configuration; nil when unset.
 	publicAccessBlock *fs.PublicAccessBlock
 	// objectOwnership is the ?ownershipControls rule; empty when unset.
@@ -749,6 +751,39 @@ func (s *Storage) SetBucketCORS(_ context.Context, bucketName string, rules []fs
 // DeleteBucketCORS implements fs.BucketCORSStore.
 func (s *Storage) DeleteBucketCORS(ctx context.Context, bucketName string) error {
 	return s.SetBucketCORS(ctx, bucketName, nil)
+}
+
+// BucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) BucketLifecycle(_ context.Context, bucketName string) ([]fs.LifecycleRule, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return nil, fs.ErrBucketNotFound
+	}
+
+	return append([]fs.LifecycleRule(nil), b.lifecycle...), nil
+}
+
+// SetBucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) SetBucketLifecycle(_ context.Context, bucketName string, rules []fs.LifecycleRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, exists := s.buckets[bucketName]
+	if !exists {
+		return fs.ErrBucketNotFound
+	}
+
+	b.lifecycle = append([]fs.LifecycleRule(nil), rules...)
+
+	return nil
+}
+
+// DeleteBucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) DeleteBucketLifecycle(ctx context.Context, bucketName string) error {
+	return s.SetBucketLifecycle(ctx, bucketName, nil)
 }
 
 // BucketPublicAccessBlock implements fs.BucketSettingsStore.

@@ -59,6 +59,9 @@ type BucketInfo struct {
 	Owner fs.Owner `json:"owner,omitzero"`
 	// CORS is the bucket's rule set, as set through the ?cors subresource.
 	CORS []fs.CORSRule `json:"cors,omitempty"`
+	// Lifecycle is the bucket's rule set, as set through the ?lifecycle
+	// subresource.
+	Lifecycle []fs.LifecycleRule `json:"lifecycle,omitempty"`
 	// PublicAccessBlock is the ?publicAccessBlock configuration; nil when unset.
 	PublicAccessBlock *fs.PublicAccessBlock `json:"public_access_block,omitempty"`
 	// ObjectOwnership is the ?ownershipControls rule; empty when unset.
@@ -254,6 +257,31 @@ func (c *Coordinator) BucketCORS(ctx context.Context, bucket string) ([]fs.CORSR
 	}
 
 	return info.CORS, nil
+}
+
+// SetBucketLifecycle rewrites the bucket record with a new lifecycle rule set;
+// nil clears it.
+func (c *Coordinator) SetBucketLifecycle(ctx context.Context, bucket string, rules []fs.LifecycleRule) error {
+	topo := c.topo.Topology()
+
+	info, err := c.fetchBucket(ctx, topo, bucket)
+	if err != nil {
+		return err
+	}
+
+	info.Lifecycle = rules
+
+	return c.writeBucket(ctx, topo, info)
+}
+
+// BucketLifecycle returns the bucket's lifecycle rule set, nil when it has none.
+func (c *Coordinator) BucketLifecycle(ctx context.Context, bucket string) ([]fs.LifecycleRule, error) {
+	info, err := c.fetchBucket(ctx, c.topo.Topology(), bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return info.Lifecycle, nil
 }
 
 // SetBucketPublicAccessBlock rewrites the bucket record's public-access-block

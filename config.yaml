@@ -125,6 +125,14 @@ storage:
 #   token: "change-me"                # or FS_ADMIN_TOKEN
 #   # keys_file: ".access-keys.json"  # file-source runtime keys (default under root)
 
+# Bucket lifecycle rules (?lifecycle), enforced by a background sweep that
+# deletes expired objects and aborts abandoned multipart uploads.
+# lifecycle:
+#   # How often the sweep runs. Expiry is eventual by design: S3 promises the
+#   # object goes away, not when. Zero turns enforcement off, which leaves any
+#   # rule a client sets stored but inert — the server warns loudly at startup.
+#   interval: 12h
+
 # Observability configuration
 observability:
   # Service name for telemetry (OpenTelemetry traces, metrics, logs)

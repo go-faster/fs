@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -123,6 +124,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Keyspace/OverlappingKeys":              testOverlappingKeys,
 	"Ownership/BucketOwner":                 testBucketOwner,
 	"CORS/RoundTrip":                        testBucketCORS,
+	"Lifecycle/RoundTrip":                   testBucketLifecycle,
 	"Versioning/BucketState":                testBucketVersioningState,
 	"Settings/PublicAccessAndOwnership":     testBucketSettings,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
@@ -1271,6 +1273,69 @@ func testBucketCORS(t *testing.T, storage fs.Storage) {
 	require.Empty(t, got)
 
 	_, err = store.BucketCORS(ctx, testBucket+"-absent")
+	require.ErrorIs(t, err, fs.ErrBucketNotFound)
+}
+
+// testBucketLifecycle covers fs.BucketLifecycleStore: rules survive a
+// round-trip whole, since a rule that comes back missing its expiry is a rule
+// that silently stops deleting.
+func testBucketLifecycle(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	store, ok := storage.(fs.BucketLifecycleStore)
+	if !ok {
+		t.Skip("backend does not store lifecycle rules")
+	}
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	rules, err := store.BucketLifecycle(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, rules)
+
+	want := []fs.LifecycleRule{
+		{
+			ID:             "expire-logs",
+			Status:         fs.LifecycleEnabled,
+			Prefix:         "logs/",
+			ExpirationDays: 30,
+		},
+		{
+			ID:                                 "clean-uploads",
+			Status:                             fs.LifecycleDisabled,
+			AbortIncompleteMultipartUploadDays: 7,
+		},
+		{
+			ID:             "expire-on-date",
+			Status:         fs.LifecycleEnabled,
+			Prefix:         "archive/",
+			ExpirationDate: time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	require.NoError(t, store.SetBucketLifecycle(ctx, testBucket, want))
+
+	got, err := store.BucketLifecycle(ctx, testBucket)
+	require.NoError(t, err)
+	require.Len(t, got, len(want))
+
+	for i := range want {
+		require.Equal(t, want[i].ID, got[i].ID)
+		require.Equal(t, want[i].Status, got[i].Status)
+		require.Equal(t, want[i].Prefix, got[i].Prefix)
+		require.Equal(t, want[i].ExpirationDays, got[i].ExpirationDays)
+		require.Equal(t, want[i].AbortIncompleteMultipartUploadDays, got[i].AbortIncompleteMultipartUploadDays)
+		require.True(t, want[i].ExpirationDate.Equal(got[i].ExpirationDate),
+			"expiration date %s != %s", want[i].ExpirationDate, got[i].ExpirationDate)
+	}
+
+	require.NoError(t, store.DeleteBucketLifecycle(ctx, testBucket))
+
+	got, err = store.BucketLifecycle(ctx, testBucket)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	_, err = store.BucketLifecycle(ctx, testBucket+"-absent")
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 

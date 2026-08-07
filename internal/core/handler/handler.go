@@ -196,6 +196,8 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 			h.GetBucketLocation(w, r)
 		case q.Has("cors"):
 			h.GetBucketCORS(w, r)
+		case q.Has("lifecycle"):
+			h.GetBucketLifecycle(w, r)
 		case q.Has("publicAccessBlock"):
 			h.GetBucketPublicAccessBlock(w, r)
 		case q.Has("ownershipControls"):
@@ -219,6 +221,9 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case q.Has("cors"):
 			h.PutBucketCORS(w, r)
+			return
+		case q.Has("lifecycle"):
+			h.PutBucketLifecycle(w, r)
 			return
 		case q.Has("publicAccessBlock"):
 			h.PutBucketPublicAccessBlock(w, r)
@@ -245,6 +250,9 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case q.Has("cors"):
 			h.DeleteBucketCORS(w, r)
+			return
+		case q.Has("lifecycle"):
+			h.DeleteBucketLifecycle(w, r)
 			return
 		case q.Has("publicAccessBlock"):
 			h.DeleteBucketPublicAccessBlock(w, r)
@@ -329,7 +337,7 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 // rather than being misinterpreted as a plain listing or create.
 var unsupportedBucketSubresources = []string{
 	"accelerate", "acl", "analytics", "inventory",
-	"lifecycle", "logging", "metrics", "notification", "object-lock",
+	"logging", "metrics", "notification", "object-lock",
 	"policy", "policyStatus",
 	"replication", "requestPayment", "tagging", "website",
 }
