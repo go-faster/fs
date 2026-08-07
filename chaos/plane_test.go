@@ -397,6 +397,76 @@ func TestPlaneOwnerKilledMidLoad(t *testing.T) {
 		shortListings, 60)
 }
 
+// TestPlaneOwnerKilledQuiescent is the sharper experiment issue #240 asked for.
+//
+// TestPlaneOwnerKilledMidLoad cannot tell two things apart, because it kills a
+// node while writes are in flight:
+//
+//  1. the plane is a derived index updated *after* the write it describes is
+//     acked, so a listing under load is legitimately behind the ledger — this
+//     happens with no failure at all; and
+//  2. a range with no owner contributing zero keys to a listing that is served
+//     as complete, which is the failure E3's whole readiness rule exists to
+//     prevent.
+//
+// Removing the writes removes cause 1 entirely. Every acked key is in the plane
+// before the kill, so any key missing afterwards can only be cause 2 — and this
+// test asserts there are none, on every poll, for the whole failover.
+func TestPlaneOwnerKilledQuiescent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("chaos suite is long-running")
+	}
+
+	ctx := t.Context()
+	e := startEtcd(t)
+
+	nodes := make([]*node, 0, 4)
+
+	for i := range 4 {
+		n := newNode(t, i, e.clientURL.String(), withPlane(2, 16, "always"))
+		n.start(t)
+		nodes = append(nodes, n)
+	}
+
+	for _, n := range nodes {
+		n.waitHealthy(t)
+	}
+
+	clients := s3Clients(t, nodes)
+	makeBucket(ctx, t, clients[0], nodes[0])
+
+	plane := newPlaneWatcher(t, e.clientURL.String())
+	plane.await(ctx, t, metastore.StateReady, planeReadyTimeout, nodes[0])
+
+	// Write, then stop and let the plane catch up completely. From here the
+	// ledger and the plane agree, and nothing is being written.
+	lg := newLedger()
+	stopLoad := planeLoad(ctx, t, clients, lg, 3)
+	time.Sleep(5 * time.Second)
+	stopLoad()
+
+	requireListingCatchesUp(ctx, t, clients[0], lg, "before the kill")
+
+	// Now kill an owner. No writes are in flight, so the plane cannot fall
+	// behind: a short listing from here is a range being skipped.
+	nodes[3].kill()
+
+	survivor := clients[0]
+	deadline := time.Now().Add(45 * time.Second)
+
+	for time.Now().Before(deadline) {
+		require.Zerof(t, missingFromListing(ctx, t, survivor, lg),
+			"a listing during failover dropped keys with no writes in flight: "+
+				"an unserved range was served as empty instead of falling back; log tail:\n%s",
+			nodes[0].logTail())
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	plane.await(ctx, t, metastore.StateReady, planeConvergeTimeout, nodes[0])
+	requireListingCatchesUp(ctx, t, survivor, lg, "after convergence")
+}
+
 // TestPlaneRebuildWithoutFollower is E3's second unmet case: a range whose data
 // is gone and which has no follower to promote.
 //

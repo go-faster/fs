@@ -42,6 +42,28 @@ refused, never silently under-replicated. The remainder (rf2.5 parity, rf3 third
 replica) is produced behind a bounded async queue and completed by repair if the
 node producing it dies — the object is already durable at quorum meanwhile.
 
+## Listings lag acknowledged writes
+
+A GET of an acked key always returns it. A **listing** may not name it yet.
+
+With the sharded metadata plane on (`cluster.metadata.sharded`), listings are
+served from a derived index that is updated *after* the write it describes is
+acknowledged. So a key that was acked moments ago can be absent from a listing
+taken immediately afterwards, catching up shortly. This is ordinary behavior
+under load and needs no failure to produce it — S3 itself makes the same
+distinction between reading an object and enumerating one.
+
+What does **not** happen is a listing quietly dropping keys because part of the
+cluster is unavailable. A range whose owner cannot be reached fails the read
+rather than contributing nothing, and the request falls back to walking sidecars
+— slower, and complete. Measured in `chaos/plane_test.go`: killing a range owner
+with no writes in flight produces no short listing on any poll for the whole
+failover, while the same kill under load produces the lag above. Losing a node
+costs listing *latency*, never listing *completeness* (issue #240).
+
+The practical consequence: do not use a listing to decide whether a write you
+just acked exists. Read the key.
+
 ## What repair restores, and when it can't
 
 Every node periodically scrubs its disks and feeds each object through the
