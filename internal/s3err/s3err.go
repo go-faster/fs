@@ -29,11 +29,15 @@ type APIError struct {
 // The error table. These are the codes real SDK/client paths depend on; each
 // maps to exactly one HTTP status and a default message.
 var (
-	NoSuchBucket            = APIError{"NoSuchBucket", http.StatusNotFound, "The specified bucket does not exist."}
-	NoSuchKey               = APIError{"NoSuchKey", http.StatusNotFound, "The specified key does not exist."}
-	NoSuchUpload            = APIError{"NoSuchUpload", http.StatusNotFound, "The specified multipart upload does not exist."}
-	NoSuchBucketPolicy      = APIError{"NoSuchBucketPolicy", http.StatusNotFound, "The bucket policy does not exist."}
-	NoSuchCORSConfiguration = APIError{"NoSuchCORSConfiguration", http.StatusNotFound, "The CORS configuration does not exist."}
+	NoSuchBucket                 = APIError{"NoSuchBucket", http.StatusNotFound, "The specified bucket does not exist."}
+	NoSuchKey                    = APIError{"NoSuchKey", http.StatusNotFound, "The specified key does not exist."}
+	NoSuchUpload                 = APIError{"NoSuchUpload", http.StatusNotFound, "The specified multipart upload does not exist."}
+	NoSuchBucketPolicy           = APIError{"NoSuchBucketPolicy", http.StatusNotFound, "The bucket policy does not exist."}
+	NoSuchCORSConfiguration      = APIError{"NoSuchCORSConfiguration", http.StatusNotFound, "The CORS configuration does not exist."}
+	NoSuchLifecycleConfiguration = APIError{
+		"NoSuchLifecycleConfiguration", http.StatusNotFound,
+		"The lifecycle configuration does not exist.",
+	}
 	NoSuchPublicAccessBlock = APIError{
 		"NoSuchPublicAccessBlockConfiguration", http.StatusNotFound,
 		"The public access block configuration was not found.",

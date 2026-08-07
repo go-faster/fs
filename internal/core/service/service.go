@@ -315,6 +315,50 @@ func (s Service) DeleteBucketCORS(ctx context.Context, bucket string) error {
 	return store.DeleteBucketCORS(ctx, bucket)
 }
 
+// BucketLifecycle implements fs.BucketLifecycleStore. A backend that cannot
+// store rules reports none, which the S3 layer renders as
+// NoSuchLifecycleConfiguration.
+func (s Service) BucketLifecycle(ctx context.Context, bucket string) ([]fs.LifecycleRule, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketLifecycleStore)
+	if !ok {
+		return nil, nil
+	}
+
+	return store.BucketLifecycle(ctx, bucket)
+}
+
+// SetBucketLifecycle implements fs.BucketLifecycleStore.
+func (s Service) SetBucketLifecycle(ctx context.Context, bucket string, rules []fs.LifecycleRule) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketLifecycleStore)
+	if !ok {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store lifecycle rules")
+	}
+
+	return store.SetBucketLifecycle(ctx, bucket, rules)
+}
+
+// DeleteBucketLifecycle implements fs.BucketLifecycleStore.
+func (s Service) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
+	if err := validate.BucketName(bucket); err != nil {
+		return errors.Wrap(err, "validate bucket name")
+	}
+
+	store, ok := s.storage.(fs.BucketLifecycleStore)
+	if !ok {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store lifecycle rules")
+	}
+
+	return store.DeleteBucketLifecycle(ctx, bucket)
+}
+
 // BucketPublicAccessBlock implements fs.BucketSettingsStore.
 func (s Service) BucketPublicAccessBlock(ctx context.Context, bucket string) (*fs.PublicAccessBlock, error) {
 	store, err := s.settingsStore(bucket)

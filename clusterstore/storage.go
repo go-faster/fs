@@ -491,6 +491,21 @@ func (s *Storage) DeleteBucketCORS(ctx context.Context, bucket string) error {
 	return s.coord.SetBucketCORS(ctx, bucket, nil)
 }
 
+// BucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) BucketLifecycle(ctx context.Context, bucket string) ([]fs.LifecycleRule, error) {
+	return s.coord.BucketLifecycle(ctx, bucket)
+}
+
+// SetBucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) SetBucketLifecycle(ctx context.Context, bucket string, rules []fs.LifecycleRule) error {
+	return s.coord.SetBucketLifecycle(ctx, bucket, rules)
+}
+
+// DeleteBucketLifecycle implements fs.BucketLifecycleStore.
+func (s *Storage) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
+	return s.coord.SetBucketLifecycle(ctx, bucket, nil)
+}
+
 // BucketPublicAccessBlock implements fs.BucketSettingsStore.
 func (s *Storage) BucketPublicAccessBlock(ctx context.Context, bucket string) (*fs.PublicAccessBlock, error) {
 	info, err := s.coord.fetchBucket(ctx, s.coord.topo.Topology(), bucket)

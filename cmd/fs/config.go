@@ -45,6 +45,9 @@ type Config struct {
 	// Integrity configuration
 	Integrity IntegrityConfig `yaml:"integrity"`
 
+	// Lifecycle configures enforcement of bucket lifecycle rules.
+	Lifecycle LifecycleConfig `yaml:"lifecycle,omitempty"`
+
 	// Encryption configures server-side encryption of object bodies at rest.
 	Encryption EncryptionConfig `yaml:"encryption,omitempty"`
 
@@ -73,6 +76,21 @@ type IntegrityConfig struct {
 	// ScrubQuarantine moves corrupt objects aside (into <root>/.quarantine)
 	// instead of only reporting them.
 	ScrubQuarantine bool `yaml:"scrub_quarantine,omitempty"`
+}
+
+// DefaultLifecycleInterval is how often lifecycle rules are enforced. Expiry is
+// eventual by design — S3 promises the object goes away, not when — so the pass
+// is spaced to cost little rather than to be prompt.
+const DefaultLifecycleInterval = 12 * time.Hour
+
+// LifecycleConfig configures the background sweep that enforces bucket
+// lifecycle rules.
+type LifecycleConfig struct {
+	// Interval is how often the sweep runs. Zero disables enforcement, which
+	// leaves any rule a client sets stored but inert; the server says so
+	// loudly at startup, because a lifecycle rule nobody enforces is a client
+	// told its data expires when nothing will delete it.
+	Interval time.Duration `yaml:"interval,omitempty"`
 }
 
 // Auth source values for AuthConfig.Source.
@@ -656,6 +674,9 @@ func DefaultConfig() Config {
 			Root:  DefaultStorageRoot,
 			Type:  StorageTypeFilesystem,
 			Fsync: "file",
+		},
+		Lifecycle: LifecycleConfig{
+			Interval: DefaultLifecycleInterval,
 		},
 		Observability: ObservabilityConfig{
 			ServiceName:          "go-faster/fs",

@@ -30,6 +30,7 @@ single-region and ignores `LocationConstraint`.
 | **Metadata** | `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Expires` and `x-amz-meta-*` user metadata — stored and round-tripped, non-ASCII included. `response-content-type` & friends override them per request. ETag returned on PUT. |
 | **Tagging** | GetObjectTagging / PutObjectTagging / DeleteObjectTagging and the `x-amz-tagging` header, with the S3 limits (≤10 tags, key ≤128, value ≤256) and the `x-amz-tagging-count` header on reads. |
 | **Access control** | Canned ACLs (`private` / `public-read` / `public-read-write`) on buckets and objects, enforced for anonymous requests. Object `?acl` (GetObjectACL / PutObjectACL) reads and writes that level, rendered as the grants it implies. Objects record the owner that wrote them, reported in ACL and listing `<Owner>` elements. |
+| **Lifecycle** | `?lifecycle` (Put/Get/DeleteBucketLifecycleConfiguration) over the enforced subset: `Status`, prefix (`Filter.Prefix` or the legacy `Prefix`), `Expiration` by `Days` or `Date`, and `AbortIncompleteMultipartUpload.DaysAfterInitiation`. Rules are **enforced**, not just stored — a background sweep (`lifecycle.interval`, default 12h; one elected node in cluster mode) deletes expired objects through the ordinary delete path and aborts abandoned uploads. Any element outside the subset (`Transition`, `NoncurrentVersion*`, `ExpiredObjectDeleteMarker`, tag/size filters) is refused **by name** with `NotImplemented`, and the whole configuration with it. |
 | **Security** | AWS Signature V4 — header auth, presigned URLs (≤7-day expiry), and streaming (`aws-chunked`) uploads with per-chunk signature verification. Native TLS with hot-reloadable certificates. Per-bucket CORS with OPTIONS preflight. |
 
 ## Not implemented
@@ -39,7 +40,7 @@ The following bucket subresources and operations return a proper
 rather than silent misbehavior:
 
 `?accelerate`, `?acl` *(bucket-level)*, `?analytics`, `?cors`,
-`?encryption`, `?inventory`, `?lifecycle`, `?logging`, `?metrics`,
+`?encryption`, `?inventory`, `?logging`, `?metrics`,
 `?notification`, `?object-lock`, `?ownershipControls`, `?policy`,
 `?policyStatus`, `?publicAccessBlock`, `?replication`, `?requestPayment`,
 `?tagging` (bucket-level), `?versioning`, `?website`.
@@ -59,7 +60,10 @@ Each requires a design document before commitment:
 - **Versioning** — the highest-demand deferred item; known-costly (version-id
   migrations, reconcilers), so it needs its own design.
 - **SSE-S3** — a single server-managed key first.
-- **Lifecycle expiration** — `Days` + prefix subset first, then full rules.
+- **Lifecycle, the rest** — transitions and storage classes; noncurrent-version
+  expiration and `ExpiredObjectDeleteMarker`, which are the versioning growth
+  valve and follow versioning; tag and size filters. The `Days`/`Date` + prefix
+  + abandoned-upload subset is implemented and enforced (see above).
 - **Virtual-host-style addressing** (`bucket.host`).
 - **Bucket-policy subset** — only if the per-key grant model proves
   insufficient.
