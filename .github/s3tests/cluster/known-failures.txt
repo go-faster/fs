@@ -13,7 +13,7 @@
 # (#98 ranged GET, #99 conditional GET, #100 zero-byte Content-Length,
 # #101 chunked PutObject), all fixed.
 
-# --- Object versioning on clusterstore (19) -----------------------------------
+# --- Object versioning on clusterstore (31) -----------------------------------
 #
 # clusterstore records a bucket's versioning state but does not keep object
 # versions: it implements the bucket half of fs.Versioner and neither
@@ -25,6 +25,24 @@
 # Reading degrades correctly meanwhile — a ?versions listing on the cluster
 # reports each object as its own "null" version, which is what a
 # never-versioned bucket is.
+#
+# The twelve conditional deletes below arrived with the fix for #233, which
+# taught the versioned delete path to evaluate If-Match / -size /
+# -last-modified-time. They pass on storagefs and cannot pass here for the same
+# reason as the rest of this block: with no versions to address, the condition
+# has nothing to be evaluated against.
+s3tests/functional/test_s3.py::test_delete_object_current_if_match
+s3tests/functional/test_s3.py::test_delete_object_current_if_match_last_modified_time
+s3tests/functional/test_s3.py::test_delete_object_current_if_match_size
+s3tests/functional/test_s3.py::test_delete_object_version_if_match
+s3tests/functional/test_s3.py::test_delete_object_version_if_match_last_modified_time
+s3tests/functional/test_s3.py::test_delete_object_version_if_match_size
+s3tests/functional/test_s3.py::test_delete_objects_current_if_match
+s3tests/functional/test_s3.py::test_delete_objects_current_if_match_last_modified_time
+s3tests/functional/test_s3.py::test_delete_objects_current_if_match_size
+s3tests/functional/test_s3.py::test_delete_objects_version_if_match
+s3tests/functional/test_s3.py::test_delete_objects_version_if_match_last_modified_time
+s3tests/functional/test_s3.py::test_delete_objects_version_if_match_size
 s3tests/functional/test_s3.py::test_multipart_copy_versioned
 s3tests/functional/test_s3.py::test_multipart_put_current_object_if_none_match
 s3tests/functional/test_s3.py::test_object_copy_versioned_bucket
@@ -65,3 +83,21 @@ s3tests/functional/test_s3.py::test_sse_s3_default_upload_8mb
 # there. #120.
 s3tests/functional/test_s3.py::test_object_checksum_crc64nvme
 s3tests/functional/test_s3.py::test_object_checksum_sha256
+
+# --- Multipart checksum composition on clusterstore (5) -----------------------
+#
+# storagefs composes a completed multipart object's client-visible checksum
+# from its parts (storagefs/multipart_checksum.go, #120); clusterstore does
+# not. Its completion assembles the parts into one quorum-replicated write with
+# the composite S3 ETag (clusterstore/multipart.go:216) and carries no
+# equivalent for the x-amz-checksum-* family, so the algorithm the upload
+# settled on is not reported back.
+#
+# A gap in the replicated data plane rather than a scope decision: the
+# single-node behaviour is the intended one, and the same composition wants
+# doing here. No issue yet — worth filing alongside the fix.
+s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_crc32
+s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_crc32c
+s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_crc64nvme
+s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_sha1
+s3tests/functional/test_s3.py::test_multipart_use_cksum_helper_sha256

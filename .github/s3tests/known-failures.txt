@@ -5,19 +5,21 @@
 # therefore only shrink: a newly passing test shows up on the pull request that
 # made it pass, and a newly failing one is never silently absorbed.
 #
-# Read it inverted: everything not listed here passes. 49 of the
-# 301 tests s3t currently ports are listed.
+# Read it inverted: everything not listed here passes. 105 of the
+# 431 tests s3t currently ports are listed.
 #
 # When a change makes a test pass, delete its line in the same change. CI names
 # the lines to delete. Do not add lines to make CI green: a new line is a
 # regression someone is choosing to keep, and it needs a reason beside it.
 
-# --- Full ACL grammar (27) --------------------------------------------------
+# --- Full ACL grammar and bucket-level ?acl (32) ------------------------------
 #
 # PUT ?acl reduces an AccessControlPolicy body to the nearest canned level, so
-# grants to specific users are accepted and ignored, and the access matrix
-# these tests walk does not hold. Out of scope (#130): per-credential grants
-# cover the need this server has.
+# grants to specific users are accepted and ignored, and bucket-level ?acl is
+# NotImplemented outright. The access matrix these tests walk does not hold.
+# Out of scope (#130): per-credential grants cover the need this server has.
+
+s3tests/functional/test_headers.py::test_bucket_put_bad_canned_acl
 s3tests/functional/test_s3.py::test_access_bucket_private_object_private
 s3tests/functional/test_s3.py::test_access_bucket_private_object_publicread
 s3tests/functional/test_s3.py::test_access_bucket_private_object_publicreadwrite
@@ -45,14 +47,59 @@ s3tests/functional/test_s3.py::test_bucket_acl_grant_userid_readacp
 s3tests/functional/test_s3.py::test_bucket_acl_grant_userid_write
 s3tests/functional/test_s3.py::test_bucket_acl_grant_userid_writeacp
 s3tests/functional/test_s3.py::test_bucket_acl_revoke_all
+s3tests/functional/test_s3.py::test_bucket_list_objects_anonymous
+s3tests/functional/test_s3.py::test_bucket_list_return_data_versioning
+s3tests/functional/test_s3.py::test_bucket_listv2_objects_anonymous
+s3tests/functional/test_s3.py::test_list_buckets_anonymous
 
-# --- SSE-KMS (13) -------------------------------------------------------------
+# --- Object Lock, retention and legal hold (36) -------------------------------
 #
-# aws:kms is refused rather than accepted and ignored. These passed until
-# SSE-S3 landed, and passed for a bad reason: the header was accepted, the
-# object written in the clear, and the client told its request was honored.
-# Refusing makes them fail honestly. SSE-KMS needs a key service and is out of
-# scope (#133).
+# No WORM support: no retention mode, no legal hold, no bucket lock configuration.
+# A published NG that #132 would reverse; until it does, every test here fails at
+# the first PutObjectLockConfiguration.
+
+s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_compliance
+s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_governance_without_bypass
+s3tests/functional/test_s3.py::test_object_lock_delete_multipart_object_with_legal_hold_on
+s3tests/functional/test_s3.py::test_object_lock_delete_multipart_object_with_retention
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_legal_hold_off
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_legal_hold_on
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_retention
+s3tests/functional/test_s3.py::test_object_lock_delete_object_with_retention_and_marker
+s3tests/functional/test_s3.py::test_object_lock_get_legal_hold_invalid_bucket
+s3tests/functional/test_s3.py::test_object_lock_get_obj_lock
+s3tests/functional/test_s3.py::test_object_lock_get_obj_lock_invalid_bucket
+s3tests/functional/test_s3.py::test_object_lock_get_obj_metadata
+s3tests/functional/test_s3.py::test_object_lock_get_obj_retention
+s3tests/functional/test_s3.py::test_object_lock_get_obj_retention_invalid_bucket
+s3tests/functional/test_s3.py::test_object_lock_get_obj_retention_iso8601
+s3tests/functional/test_s3.py::test_object_lock_multi_delete_object_with_retention
+s3tests/functional/test_s3.py::test_object_lock_put_legal_hold_invalid_bucket
+s3tests/functional/test_s3.py::test_object_lock_put_legal_hold_invalid_status
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_enable_after_create
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_bucket
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_days
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_mode
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_status
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_years
+s3tests/functional/test_s3.py::test_object_lock_put_obj_lock_with_days_and_years
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_increase_period
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_invalid_bucket
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_invalid_mode
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_override_default_retention
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_shorten_period
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_shorten_period_bypass
+s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_versionid
+s3tests/functional/test_s3.py::test_object_lock_suspend_versioning
+s3tests/functional/test_s3.py::test_object_lock_uploading_obj
+
+# --- SSE-C and SSE-KMS (15) ---------------------------------------------------
+#
+# Server-side encryption is supported with a server-managed key only. Customer-
+# provided keys and KMS are a published NG that #133 would reverse.
+
 s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1024]
 s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1048576]
 s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1]
@@ -66,13 +113,56 @@ s3tests/functional/test_s3.py::test_sse_kms_transfer_13b
 s3tests/functional/test_s3.py::test_sse_kms_transfer_1MB
 s3tests/functional/test_s3.py::test_sse_kms_transfer_1b
 s3tests/functional/test_s3.py::test_sse_kms_transfer_1kb
-
-# --- Bucket default encryption applied to writes (2) ----------------------
-#
-# The ?encryption default is stored and reported, and these two check that it
-# is also applied to a write that names no algorithm, on HEAD and on multipart.
-# The wiring exists per request and server-wide; the bucket default is not
-# consulted on these two paths yet (#124 follow-up).
 s3tests/functional/test_s3.py::test_sse_s3_default_method_head
 s3tests/functional/test_s3.py::test_sse_s3_default_multipart_upload
 
+# --- AWS Signature V2 (13) ----------------------------------------------------
+#
+# Signed with SigV2, which this server does not implement and does not plan to:
+# AWS deprecated it in 2014 and refuses it for buckets created after June 2020.
+# Each fails at signature verification before reaching the specific error it
+# asserts. Planned and rejected in #245, with the reasoning recorded there.
+
+s3tests/functional/test_headers.py::test_bucket_create_bad_authorization_invalid_aws2
+s3tests/functional/test_headers.py::test_bucket_create_bad_date_after_today_aws2
+s3tests/functional/test_headers.py::test_bucket_create_bad_date_before_today_aws2
+s3tests/functional/test_headers.py::test_bucket_create_bad_ua_empty_aws2
+s3tests/functional/test_headers.py::test_bucket_create_bad_ua_none_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_authorization_incorrect_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_authorization_invalid_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_contentlength_mismatch_below_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_date_after_end_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_date_before_today_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_md5_invalid_garbage_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_ua_empty_aws2
+s3tests/functional/test_headers.py::test_object_create_bad_ua_none_aws2
+
+# --- Bucket policy engine (6) -------------------------------------------------
+#
+# No policy evaluation: ?policy is NotImplemented. A demand gate #131 would
+# reverse; the per-credential grant model covers the need today.
+
+s3tests/functional/test_s3.py::test_bucket_policy
+s3tests/functional/test_s3.py::test_bucket_policy_another_bucket
+s3tests/functional/test_s3.py::test_bucket_policy_set_condition_operator_end_with_IfExists
+s3tests/functional/test_s3.py::test_bucketv2_policy
+s3tests/functional/test_s3.py::test_bucketv2_policy_another_bucket
+s3tests/functional/test_s3.py::test_get_bucket_policy_status
+
+# --- Expect header handling (2) -----------------------------------------------
+#
+# A request carrying an Expect value we do not recognise is refused 417, where S3
+# ignores it and processes the request. A real gap and a small one — worth fixing
+# rather than keeping, and listed here only so the gate is honest meanwhile.
+
+s3tests/functional/test_headers.py::test_bucket_create_bad_expect_mismatch
+s3tests/functional/test_headers.py::test_object_create_bad_expect_mismatch
+
+# --- Content-Length ordering (1) ----------------------------------------------
+#
+# A PutObject with no Content-Length answers 403 SignatureDoesNotMatch, where S3
+# answers 411 MissingContentLength: removing the header invalidates the SigV4
+# signature, so verification legitimately fires first. An ordering difference, not
+# a missing feature.
+
+s3tests/functional/test_headers.py::test_object_create_bad_contentlength_none
