@@ -39,8 +39,14 @@ func (h *handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	// anything, and a delete naming a version removes exactly that one. Both
 	// go through the same call, which also handles the unversioned case, so
 	// the handler does not have to ask about bucket state first.
-	if versioner, ok := h.service.(fs.Versioner); ok && cond.IsZero() {
-		result, err := versioner.DeleteObjectVersion(ctx, bucket, key, query.Get("versionId"))
+	//
+	// A condition does not send the request down the unversioned path. It used
+	// to, and the result was that an If-Match delete against a versioned bucket
+	// looked for the object in the plain key tree, did not find it there, and
+	// answered 204 — reporting success for a delete whose condition was never
+	// evaluated, to a client that used the condition precisely so it would be.
+	if versioner, ok := h.service.(fs.Versioner); ok {
+		result, err := h.deleteVersion(r, versioner, bucket, key, query.Get("versionId"), cond)
 
 		switch {
 		case err == nil:
@@ -72,6 +78,34 @@ func (h *handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteVersion performs the version-aware delete, conditionally when the
+// request carried a condition.
+//
+// A backend that versions but cannot delete conditionally reports
+// ErrUnsupportedOperation, which the S3 layer renders as NotImplemented. That
+// is deliberate: the alternative is checking the condition here and deleting
+// afterwards, which races the write the client used If-Match to guard against
+// and would answer as though the guard had held.
+func (h *handler) deleteVersion(
+	r *http.Request,
+	versioner fs.Versioner,
+	bucket, key, versionID string,
+	cond fs.Conditions,
+) (fs.DeleteResult, error) {
+	ctx := r.Context()
+
+	if cond.IsZero() {
+		return versioner.DeleteObjectVersion(ctx, bucket, key, versionID)
+	}
+
+	deleter, ok := h.service.(fs.ConditionalVersionDeleter)
+	if !ok {
+		return fs.DeleteResult{}, errors.Wrap(fs.ErrUnsupportedOperation, "conditional delete on a versioned bucket")
+	}
+
+	return deleter.DeleteObjectVersionIf(ctx, bucket, key, versionID, cond)
 }
 
 // writeDeleteResult reports what the delete did. S3 uses these two headers to

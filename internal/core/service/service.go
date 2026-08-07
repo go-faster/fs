@@ -519,6 +519,33 @@ func (s Service) DeleteObjectVersion(
 	return versioner.DeleteObjectVersion(ctx, bucket, key, versionID)
 }
 
+// DeleteObjectVersionIf implements fs.ConditionalVersionDeleter.
+//
+// Forwarded rather than emulated: the contract is that the condition is
+// evaluated atomically with the delete, which only the backend can do. A
+// backend that versions but cannot do that reports ErrUnsupportedOperation, and
+// the S3 layer refuses the request rather than checking the condition here and
+// racing the write it was meant to guard against.
+func (s Service) DeleteObjectVersionIf(
+	ctx context.Context, bucket, key, versionID string, cond fs.Conditions,
+) (fs.DeleteResult, error) {
+	versioner, err := s.versioner(bucket)
+	if err != nil {
+		return fs.DeleteResult{}, err
+	}
+
+	if err := validate.Key(key); err != nil {
+		return fs.DeleteResult{}, errors.Wrap(err, "validate object key")
+	}
+
+	deleter, ok := versioner.(fs.ConditionalVersionDeleter)
+	if !ok {
+		return fs.DeleteResult{}, errors.Wrap(fs.ErrUnsupportedOperation, "conditional delete on a versioned bucket")
+	}
+
+	return deleter.DeleteObjectVersionIf(ctx, bucket, key, versionID, cond)
+}
+
 // versioner validates the bucket name and resolves the backend's versioning
 // capability.
 func (s Service) versioner(bucket string) (fs.Versioner, error) {

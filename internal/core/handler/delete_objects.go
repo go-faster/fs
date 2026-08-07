@@ -163,8 +163,11 @@ func (h *handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 func (h *handler) deleteOne(
 	r *http.Request, bucket string, obj ObjectToDelete, cond fs.Conditions,
 ) (DeletedObject, error) {
-	if versioner, ok := h.service.(fs.Versioner); ok && cond.IsZero() {
-		result, err := versioner.DeleteObjectVersion(r.Context(), bucket, obj.Key, obj.VersionId)
+	// The condition does not divert the entry to the unversioned path: doing
+	// that dropped the guard silently, and in a batch the client is told the
+	// entry deleted rather than that its condition failed.
+	if versioner, ok := h.service.(fs.Versioner); ok {
+		result, err := h.deleteVersion(r, versioner, bucket, obj.Key, obj.VersionId, cond)
 
 		switch {
 		case err == nil:

@@ -3,6 +3,7 @@ package storagefs
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -101,4 +102,102 @@ func (s *Storage) deleteOneVersion(ctx context.Context, bucket, key, versionID s
 	pruneEmptyDirs(s.versionDir(bucket, key), s.versionsRoot(bucket))
 
 	return fs.DeleteResult{VersionID: versionID, DeleteMarker: sc.DeleteMarker}, nil
+}
+
+// DeleteObjectVersionIf implements fs.ConditionalVersionDeleter.
+//
+// The condition is evaluated under putMu — the same lock that serializes writes
+// to the key — so no writer can slip between the check and the delete. That is
+// the whole reason this lives in the backend rather than in the S3 layer: a
+// handler that read the current version, checked it and then deleted would race
+// exactly the write the client used If-Match to guard against.
+func (s *Storage) DeleteObjectVersionIf(
+	ctx context.Context, bucket, key, versionID string, cond fs.Conditions,
+) (fs.DeleteResult, error) {
+	if cond.IsZero() {
+		return s.DeleteObjectVersion(ctx, bucket, key, versionID)
+	}
+
+	if !s.bucketExists(bucket) {
+		return fs.DeleteResult{}, fs.ErrBucketNotFound
+	}
+
+	s.putMu.Lock()
+	defer s.putMu.Unlock()
+
+	state, err := s.deleteTargetState(bucket, key, versionID)
+	if err != nil {
+		return fs.DeleteResult{}, err
+	}
+
+	if err := cond.CheckDelete(state); err != nil {
+		return fs.DeleteResult{}, err
+	}
+
+	// Past the check, still holding putMu: the delete itself takes no lock, so
+	// the pair is atomic against every other writer to this key.
+	return s.deleteVersionLocked(ctx, bucket, key, versionID)
+}
+
+// deleteTargetState describes the version a delete would act on: the one
+// versionID names, or the key's current version.
+//
+// A delete marker reports as absent. The key does not resolve, so a condition
+// on "what is there now" has nothing to hold against — which is the same answer
+// an unversioned delete of a missing key gives.
+func (s *Storage) deleteTargetState(bucket, key, versionID string) (fs.ObjectState, error) {
+	if versionID == "" {
+		if !s.versionedBucket(bucket) {
+			// Not versioned: the object lives in the plain key tree.
+			return s.currentObjectState(bucket, key, filepath.Join(s.root, bucket, objectRelPath(key)))
+		}
+
+		sc, _, err := s.currentVersion(bucket, key)
+		if err != nil || sc == nil {
+			return fs.ObjectState{}, err
+		}
+
+		return versionState(sc), nil
+	}
+
+	if versionID == fs.NullVersionID {
+		return s.currentObjectState(bucket, key, filepath.Join(s.root, bucket, objectRelPath(key)))
+	}
+
+	sc, err := s.readVersionSidecar(bucket, key, versionID)
+	if err != nil || sc == nil || sc.DeleteMarker {
+		return fs.ObjectState{}, err
+	}
+
+	return versionState(sc), nil
+}
+
+// versionState converts a version's sidecar to the state a condition is
+// evaluated against.
+func versionState(sc *versionSidecar) fs.ObjectState {
+	state := fs.ObjectState{Exists: true, ETag: sc.ETag, Size: sc.Size}
+
+	// A sidecar written before Modified was recorded, or one whose timestamp
+	// cannot be parsed, reports a zero time rather than failing the delete:
+	// x-amz-if-match-last-modified-time then does not hold, which refuses the
+	// delete, where ETag and size still decide normally.
+	if t, err := time.Parse(time.RFC3339Nano, sc.Modified); err == nil {
+		state.LastModified = t
+	}
+
+	return state
+}
+
+// deleteVersionLocked is DeleteObjectVersion's body, for a caller already
+// holding putMu.
+func (s *Storage) deleteVersionLocked(ctx context.Context, bucket, key, versionID string) (fs.DeleteResult, error) {
+	if versionID != "" {
+		return s.deleteOneVersion(ctx, bucket, key, versionID)
+	}
+
+	if !s.versionedBucket(bucket) {
+		return fs.DeleteResult{}, s.DeleteObject(ctx, bucket, key)
+	}
+
+	return s.insertDeleteMarker(bucket, key)
 }
