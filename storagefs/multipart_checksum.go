@@ -117,9 +117,20 @@ func loadPartChecksum(uploadPath string, partNumber int) string {
 // A completion may name the digest it expects. It is compared against what the
 // parts actually add up to, and a disagreement is BadDigest — the same answer a
 // single PUT gives, for the same reason.
+func fullObjectAlgorithm(meta *multipartMetadata) string {
+	// Only a FULL_OBJECT upload digests the assembled body; a COMPOSITE one
+	// would be paying for a number nobody reports.
+	if checksum.Type(meta.ChecksumType) != checksum.FullObject {
+		return ""
+	}
+
+	return meta.ChecksumAlgorithm
+}
+
 func completionChecksum(
 	meta *multipartMetadata,
 	partDigests []string,
+	wholeDigest string,
 	claimed string,
 ) (string, checksum.Type, error) {
 	if meta.ChecksumAlgorithm == "" {
@@ -134,6 +145,18 @@ func completionChecksum(
 	kind := checksum.Type(meta.ChecksumType)
 	if kind == "" {
 		kind = a.DefaultType()
+	}
+
+	// FULL_OBJECT is the digest of the body, taken as the parts were
+	// assembled. Composing the part digests would produce a different number
+	// and a "-N" suffix that says so — which is precisely the value the client
+	// did not ask for.
+	if kind == checksum.FullObject {
+		if claimed != "" && claimed != wholeDigest {
+			return "", "", fs.ErrBadDigest
+		}
+
+		return wholeDigest, kind, nil
 	}
 
 	raw := make([][]byte, 0, len(partDigests))

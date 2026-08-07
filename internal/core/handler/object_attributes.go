@@ -9,6 +9,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/s3err"
 )
 
@@ -24,9 +25,51 @@ const storageClassStandard = "STANDARD"
 type GetObjectAttributesResult struct {
 	XMLName      xml.Name           `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectAttributesOutput"`
 	ETag         string             `xml:"ETag,omitempty"`
+	Checksum     *ChecksumResult    `xml:"Checksum,omitempty"`
 	StorageClass string             `xml:"StorageClass,omitempty"`
 	ObjectSize   *int64             `xml:"ObjectSize,omitempty"`
 	ObjectParts  *ObjectPartsResult `xml:"ObjectParts,omitempty"`
+}
+
+// ChecksumResult is the object's client-visible digest as an attribute.
+//
+// Reported here without the x-amz-checksum-mode header a read needs, because
+// asking for the Checksum attribute *is* the request for it — the header
+// exists so an ordinary GET does not carry one, and this is not one.
+type ChecksumResult struct {
+	ChecksumCRC32     string `xml:"ChecksumCRC32,omitempty"`
+	ChecksumCRC32C    string `xml:"ChecksumCRC32C,omitempty"`
+	ChecksumCRC64NVME string `xml:"ChecksumCRC64NVME,omitempty"`
+	ChecksumSHA1      string `xml:"ChecksumSHA1,omitempty"`
+	ChecksumSHA256    string `xml:"ChecksumSHA256,omitempty"`
+	ChecksumType      string `xml:"ChecksumType,omitempty"`
+}
+
+// objectChecksumResult renders a digest under the element its algorithm owns,
+// or nil when the object carries none.
+func objectChecksumResult(algorithm, digest, kind string) *ChecksumResult {
+	if digest == "" {
+		return nil
+	}
+
+	out := &ChecksumResult{ChecksumType: kind}
+
+	switch checksum.Algorithm(algorithm) {
+	case checksum.CRC32:
+		out.ChecksumCRC32 = digest
+	case checksum.CRC32C:
+		out.ChecksumCRC32C = digest
+	case checksum.CRC64NVME:
+		out.ChecksumCRC64NVME = digest
+	case checksum.SHA1:
+		out.ChecksumSHA1 = digest
+	case checksum.SHA256:
+		out.ChecksumSHA256 = digest
+	default:
+		return nil
+	}
+
+	return out
 }
 
 // ObjectPartsResult is the paginated part list of a completed multipart object.
@@ -88,6 +131,11 @@ func (h *handler) GetObjectAttributes(w http.ResponseWriter, r *http.Request) {
 
 	if wanted["etag"] {
 		result.ETag = strings.Trim(attrs.ETag, `"`)
+	}
+
+	if wanted["checksum"] {
+		result.Checksum = objectChecksumResult(
+			attrs.ChecksumAlgorithm, attrs.Checksum, attrs.ChecksumType)
 	}
 
 	if wanted["storageclass"] {

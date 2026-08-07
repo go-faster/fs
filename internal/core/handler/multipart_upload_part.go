@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/s3err"
 )
 
@@ -42,6 +43,10 @@ func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
 		Size: getDecodedContentLength(r),
 	}
 
+	// The algorithm on a part is advisory — the upload settled it — but the
+	// digest is the client's claim about *this* body, and it is checked.
+	req.ChecksumAlgorithm, req.Checksum = requestChecksum(r)
+
 	part, err := h.service.UploadPart(ctx, req)
 	if err != nil {
 		renderError(ctx, w, r, err)
@@ -49,5 +54,15 @@ func (h *handler) UploadPart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("ETag", `"`+part.ETag+`"`)
+
+	// Echoed unconditionally, as a write does: the client just sent the bytes
+	// and is entitled to see what they digested to — and it needs this value to
+	// name the part at completion.
+	if part.Checksum != "" {
+		if a, err := checksum.Parse(part.ChecksumAlgorithm); err == nil && a != "" {
+			w.Header().Set(a.Header(), part.Checksum)
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
