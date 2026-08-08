@@ -37,7 +37,7 @@ func TestHeadlessAdminClusterStatus(t *testing.T) {
 	cfg := validClusterConfig()
 	cfg.Cluster.Addr = addr
 	cfg.Cluster.AdvertiseAddr = addr
-	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-headless", TTL: 2 * time.Second}
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-headless", TTL: testEtcdTTL}
 	cfg.Storage.Fsync = "none"
 	cfg.Storage.Root = t.TempDir()
 

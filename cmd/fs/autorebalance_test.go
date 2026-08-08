@@ -29,7 +29,7 @@ func TestRebalancePolicyTick(t *testing.T) {
 	cfg := validClusterConfig()
 	cfg.Cluster.Addr = addr
 	cfg.Cluster.AdvertiseAddr = addr
-	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-policy", TTL: 2 * time.Second}
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-policy", TTL: testEtcdTTL}
 	cfg.Storage.Fsync = "none"
 	cfg.Storage.Root = t.TempDir()
 
@@ -116,7 +116,7 @@ func TestAutoRebalanceConverges(t *testing.T) {
 		cfg.Cluster.Rack = "r" + strconv.Itoa(i)
 		cfg.Cluster.Addr = addr
 		cfg.Cluster.AdvertiseAddr = addr
-		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-auto", TTL: 2 * time.Second}
+		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-auto", TTL: testEtcdTTL}
 		cfg.Cluster.Rebalance = auto
 		cfg.Storage.Fsync = "none"
 		cfg.Storage.Root = t.TempDir()

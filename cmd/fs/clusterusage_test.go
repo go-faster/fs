@@ -28,7 +28,7 @@ func usageNode(t *testing.T, endpoint, prefix string, index int) *clusterRuntime
 	cfg.Cluster.Rack = "r" + strconv.Itoa(index)
 	cfg.Cluster.Addr = addr
 	cfg.Cluster.AdvertiseAddr = addr
-	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: prefix, TTL: 2 * time.Second}
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: prefix, TTL: testEtcdTTL}
 	cfg.Cluster.Disks = []ClusterDiskConfig{
 		{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")},
 	}

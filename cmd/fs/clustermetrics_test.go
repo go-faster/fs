@@ -21,7 +21,7 @@ func TestClusterMetrics(t *testing.T) {
 	cfg := validClusterConfig()
 	cfg.Cluster.Addr = addr
 	cfg.Cluster.AdvertiseAddr = addr
-	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-metrics", TTL: 2 * time.Second}
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-metrics", TTL: testEtcdTTL}
 	cfg.Storage.Fsync = "none"
 	cfg.Storage.Root = t.TempDir()
 

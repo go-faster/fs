@@ -78,7 +78,7 @@ func TestClusterRebalanceEndToEnd(t *testing.T) {
 		cfg.Cluster.Rack = "r" + strconv.Itoa(i)
 		cfg.Cluster.Addr = addr
 		cfg.Cluster.AdvertiseAddr = addr
-		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-rebalance", TTL: 2 * time.Second}
+		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-rebalance", TTL: testEtcdTTL}
 		cfg.Cluster.Disks = []ClusterDiskConfig{{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")}}
 		cfg.Storage.Fsync = "none"
 

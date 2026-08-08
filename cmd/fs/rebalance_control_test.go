@@ -34,7 +34,7 @@ func TestRebalanceController(t *testing.T) {
 		cfg.Cluster.Rack = "r" + strconv.Itoa(i)
 		cfg.Cluster.Addr = addr
 		cfg.Cluster.AdvertiseAddr = addr
-		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-admin-rebalance", TTL: 2 * time.Second}
+		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-admin-rebalance", TTL: testEtcdTTL}
 		cfg.Storage.Fsync = "none"
 
 		return cfg

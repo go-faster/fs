@@ -27,7 +27,7 @@ func planeNode(t *testing.T, endpoint, prefix string, index int) *clusterRuntime
 	cfg.Cluster.Rack = "r" + strconv.Itoa(index)
 	cfg.Cluster.Addr = testNodeAddr
 	cfg.Cluster.AdvertiseAddr = testNodeAddr
-	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: prefix, TTL: 2 * time.Second}
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: prefix, TTL: testEtcdTTL}
 	cfg.Cluster.Disks = []ClusterDiskConfig{{ID: "d0", Path: filepath.Join(root, "d0")}}
 	cfg.Cluster.Metadata = MetadataConfig{Sharded: true, Ranges: 8, Replicas: 2}
 	cfg.Storage.Fsync = "none"
