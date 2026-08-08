@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,6 +31,14 @@ func do(t testing.TB, h http.Handler, method, target, body string, headers map[s
 	}
 
 	req := httptest.NewRequest(method, target, r)
+
+	// httptest sets ContentLength but not the header, so an in-process request
+	// looks like a client that omitted it — which the server answers 411. Set
+	// it to what a real client would send, including 0 for an empty body.
+	if method == http.MethodPut || method == http.MethodPost {
+		req.Header.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
+	}
+
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
