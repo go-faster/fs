@@ -238,7 +238,13 @@ func (c *rebalanceController) runElected(ctx context.Context, cancel context.Can
 	}
 	c.mu.Unlock()
 
-	c.lg.Info("Cluster rebalance elected and running", zap.String("resume_bucket", resume.Bucket), zap.String("resume_key", resume.Key))
+	// The disk count is here because its absence made #251 hard to read: a
+	// pass that reports "need 3, got 2" per object says the scheme could not be
+	// satisfied and never says how much cluster it was looking at.
+	c.lg.Info("Cluster rebalance elected and running",
+		zap.String("resume_bucket", resume.Bucket),
+		zap.String("resume_key", resume.Key),
+		zap.Int("disks", c.coord.Topology().DiskCount()))
 
 	_, err = c.repairer.Rebalance(ctx, clusterstore.RebalanceOptions{
 		Resume: resume,

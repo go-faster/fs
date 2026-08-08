@@ -31,7 +31,7 @@ func TestClusterSchemeCommand(t *testing.T) {
 		cfg.Cluster.Rack = "r" + strconv.Itoa(i)
 		cfg.Cluster.Addr = addr
 		cfg.Cluster.AdvertiseAddr = addr
-		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-scheme-cmd", TTL: 2 * time.Second}
+		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-scheme-cmd", TTL: testEtcdTTL}
 		cfg.Storage.Fsync = "none"
 		cfg.Storage.Root = t.TempDir()
 

@@ -20,6 +20,15 @@ import (
 	"github.com/go-faster/fs/internal/cluster/objindex"
 )
 
+// testEtcdTTL is the registration lease every multi-node test registers with.
+//
+// Long enough that a slow runner cannot outrun a keepalive. At 2s — what these
+// tests used — a node could lose its registration part-way through, leave the
+// topology, and make a later placement fail for want of a target that had been
+// there when the test checked (#251). No test here exercises expiry
+// deliberately, so the short lease bought nothing and cost a flake.
+const testEtcdTTL = 10 * time.Second
+
 func validClusterConfig() Config {
 	cfg := DefaultConfig()
 	cfg.Storage.Type = StorageTypeCluster
@@ -182,7 +191,7 @@ func TestClusterWiring(t *testing.T) {
 		cfg.Cluster.Rack = "r" + strconv.Itoa(i)
 		cfg.Cluster.Addr = addr
 		cfg.Cluster.AdvertiseAddr = addr
-		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-wiring", TTL: 2 * time.Second}
+		cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-wiring", TTL: testEtcdTTL}
 		cfg.Cluster.Disks = []ClusterDiskConfig{
 			{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")},
 			{ID: "d1", Path: filepath.Join(t.TempDir(), "d1"), Weight: diskWeight(2)},
@@ -267,7 +276,7 @@ func TestClusterRegistersTheAdvertisedAddressFromEnv(t *testing.T) {
 	cfg.Cluster.NodeID = ""
 	cfg.Cluster.AdvertiseAddr = ""
 	cfg.Cluster.Addr = testNodeAddr
-	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-advertise", TTL: 2 * time.Second}
+	cfg.Cluster.Etcd = EtcdConfig{Endpoints: []string{endpoint}, Prefix: "/fs-advertise", TTL: testEtcdTTL}
 	cfg.Cluster.Disks = []ClusterDiskConfig{{ID: "d0", Path: filepath.Join(t.TempDir(), "d0")}}
 	cfg.Storage.Fsync = "none"
 
