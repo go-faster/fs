@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -52,6 +53,11 @@ func putRequest(t testing.TB, bucket, key, body string, headers map[string]strin
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodPut, "/"+bucket+"/"+key, strings.NewReader(body))
+
+	// httptest sets ContentLength but not the header; a real client sends both,
+	// and a PUT without the header is answered 411.
+	req.Header.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
+
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

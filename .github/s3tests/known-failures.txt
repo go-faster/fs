@@ -5,7 +5,7 @@
 # therefore only shrink: a newly passing test shows up on the pull request that
 # made it pass, and a newly failing one is never silently absorbed.
 #
-# Read it inverted: everything not listed here passes. 105 of the
+# Read it inverted: everything not listed here passes. 104 of the
 # 431 tests s3t currently ports are listed.
 #
 # When a change makes a test pass, delete its line in the same change. CI names
@@ -158,11 +158,3 @@ s3tests/functional/test_s3.py::test_get_bucket_policy_status
 s3tests/functional/test_headers.py::test_bucket_create_bad_expect_mismatch
 s3tests/functional/test_headers.py::test_object_create_bad_expect_mismatch
 
-# --- Content-Length ordering (1) ----------------------------------------------
-#
-# A PutObject with no Content-Length answers 403 SignatureDoesNotMatch, where S3
-# answers 411 MissingContentLength: removing the header invalidates the SigV4
-# signature, so verification legitimately fires first. An ordering difference, not
-# a missing feature.
-
-s3tests/functional/test_headers.py::test_object_create_bad_contentlength_none

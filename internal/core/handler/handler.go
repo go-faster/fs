@@ -106,6 +106,11 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 	// Always installed: a bucket can carry CORS rules of its own now, so
 	// whether cross-origin requests are answered is no longer decided by
 	// whether the deployment configured any.
+	// Outside auth, so it runs first: S3 answers a write that does not declare
+	// its length with 411 rather than with whatever the signature check makes
+	// of a request whose body it cannot delimit.
+	inner = requireContentLength(inner)
+
 	inner = corsMiddleware(o.cors, s, inner)
 
 	return withRequestID(optionsGuard(inner))
@@ -128,6 +133,60 @@ func optionsGuard(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireContentLength answers 411 MissingContentLength for an object write
+// that declares neither a length nor chunked framing.
+//
+// It sits outside auth deliberately. Omitting Content-Length also invalidates
+// the SigV4 signature, so verification would otherwise answer first with
+// SignatureDoesNotMatch — true, and not what is wrong: the caller sent a body
+// the server cannot delimit, and pointing them at their credentials sends them
+// somewhere useless.
+//
+// The ordering does let an unauthenticated caller learn which of the two
+// failed. It is the ordering S3 has, and what leaks is a property of the
+// caller's own request.
+func requireContentLength(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingContentLength(r) {
+			s3err.WriteAPI(w, r, s3err.MissingContentLength)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// missingContentLength reports whether the request is an object write that has
+// to declare a length and does not.
+//
+// Only PUT to an object key. A bucket-level PUT carries a configuration
+// document every SDK measures; a copy carries no body at all and is identified
+// by x-amz-copy-source rather than by its absent length; and chunked framing
+// delimits a body without a length, which is how aws-chunked uploads arrive.
+//
+// The raw header is the signal, not r.ContentLength: the parsed value is 0 both
+// for a request that declared none and for one that declared zero, and only the
+// header tells a zero-byte PUT from a client that forgot.
+func missingContentLength(r *http.Request) bool {
+	if r.Method != http.MethodPut || r.Header.Get("x-amz-copy-source") != "" {
+		return false
+	}
+
+	if _, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/"); key == "" {
+		return false
+	}
+
+	// Not the subresources whose body is optional. PUT ?acl may carry an
+	// AccessControlPolicy or express the same thing in x-amz-acl, and ?tagging
+	// is the same shape — S3 requires a length for the object's own bytes, not
+	// for a document a request may legitimately not send.
+	if q := r.URL.Query(); q.Has("acl") || q.Has("tagging") {
+		return false
+	}
+
+	return r.Header.Get("Content-Length") == "" && len(r.TransferEncoding) == 0
 }
 
 // withRequestID stamps every response with a unique x-amz-request-id (echoed
