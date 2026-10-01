@@ -68,8 +68,9 @@ make bench        # full ns/op / MB/s / allocs run for benchstat
 The deterministic **allocation** gate runs in every `go test ./...` (including
 the multi-platform CI matrix). The wall-clock **throughput** and **latency**
 gates run only when `FS_PERF_GATES` is set — the `perf` workflow sets it and
-runs on a **dedicated self-hosted runner** (label `bench`) so the numbers are
-stable across runs. On the general macOS/windows/386 correctness matrix
+runs on a GitHub-hosted runner, so treat its absolute numbers as noisy; the
+gates hold because throughput is a same-machine ratio and the latency ceiling
+has wide headroom. On the general macOS/windows/386 correctness matrix
 absolute latency is noise and moving hundreds of MiB is wasteful, so they skip
 there.
 

@@ -8,9 +8,10 @@ name: perf
 # headroom and logs the real figure. FS_PERF_GATES enables the two wall-clock
 # gates (skipped in the general test matrix).
 #
-# Runs on a dedicated self-hosted runner labeled `bench` so the wall-clock
-# numbers and the benchstat record are stable across runs. `make bench`
-# reproduces the ns/op / MB/s / allocs numbers locally.
+# Runs on a GitHub-hosted runner, so the wall-clock numbers are noisy: the
+# throughput gate is a same-machine ratio and the latency gate has wide
+# headroom, which is what keeps them meaningful there. `make bench` reproduces
+# the ns/op / MB/s / allocs numbers locally.
 
 on:
   push:
@@ -23,10 +24,7 @@ permissions:
 
 jobs:
   nfr3:
-    # Dedicated benchmark hardware. Same-repo events only: never run untrusted
-    # fork-PR code on the self-hosted machine.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, bench]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -36,11 +34,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-          # No GitHub-hosted module/build cache: this runner is self-hosted with
-          # a persistent local $GOCACHE/$GOMODCACHE that stays warm between runs,
-          # and its link to GitHub is slow (~20-30 Mbps), so round-tripping the
-          # cache through GitHub's cache service is slower than a warm local one.
-          cache: false
 
       - name: NFR-3 performance gates
         env:
