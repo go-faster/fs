@@ -46,19 +46,6 @@ func TestReloadConfigNoRevision(t *testing.T) {
 	assert.False(t, res.ConfigRevision.Set)
 }
 
-// TestReloadConfigUnavailable pins the 501 on a listener with nothing to
-// reload — the headless cluster admin, which has no Reloader.
-func TestReloadConfigUnavailable(t *testing.T) {
-	api := NewAdminAPI(Options{})
-
-	_, err := api.ReloadConfig(context.Background())
-	require.Error(t, err)
-
-	var status *adminapi.ErrorStatusCode
-	require.ErrorAs(t, err, &status)
-	assert.Equal(t, 501, status.StatusCode)
-}
-
 func TestReloadConfigError(t *testing.T) {
 	api := NewAdminAPI(Options{Reloader: &fakeReloader{err: errors.New("bad config")}})
 

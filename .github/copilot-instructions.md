@@ -8,12 +8,10 @@ See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full design and
 [AGENTS.md](../AGENTS.md) for the working checklist; keep both current when the
 structure changes.
 
-When a change adds operator-visible functionality, three surfaces go stale
+When a change adds operator-visible functionality, two surfaces go stale
 silently and none of them break the build: **observability** (metrics registered
 in `cmd/fs`), the **admin API** (`_oas/admin.yml`, regenerated
-into `adminapi` with `go generate ./...`) and the **admin frontend**
-(`internal/adminhandler/frontend`, typed client generated from the same spec).
-Update them in the same change, and say in the PR which ones did not apply and
+into `adminapi` with `go generate ./...`). Update them in the same change, and say in the PR which ones did not apply and
 why. See AGENTS.md, "When adding functionality".
 
 Project uses MVC architecture.
