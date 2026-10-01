@@ -30,6 +30,7 @@ single-region and ignores `LocationConstraint`.
 | **Metadata** | `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Expires` and `x-amz-meta-*` user metadata — stored and round-tripped, non-ASCII included. `response-content-type` & friends override them per request. ETag returned on PUT. |
 | **Tagging** | GetObjectTagging / PutObjectTagging / DeleteObjectTagging and the `x-amz-tagging` header, with the S3 limits (≤10 tags, key ≤128, value ≤256) and the `x-amz-tagging-count` header on reads. |
 | **Access control** | Canned ACLs (`private` / `public-read` / `public-read-write`) on buckets and objects, enforced for anonymous requests. Object `?acl` (GetObjectACL / PutObjectACL) reads and writes that level, rendered as the grants it implies. Objects record the owner that wrote them, reported in ACL and listing `<Owner>` elements. |
+| **Versioning** | `?versioning` (Put/GetBucketVersioning: Enabled / Suspended, no way back to unversioned), version IDs on writes, `GET`/`HEAD`/`DELETE ?versionId=`, delete markers, `null` versions while suspended, `ListObjectVersions`, CopyObject from a `versionId`. Conditional deletes (`If-Match` & co.) are evaluated atomically against the targeted version. |
 | **Lifecycle** | `?lifecycle` (Put/Get/DeleteBucketLifecycleConfiguration) over the enforced subset: `Status`, prefix (`Filter.Prefix` or the legacy `Prefix`), `Expiration` by `Days` or `Date`, and `AbortIncompleteMultipartUpload.DaysAfterInitiation`. Rules are **enforced**, not just stored — a background sweep (`lifecycle.interval`, default 12h) deletes expired objects through the ordinary delete path and aborts abandoned uploads. Any element outside the subset (`Transition`, `NoncurrentVersion*`, `ExpiredObjectDeleteMarker`, tag/size filters) is refused **by name** with `NotImplemented`, and the whole configuration with it. |
 | **Security** | AWS Signature V4 — header auth, presigned URLs (≤7-day expiry), and streaming (`aws-chunked`) uploads with per-chunk signature verification. Native TLS with hot-reloadable certificates. Per-bucket CORS with OPTIONS preflight. |
 
@@ -43,7 +44,7 @@ rather than silent misbehavior:
 `?encryption`, `?inventory`, `?logging`, `?metrics`,
 `?notification`, `?object-lock`, `?ownershipControls`, `?policy`,
 `?policyStatus`, `?publicAccessBlock`, `?replication`, `?requestPayment`,
-`?tagging` (bucket-level), `?versioning`, `?website`.
+`?tagging` (bucket-level), `?website`.
 
 The object `?acl` subresource is implemented over the **canned** levels: a GET
 renders the stored level as the grants S3 reports for it (the owner's
@@ -53,12 +54,13 @@ it to the nearest level. Grants naming **specific users** are accepted and
 ignored — the full `AccessControlPolicy` grammar with arbitrary grantees is not
 enforced.
 
-## Planned (post-v1)
+## Planned
+
+- **SSE-C** — customer-provided encryption keys, never stored by the server
+  ([#285](https://github.com/go-faster/fs/issues/285)).
 
 Each requires a design document before commitment:
 
-- **Versioning** — the highest-demand deferred item; known-costly (version-id
-  migrations, reconcilers), so it needs its own design.
 - **SSE-S3** — a single server-managed key first.
 - **Lifecycle, the rest** — transitions and storage classes; noncurrent-version
   expiration and `ExpiredObjectDeleteMarker`, which are the versioning growth
@@ -84,7 +86,7 @@ Rejected with rationale, so expectations are clear:
   owner; per-grantee permissions are not.
 - **Object Lock / retention / legal hold** — compliance semantics without
   certified underlying storage would be misleading.
-- **SSE-C and SSE-KMS**, **replication to external S3 endpoints**,
+- **SSE-KMS**, **replication to external S3 endpoints**,
   **analytics / inventory / accelerate / request-payment**,
   **SelectObjectContent** — outside the scope of a lean object store.
 

@@ -210,8 +210,8 @@ aspirational — describe what the code does now.
   [COMPATIBILITY.md](COMPATIBILITY.md) is the authoritative scope statement:
   what it lists as implemented is in, and everything in its "Not implemented"
   section stays a typed `NotImplemented` until someone asks for it. Some are
-  planned post-v1 (SSE-S3, lifecycle) and some are permanent refusals (full
+  planned (SSE-C, #285) and some are permanent refusals (full
   IAM/STS, the full ACL grammar with arbitrary grantees, Object Lock,
-  SSE-C/KMS) — either way, do not implement one because it seemed missing.
+  SSE-KMS) — either way, do not implement one because it seemed missing.
 - Treat auth as out of scope; it is **shipped**. Cluster mode is being
   redesigned, see [#279](https://github.com/go-faster/fs/issues/279).
