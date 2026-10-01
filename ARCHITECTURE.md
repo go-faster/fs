@@ -15,9 +15,9 @@ It is usable two ways:
   run the managed `server.Server`, with a pluggable storage backend.
 
 A Garage-style cluster (zone/rack-aware replication) is planned, see
-[#279](https://github.com/go-faster/fs/issues/279). `internal/cluster`
-(topology types) and `internal/cluster/placement` (zone/rack-aware HRW
-placement) are kept for it; nothing in the server uses them yet.
+[#279](https://github.com/go-faster/fs/issues/279). Its first piece is
+`internal/cluster/layout`, the pure partition-to-node assignment; nothing in
+the server uses it yet.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section
