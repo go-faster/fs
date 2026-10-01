@@ -53,7 +53,10 @@ it to the nearest level. Grants naming **specific users** are accepted and
 ignored — the full `AccessControlPolicy` grammar with arbitrary grantees is not
 enforced.
 
-## Planned (post-v1)
+## Planned
+
+- **SSE-C** — customer-provided encryption keys, never stored by the server
+  ([#285](https://github.com/go-faster/fs/issues/285)).
 
 Each requires a design document before commitment:
 
@@ -84,7 +87,7 @@ Rejected with rationale, so expectations are clear:
   owner; per-grantee permissions are not.
 - **Object Lock / retention / legal hold** — compliance semantics without
   certified underlying storage would be misleading.
-- **SSE-C and SSE-KMS**, **replication to external S3 endpoints**,
+- **SSE-KMS**, **replication to external S3 endpoints**,
   **analytics / inventory / accelerate / request-payment**,
   **SelectObjectContent** — outside the scope of a lean object store.
 
