@@ -38,10 +38,6 @@ carries 301 of upstream's tests, so this is not comparable to the old
 838-test numbers. What *is* comparable is the shape of the failures, and the
 grouping below is unchanged.
 
-Cluster mode adds 20 more failures, listed in
-[`cluster/known-failures.txt`](cluster/known-failures.txt): object versioning
-and server-side encryption are not on `clusterstore` yet.
-
 `s3t` does not yet port `test_headers.py`, so the SigV2 and header-edge cases
 the old runs reported are simply not measured here rather than passing.
 

@@ -6,23 +6,18 @@ aspirations; keep it in sync when the structure changes (see
 
 ## Purpose and scope
 
-An S3-compatible object storage server that runs as a single node or as a
-replicated, failure-domain-aware cluster, returning S3 XML responses. It is
-usable two ways:
+A single-node S3-compatible object storage server returning S3 XML responses.
+It is usable two ways:
 
 - as a **CLI** (`cmd/fs`) — a turnkey server with health checks, timeouts,
   graceful shutdown and OpenTelemetry wiring;
 - as an **embeddable library** — mount the S3 handler into your own server, or
   run the managed `server.Server`, with a pluggable storage backend.
 
-**This document describes the single-node core** — the layers every deployment
-runs, from the HTTP wire down to a storage backend. Cluster mode composes with
-that core rather than modifying it: `clusterstore` is another `fs.Storage`
-implementation, so everything below holds unchanged when it is wired in. Its own
-packages (`clusterstore`, `internal/cluster/*`) are not yet described here; for
-those see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
-[docs/FAILURE-MODEL.md](docs/FAILURE-MODEL.md) and
-[docs/SIZING.md](docs/SIZING.md).
+A Garage-style cluster (zone/rack-aware replication) is planned, see
+[#279](https://github.com/go-faster/fs/issues/279). `internal/cluster`
+(topology types) and `internal/cluster/placement` (zone/rack-aware HRW
+placement) are kept for it; nothing in the server uses them yet.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section
@@ -148,23 +143,8 @@ handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`, `Owner`).
 `display_name`, defaulting to the access key) that objects it writes are owned
 by.
 
-Credentials come from one authoritative source, selected by `auth.source`:
-
-- **`file`** (default) — config/env keys plus runtime keys the admin API creates,
-  held by `auth.Manager` and persisted to a local JSON file. Single-node.
-- **`etcd`** (cluster mode) — **cluster-wide runtime key management**. Keys and
-  grants (under `<prefix>/auth/keys/`) and the public-read bucket list (at
-  `<prefix>/auth/public-read`) live in the control plane; each secret is sealed
-  with an AES-256-GCM key that `auth.Sealer` derives from the cluster secret via
-  HKDF (an etcd leak yields only ciphertext; the cluster secret never touches
-  etcd). Every node — and the headless `fs admin` — runs one `etcd.AuthSource`
-  watch over the whole `<prefix>/auth/` namespace that rebuilds the full snapshot
-  (credentials + public-read) through the same `Store.Set` atomic swap, so a key
-  or public-read change made on any admin listener propagates to all nodes with
-  no restart. The two sources are never merged: config keys and public-read seed
-  an empty namespace once, then etcd is authoritative. The etcd persistence and
-  watch live in `internal/cluster/etcd`; `cmd/fs`'s `clusterCredentials`
-  seals/unseals and adapts it to the admin API.
+Credentials are config/env keys plus runtime keys the admin API creates, held
+by `auth.Manager` and persisted to a local JSON file.
 
 Anonymous (unsigned) requests are authorized against **canned ACLs**
 (`private` / `public-read` / `public-read-write`) stored per bucket and per
@@ -295,17 +275,14 @@ reporting bit-rot and optionally quarantining corrupt objects into
 findings loudly.
 
 **Periodic-pass scheduling.** The scrub and the lifecycle sweep both record when
-they last completed — `<root>/.lastrun/<task>.json` on a single node, `<prefix>/
-lastrun/<task>` in etcd for a cluster — and schedule the next pass one interval
+they last completed — `<root>/.lastrun/<task>.json` — and schedule the next pass one interval
 after that rather than one interval after process start. Without the record a
 periodic loop has to pick between two wrong answers: a ticker never fires on a
 node restarted more often than the interval (redeploy hourly, never scrub), and
 running on start makes a node that restarts often re-walk everything every time.
 A pass is recorded only once it finishes, so an interrupted one is still due,
 and a short floor keeps a crashlooping node from repeating an overdue pass on
-every restart. The scrub's record is per node (each node verifies its own
-disks); the lifecycle sweep's is cluster-wide (one elected sweeper covers
-everyone).
+every restart.
 
 ### storagefs metadata sidecars
 

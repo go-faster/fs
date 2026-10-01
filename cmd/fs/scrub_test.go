@@ -100,14 +100,3 @@ func TestScrubLoopRecordsItsPass(t *testing.T) {
 		return !at.IsZero()
 	}, 5*time.Second, 5*time.Millisecond, "a completed scrub must be recorded")
 }
-
-// TestClusterScrubTaskIsPerNode: each node scrubs its own disks, so one node
-// completing a pass says nothing about another's objects. A shared key would
-// let a cluster hold every node's scrub off on the strength of whichever ran
-// last.
-func TestClusterScrubTaskIsPerNode(t *testing.T) {
-	t.Parallel()
-
-	require.NotEqual(t, clusterScrubTask("node-a"), clusterScrubTask("node-b"))
-	require.NotEqual(t, scrubTask, clusterScrubTask("node-a"))
-}

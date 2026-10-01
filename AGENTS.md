@@ -5,14 +5,14 @@ code changes.
 
 ## What this is
 
-`github.com/go-faster/fs` — an S3-compatible object storage server that runs as
-a single node or as a replicated, failure-domain-aware cluster. It ships as both
-a CLI (`cmd/fs`) and an embeddable Go library (`server`, `storagefs`,
-`storagemem`, `clusterstore`). SigV4 auth is on by default; responses are S3
-XML. Go 1.25.
+`github.com/go-faster/fs` — a single-node S3-compatible object storage server.
+It ships as both a CLI (`cmd/fs`) and an embeddable Go library (`server`,
+`storagefs`, `storagemem`). SigV4 auth is on by default; responses are S3 XML.
+Go 1.25.
 
 Status is **experimental**: the single-node server is mature and heavily
-conformance-tested, cluster mode (M3) is functional and still hardening.
+conformance-tested. A Garage-style cluster (zone/rack-aware replication) is
+planned, see [#279](https://github.com/go-faster/fs/issues/279).
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the layered design, package
 responsibilities, request lifecycle, and extension points. The summary below
@@ -67,10 +67,7 @@ automated resumable migration and the public API becomes additive-only.
   signatures). Verified against the real aws-sdk-go-v2 signer.
 - `auth`, `cors` (public) — credential/grant store and per-bucket CORS config,
   wired via `server.WithAuth` / `server.WithCORS`. `auth.Manager` is the local
-  (file) credential store; `auth.Sealer` seals secrets for the cluster-wide
-  credential source (`auth.source: etcd`), whose etcd persistence/watch live in
-  `internal/cluster/etcd` (`auth.go`) and whose seal/unseal + admin adapter is
-  `cmd/fs`'s `clusterCredentials`.
+  (file) credential store.
 - `storagefs`, `storagemem` — filesystem and in-memory `fs.Storage` backends.
 - `storagetest` — exported conformance suite; both backends and any
   third-party backend run `storagetest.Run(t, factory)`.
@@ -78,6 +75,9 @@ automated resumable migration and the public API becomes additive-only.
   (turnkey server with health, timeouts, graceful shutdown). No observability
   deps — callers inject via `Config.WrapHandler`.
 - `cmd/fs` — cobra CLI; wires config/flags/otel around `server`.
+- `internal/cluster`, `internal/cluster/placement` — topology types and
+  zone/rack-aware HRW placement, kept for the planned cluster engine (#279);
+  nothing in the server uses them yet.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 
@@ -158,8 +158,9 @@ when the answer is "nothing":
 
 **1. Observability.** If the change adds a background process, a queue, a
 retry, a failover, an elected runner, or anything that can silently fall behind:
-export what an operator needs to see it happening and see it stuck. Metrics live
-in `cmd/fs/clustermetrics.go` (`fs.*` names, OTel units); logging is
+export what an operator needs to see it happening and see it stuck. Metrics are
+registered in `cmd/fs` on the telemetry meter provider (`fs.*` names, OTel
+units); logging is
 `zctx.From(ctx)`, and library packages stay quiet — logging belongs to the
 binary or injected middleware.
 
@@ -219,5 +220,5 @@ aspirational — describe what the code does now.
   planned post-v1 (SSE-S3, lifecycle) and some are permanent refusals (full
   IAM/STS, the full ACL grammar with arbitrary grantees, Object Lock,
   SSE-C/KMS) — either way, do not implement one because it seemed missing.
-- Treat auth or cluster mode as out of scope. Both are **shipped**. Earlier
-  revisions of this file called them non-goals; that is no longer true.
+- Treat auth as out of scope; it is **shipped**. Cluster mode is being
+  redesigned, see [#279](https://github.com/go-faster/fs/issues/279).

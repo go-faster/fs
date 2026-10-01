@@ -106,18 +106,6 @@ func TestFullObjectOnlyForCRCs(t *testing.T) {
 	}
 }
 
-func TestSplitComposite(t *testing.T) {
-	digest, parts, ok := checksum.SplitComposite("uWBwpe1dxI4Vw8Gf0X9ynOdw/SS6VBzfWm9giiv1sf4=-3")
-	require.True(t, ok)
-	require.Equal(t, 3, parts)
-	require.Equal(t, "uWBwpe1dxI4Vw8Gf0X9ynOdw/SS6VBzfWm9giiv1sf4=", digest)
-
-	// A full-object value has no suffix, and base64 padding must not be read
-	// as one.
-	_, _, ok = checksum.SplitComposite("xU+Krw==")
-	require.False(t, ok)
-}
-
 // TestDecodeRejectsWrongLength keeps "you sent nonsense" separate from "your
 // bytes did not match".
 func TestDecodeRejectsWrongLength(t *testing.T) {
