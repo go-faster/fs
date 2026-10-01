@@ -6,7 +6,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-faster/fs"
-	"github.com/go-faster/fs/internal/cluster/etcd"
 	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/internal/lifecycle"
 )
@@ -33,64 +32,4 @@ func runLifecycle(
 
 	sweeper := &lifecycle.Sweeper{Storage: storage, Log: lg, State: state}
 	sweeper.Run(ctx, cfg.Interval)
-}
-
-// RunLifecycle enforces bucket lifecycle rules from exactly one node.
-//
-// It campaigns first, for the same reason the usage recount does: a pass lists
-// every bucket that has rules and deletes through the ordinary path, so running
-// it on each node would multiply the listing by the node count and have every
-// node race the others to delete the same keys. A node that loses stands by and
-// takes over when the holder's lease expires.
-func (rt *clusterRuntime) RunLifecycle(ctx context.Context, cfg LifecycleConfig) {
-	if cfg.Interval <= 0 {
-		rt.lg.Warn("Lifecycle enforcement is disabled; rules clients set will be stored but never applied")
-		return
-	}
-
-	// The record lives in etcd, and the key is cluster-wide: leadership moves
-	// between nodes, and a sweeper that remembered its passes on local disk
-	// would start the interval over every time it changed hands.
-	sweeper := &lifecycle.Sweeper{
-		Storage: rt.Storage,
-		Log:     rt.lg,
-		State:   etcd.NewLastRunStore(rt.client, rt.etcdCfg),
-	}
-
-	for ctx.Err() == nil {
-		lead, err := etcd.CampaignLifecycle(ctx, rt.client, rt.etcdCfg, string(rt.nodeID))
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			rt.lg.Warn("Lifecycle election failed", zap.Error(err))
-
-			if !sleepCtx(ctx, cfg.Interval) {
-				return
-			}
-
-			continue
-		}
-
-		rt.lg.Debug("Holding the lifecycle sweep leadership")
-
-		// Losing the lease mid-pass must stop the sweep, not merely end it
-		// after the current one: the node that took over is already deleting,
-		// and two sweepers racing turn every expiry into a contested delete.
-		held, stop := context.WithCancel(ctx)
-
-		go func() {
-			select {
-			case <-held.Done():
-			case <-lead.Done():
-				stop()
-			}
-		}()
-
-		sweeper.Run(held, cfg.Interval)
-		stop()
-
-		_ = lead.Close()
-	}
 }

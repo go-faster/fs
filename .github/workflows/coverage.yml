@@ -48,8 +48,7 @@ jobs:
 
       # -coverpkg=./... so a package's coverage counts what other packages'
       # tests reach in it: much of this repository is exercised through the
-      # conformance suite and the cluster tests rather than by its own package's
-      # tests. The timeout is generous because those bring up embedded etcd.
+      # conformance suite rather than by its own package's tests.
       - name: Run test
         run: go test -timeout 15m -race -coverpkg=./... -coverprofile=profile.out ./...
 

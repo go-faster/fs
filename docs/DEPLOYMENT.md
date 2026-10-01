@@ -1,19 +1,16 @@
 # Deployment
 
-go-faster/fs runs in two modes:
+go-faster/fs runs as a **single node** (`storage.type: filesystem`): one
+process, one data directory, no redundancy beyond the underlying disk. A
+Garage-style cluster (zone/rack-aware replication) is planned, see
+[#279](https://github.com/go-faster/fs/issues/279).
 
-- **Single-node filesystem** (`storage.type: filesystem`) — one process, one data
-  directory. Simple; no redundancy beyond the underlying disk.
-- **Cluster** (`storage.type: cluster`) — 3–16 nodes coordinated through etcd,
-  with replicated or erasure-coded placement across failure domains. See
-  [SIZING.md](SIZING.md) and [FAILURE-MODEL.md](FAILURE-MODEL.md).
-
-All modes share one binary (`fs s3`) and one YAML config. `fs s3
---generate-config` prints a fully-defaulted config to start from.
+One binary (`fs s3`) and one YAML config. `fs s3 --generate-config` prints a
+fully-defaulted config to start from.
 
 Contents: [systemd](#systemd) · [Docker](#docker) · [Docker Compose](#docker-compose)
-· [Kubernetes / Helm](#kubernetes--helm) · [Cluster mode](#cluster-mode)
-· [Security](#security) · [Observability](#observability).
+· [Kubernetes / Helm](#kubernetes--helm) · [Security](#security)
+· [Observability](#observability).
 
 ## systemd
 
@@ -31,9 +28,8 @@ The generated unit uses `Restart=on-failure` (5 s), `ExecReload` on SIGHUP (hot
 config/credential/TLS reload — no restart), and, for the system variant,
 `DynamicUser`, `StateDirectory=fs`, `ProtectSystem=strict`, `ProtectHome`,
 `PrivateTmp`, `NoNewPrivileges`. systemd stops the service with SIGTERM; the
-binary bridges SIGTERM to a graceful drain and (in cluster mode) a clean etcd
-deregistration, so `systemctl stop` and rolling restarts don't drop in-flight
-requests — see [UPGRADE.md](UPGRADE.md).
+binary bridges SIGTERM to a graceful drain, so `systemctl stop` and restarts
+don't drop in-flight requests.
 
 ## Docker
 
@@ -53,17 +49,17 @@ Released images are published to `ghcr.io/go-faster/fs`.
 
 ## Docker Compose
 
-`compose/docker-compose.yml` stands up a **single filesystem node** plus a full
-observability stack (Grafana, Prometheus, Tempo, Jaeger, Alloy). It is a
-development/demo topology — the fs node uses a `tmpfs` `/data` (ephemeral) and no
-auth. `compose/run.sh` builds the binary and brings the stack up.
+`dev/observability/docker-compose.yml` stands up a **single filesystem node**
+plus a full observability stack (Grafana, Prometheus, Tempo, Jaeger, Alloy). It
+is a development/demo topology — the fs node uses a `tmpfs` `/data`
+(ephemeral). `dev/observability/run.sh` builds the binary and brings the stack
+up.
 
 ```sh
-cd compose && ./run.sh
+cd dev/observability && ./run.sh
 ```
 
-It is not a cluster (no etcd, one node). Use it to explore the metrics/traces
-pipeline, not for durable storage.
+Use it to explore the metrics/traces pipeline, not for durable storage.
 
 ## Kubernetes / Helm
 
@@ -74,7 +70,7 @@ CI fixtures, dev/test backends, a single-box deployment.
 Set `persistence.emptyDir: false` so a PVC (`volumeClaimTemplates`) backs the
 data directory; the default `emptyDir` is **ephemeral** and loses data on pod
 restart. Do **not** raise `replicaCount` or enable the HPA to "scale" it — extra
-replicas are independent, non-replicating filesystem nodes, not a cluster.
+replicas are independent, non-replicating filesystem nodes.
 
 ```sh
 helm install fs ./helm/go-faster-fs \
@@ -86,102 +82,25 @@ See `helm/go-faster-fs/values.yaml` and `values-production.yaml` for the full
 surface (ingress/HTTPRoute, TLS via cert-manager, resource requests, OTEL
 exporters).
 
-**Clustered Kubernetes deployment is the job of a dedicated operator**, not this
-chart — coordinating per-pod identity, etcd, failure-domain-aware placement, and
-rolling upgrades is stateful-operator territory. The binary is ready for it: it
-reads its per-instance identity from the environment
-(`FS_CLUSTER_NODE_ID`, `FS_CLUSTER_ADVERTISE_ADDR`, `FS_CLUSTER_SECRET`), so an
-operator can drive a StatefulSet from one shared config plus the downward API.
-See [Cluster mode](#cluster-mode) for the config an operator renders per node.
-
-## Cluster mode
-
-Every cluster node needs, at minimum (`cluster` config section):
-
-| Field | Required | Notes |
-|---|---|---|
-| `node_id` (or `FS_CLUSTER_NODE_ID`) | yes | Unique per node; the env form lets an orchestrator inject a per-pod identity into a shared config. |
-| `advertise_addr` (or `FS_CLUSTER_ADVERTISE_ADDR`) | yes | `host:port` peers dial; the bind `addr` defaults to `:7080`. Env-overridable per instance. |
-| `secret` (or `FS_CLUSTER_SECRET`) | yes | Shared peer-auth secret, ≥16 chars. |
-| `etcd.endpoints` | yes | The control plane; run a real etcd cluster (3/5 nodes). |
-| `etcd.tls.*` | no | TLS to etcd: `ca_file`, `cert_file`/`key_file` (mutual, both or neither), `server_name`, `insecure_skip_verify`. Any of them enables TLS, and so does an `https://` endpoint. |
-| `etcd.auth.username` / `password` (or `FS_ETCD_USERNAME` / `FS_ETCD_PASSWORD`) | no | etcd role-based auth; both or neither. The env form keeps the password out of the config file. |
-| `scheme` | no | `rf2.5` (default), `rf3`, or `ec:k,m`. |
-| `rack` | no | Failure-domain label; placement spreads copies across racks first. |
-| `disks` | no | One or more `{id, path, weight}`; default one disk under the root. |
-
-Set `storage.type: cluster`. Give nodes distinct `rack` labels when they share
-real fault domains (racks, availability zones) so replicas land on independent
-hardware — see [FAILURE-MODEL.md](FAILURE-MODEL.md). Bring nodes up one at a
-time; the first stamps the cluster schema version, the rest join and the
-auto-rebalancer converges placement.
-
-Minimal per-node `config.yaml`:
-
-```yaml
-server:
-  addr: ":8080"
-storage:
-  type: cluster
-cluster:
-  node_id: node-a
-  rack: rack-1
-  advertise_addr: "10.0.0.1:7080"
-  secret: "change-me-to-a-long-random-secret"
-  scheme: "rf2.5"
-  disks:
-    - id: d0
-      path: /data/d0
-  etcd:
-    endpoints: ["http://10.0.0.10:2379", "http://10.0.0.11:2379", "http://10.0.0.12:2379"]
-```
-
 ## Security
 
-- **Protect the path to etcd.** etcd holds the node registry and — with
-  `auth.source: etcd` — the cluster's credential store, sealed with the cluster
-  secret. Anything that can write to it can reshape the topology. Use
-  `cluster.etcd.tls` and `cluster.etcd.auth` on any deployment where etcd is
-  not on a trusted network, and note that an `https://` endpoint enables TLS by
-  itself: the client takes the transport from the config, so an https endpoint
-  with no TLS block would otherwise connect in the clear. `insecure_skip_verify`
-  makes TLS decorative — anything on the path can impersonate etcd — and is for
-  development against self-signed certificates only.
 - **Authentication is off only when you disable it.** Provide `auth.keys` (or a
   root credential via `FS_ROOT_ACCESS_KEY` / `FS_ROOT_SECRET_KEY`). The compose
   and default Helm setups are insecure/anonymous for convenience — override for
   anything real.
 - **TLS**: set `server.tls.cert_file` / `key_file` (hot-reloaded on SIGHUP or
   `POST /api/v1/reload`), or terminate TLS at an ingress.
-- **Admin API** (credential management + rebalance control) listens separately
+- **Admin API** (credential management, config reload) listens separately
   (`admin.addr`, default `localhost:8090`) and requires a bearer token
   (`admin.token` or `FS_ADMIN_TOKEN`). Keep it bound to localhost or behind a
-  proxy. Every data node serves it, including a cluster-wide status view
-  (`GET /api/v1/cluster/status`: schema version, per-node/-disk/-rack capacity
-  and health, placement skew, rebalance state) and schema migrations
-  (`GET`/`POST /api/v1/cluster/migrate`, see [UPGRADE.md](UPGRADE.md)). The
-  status view also carries each node's **live** state — its repair-queue depth,
-  rebalance runner and scrub/repair totals — fetched from the nodes themselves
-  over the peer transport; a node that does not answer is reported as not
-  reporting (with the reason) rather than as idle, and the control-plane half of
-  the view still renders. `fs admin --config config.yaml` runs the same admin
-  API/dashboard **headless** — a control-plane-only process (no S3 data) that
-  reads cluster status from etcd, collects live state from the nodes, and drives
-  rebalancing and migrations through the cluster-wide elections. Credential
-  management works there only with cluster-wide credentials
-  (`auth.source: etcd`); with file-based auth, manage access keys on a data
-  node's admin API.
+  proxy.
 - **Hot reload without a signal**: `POST /api/v1/reload` re-applies the same
   hot-reloadable configuration SIGHUP does — the config-defined credentials and
   grants and the TLS certificate, preserving runtime-created keys — and returns
   what it reloaded and the config revision now in effect. Set an opaque
   `revision:` marker at the top of the config and read it back from
   `GET /api/v1/info` (`config_revision`) or the reload response to confirm a
-  node has loaded a specific config, e.g. after an orchestrator rewrites it. The
-  endpoint returns 501 on the headless admin, which serves no S3 data.
-- **Cluster secret** authenticates all peer traffic (HMAC). Treat it like a
-  password; supply it via `FS_CLUSTER_SECRET` / a Kubernetes Secret, not in a
-  committed file.
+  node has loaded a specific config, e.g. after an orchestrator rewrites it.
 
 ## Observability
 
@@ -190,9 +109,7 @@ cluster:
   liveness at `/health`, readiness at `/ready`.
 - **Metrics**: OpenTelemetry via the SDK, enabled with
   `OTEL_METRICS_EXPORTER=prometheus` and served on
-  `OTEL_EXPORTER_PROMETHEUS_HOST:PORT` (compose uses `:9464/metrics`). Cluster
-  nodes export `fs.cluster.*` metrics (per-disk capacity, placement skew, repair
-  queue depth, rebalance progress, scrub totals) — see [PERFORMANCE.md](PERFORMANCE.md).
+  `OTEL_EXPORTER_PROMETHEUS_HOST:PORT` (compose uses `:9464/metrics`).
 - **Traces**: `OTEL_TRACES_EXPORTER=otlp` + `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
 - **pprof**: set `PPROF_ADDR`.
 - Toggle whole subsystems with `observability.enable_metrics` /

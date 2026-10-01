@@ -19,9 +19,7 @@ import (
 // time it came back.
 const firstPassFloor = time.Minute
 
-// scrubTask names the scrub's last-run record. The single-node scrubber walks
-// this node's own objects, and so does each cluster node's — see
-// clusterScrubTask for why the cluster record is per node.
+// scrubTask names the scrub's last-run record.
 const scrubTask = "scrub"
 
 // runScrubber runs the background integrity scrubber until ctx is canceled,

@@ -24,7 +24,7 @@ storage:
   # This directory will contain all buckets and objects
   root: ".s3data"
 
-  # Storage backend type: "filesystem" (single node) or "cluster" (replicated)
+  # Storage backend type: "filesystem"
   type: "filesystem"
 
   # Pre-create these buckets on startup (optional)
@@ -33,77 +33,12 @@ storage:
   #   - my-bucket
   #   - test-bucket
 
-# Cluster configuration (used when storage.type is "cluster").
-# Every node runs the same binary; objects are placed across the cluster's
-# failure domains (rack -> node -> disk), written at quorum, and served by any
-# node. Requires a reachable etcd.
-# cluster:
-#   # Unique node identity and its failure-domain label.
-#   node_id: "node-1"
-#   rack: "rack-a"
-#
-#   # Peer replication listener: bind address and the address peers dial.
-#   # Internal API - never expose it publicly.
-#   addr: ":7080"
-#   advertise_addr: "10.0.0.1:7080"
-#
-#   # Shared cluster secret (HMAC mutual auth between peers), min 16 chars.
-#   # The FS_CLUSTER_SECRET environment variable takes precedence.
-#   secret: "change-me-to-a-long-random-string"
-#
-#   # Default replication scheme: rf2.5 (default), rf3, or ec:k,m (e.g. ec:4,2).
-#   #   rf2.5 - 2 replicas + half-parity, 2.5x storage, survives 1 domain loss
-#   #   rf3   - 3 replicas, 3x storage, survives 2 domain losses
-#   #   ec:4,2 - Reed-Solomon, 1.5x storage, survives any 2 shard losses
-#   scheme: "rf2.5"
-#
-#   # This node's disks (default: one disk under <storage.root>/cluster/d0).
-#   # Weight is the relative capacity for placement; a weight that is not
-#   # positive (0 or negative) drains the disk. Omit it for the default of 1.
-#   # 'fs cluster drain' does the same thing without a restart.
-#   disks:
-#     - id: "d0"
-#       path: "/data/d0"
-#       weight: 1
-#
-#   # etcd control plane: node registry and topology watch.
-#   etcd:
-#     endpoints: ["http://127.0.0.1:2379"]
-#     prefix: "/fs"
-#     ttl: 10s
-#     # TLS to etcd. Any field here turns it on, and so does an https://
-#     # endpoint on its own (verifying against the system roots) — the client
-#     # takes the transport from this config and not from the URL, so an https
-#     # endpoint with nothing set would otherwise speak cleartext.
-#     tls:
-#       ca_file: "/etc/fs/etcd/ca.crt"
-#       # A client certificate for mutual TLS; both or neither.
-#       cert_file: "/etc/fs/etcd/tls.crt"
-#       key_file: "/etc/fs/etcd/tls.key"
-#       # server_name: "etcd.internal"    # when the address is not on the cert
-#       # insecure_skip_verify: false     # development only; makes TLS decorative
-#     # etcd role-based auth. FS_ETCD_USERNAME / FS_ETCD_PASSWORD override
-#     # these, which is how to avoid writing the password into this file.
-#     auth:
-#       username: "fs"
-#       password: "change-me"
-
 # Authentication & authorization (AWS SigV4). Enabled by default; disable only
 # for trusted/dev setups. A root credential can also come from the
 # FS_ROOT_ACCESS_KEY / FS_ROOT_SECRET_KEY environment variables.
 # auth:
 #   # Turn off authentication entirely (anonymous access).
 #   disabled: false
-#
-#   # Where runtime credentials live:
-#   #   file - config/env keys + the local runtime keys file (default, single node)
-#   #   etcd - cluster-wide, sealed by the cluster secret and hot-reloaded on every
-#   #          node (requires storage.type: cluster). Keys, grants and the
-#   #          public-read list added, rotated or removed through any admin API
-#   #          propagate to all nodes with no restart. The config keys and
-#   #          public_read_buckets below seed an empty cluster once, then etcd is
-#   #          authoritative (never merged).
-#   source: "file"
 #
 #   # Static credentials and their per-bucket grants (permission: read|write|admin).
 #   keys:
@@ -117,8 +52,6 @@ storage:
 #   public_read_buckets: []
 
 # Admin API + web dashboard, on a separate bearer-token-protected listener.
-# In cluster mode with auth.source: etcd, its access-key endpoints manage the
-# cluster-wide credential store.
 # admin:
 #   enabled: false
 #   addr: "localhost:8090"
@@ -130,7 +63,7 @@ storage:
 # lifecycle:
 #   # How often the sweep runs. Expiry is eventual by design: S3 promises the
 #   # object goes away, not when. The next pass is due one interval after the
-#   # last one completed — recorded in <root>/.lastrun (etcd in cluster mode) —
+#   # last one completed — recorded in <root>/.lastrun —
 #   # so restarting neither postpones the sweep by a whole interval nor repeats
 #   # it every time. Zero turns enforcement off, which leaves any rule a client
 #   # sets stored but inert — the server warns loudly at startup.

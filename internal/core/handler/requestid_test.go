@@ -36,7 +36,7 @@ func TestRequestIDIsAlwaysMinted(t *testing.T) {
 
 			got := rec.Header().Get(reqid.Header)
 			require.NotEmpty(t, got)
-			assert.True(t, reqid.Valid(got), "minted ID %q must be valid", got)
+			assert.Regexp(t, `^[0-9A-F]{16}$`, got)
 
 			if sent != "" {
 				assert.NotEqual(t, sent, got, "client value must never be echoed")

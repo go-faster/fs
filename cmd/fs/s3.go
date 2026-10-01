@@ -22,7 +22,6 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/auth"
-	"github.com/go-faster/fs/internal/adminhandler"
 	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/server"
 	"github.com/go-faster/fs/storagefs"
@@ -140,86 +139,14 @@ Command-line flags override YAML configuration values.`,
 					return fmt.Errorf("failed to resolve root path: %w", err)
 				}
 
-				// Resolve the effective auth configuration now, but build the
-				// credential store after the storage backend: with auth.source:
-				// etcd the store lives in the cluster control plane and needs the
-				// cluster's etcd handle, which the storage switch below creates.
-				authConfig, authEnabled, err := buildAuthConfig(cfg, insecureNoAuth)
+				_, authEnabled, err := buildAuthConfig(cfg, insecureNoAuth)
 				if err != nil {
 					return errors.Wrap(err, "configure auth")
 				}
 
-				var (
-					storage   fs.Storage
-					clusterRT *clusterRuntime
-				)
+				var storage fs.Storage
 
-				switch cfg.Storage.Type {
-				case StorageTypeCluster:
-					clusterRT, err = buildCluster(ctx, lg, cfg, absRoot)
-					if err != nil {
-						return errors.Wrap(err, "cluster mode")
-					}
-
-					storage = clusterRT.Storage
-
-					// Cluster-wide scrub/repair on the single-node scrub cadence.
-					go clusterRT.RunScrubber(ctx, cfg.Integrity.ScrubInterval)
-
-					// Auto rebalancing: converge placement after settled
-					// membership changes without operator action.
-					go clusterRT.RunAutoRebalancer(ctx, cfg.Cluster.Rebalance)
-
-					// Per-disk capacity into the registry + fullness watermark
-					// warnings; cluster metrics for the telemetry pipeline.
-					go clusterRT.RunUsageReporter(ctx, cfg.Cluster.Rebalance.FullWatermark)
-
-					// Per-disk occupancy: what this node's disks hold, which
-					// is what a drain is waiting to reach zero.
-					go clusterRT.RunOccupancyIndex(ctx)
-
-					// The node's object index: built from its disks when it
-					// was not handed over cleanly, maintained by the write
-					// path after that, and read by listings, usage and the
-					// scrub's coverage.
-					go clusterRT.RunObjectIndex(ctx)
-
-					// How stale this node's verification is, recomputed off
-					// the request path.
-					go clusterRT.RunCoverage(ctx)
-
-					// Bucket lifecycle rules, enforced from one elected node.
-					go clusterRT.RunLifecycle(ctx, cfg.Lifecycle)
-
-					// Per-bucket object accounting: batched deltas from this
-					// node's writes, and the cluster-wide recount that keeps
-					// the totals honest (one elected node runs it).
-					go clusterRT.usage.Run(ctx)
-					go clusterRT.RunUsageRecount(ctx)
-
-					// The sharded metadata plane's controller: partitions the
-					// plane once and thereafter moves ranges off nodes that are
-					// gone. Every node is a candidate; one holds it.
-					if clusterRT.metaPlane != nil {
-						go clusterRT.RunPlaneController(ctx, cfg)
-
-						// The other half of a range move, and the half
-						// only its destination can run: copying what
-						// the controller decided this node should
-						// hold. Every node runs its own.
-						go clusterRT.RunPlaneCatchUp(ctx)
-
-						// And the rebuild the plane owes after a
-						// failure has left a range holding nothing.
-						// Elected like the controller; every node is a
-						// candidate and one runs it.
-						go clusterRT.RunPlaneRebuild(ctx, cfg)
-					}
-
-					if err := clusterRT.RegisterMetrics(t.MeterProvider()); err != nil {
-						return errors.Wrap(err, "register cluster metrics")
-					}
-				default: // StorageTypeFilesystem, enforced by Validate.
+				{
 					syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
 					if err != nil {
 						return errors.Wrap(err, "storage fsync policy")
@@ -248,7 +175,7 @@ Command-line flags override YAML configuration values.`,
 					state := lastrun.NewFile(absRoot)
 
 					// Background integrity scrubber (no-op unless an interval is
-					// set). Cluster-mode scrub/repair is the Phase 8 repair worker.
+					// set).
 					go runScrubber(ctx, lg, fsStorage, cfg.Integrity, state)
 
 					// Bucket lifecycle rules: the sweep that makes a stored
@@ -270,46 +197,18 @@ Command-line flags override YAML configuration values.`,
 					zap.Int("retired_keys", len(cfg.Encryption.PreviousKeyFiles)),
 				)
 
-				// Build the credential store now that the storage backend (and,
-				// in cluster mode, its etcd handle) exists. With auth.source:
-				// etcd the store is cluster-wide — sealed by the cluster secret
-				// and hot-reloaded on every node; otherwise it is the local
-				// file-backed manager. authManager stays nil in etcd mode: there
-				// is no local keys file to reload.
 				var (
 					authStore   *auth.Store
 					authManager *auth.Manager
-					credentials adminhandler.CredentialManager
 				)
 
 				if authEnabled {
-					switch {
-					case cfg.AuthSourceValue() == AuthSourceEtcd:
-						if clusterRT == nil {
-							return errors.New("auth.source: etcd requires cluster storage")
-						}
-
-						clusterCreds, err := newClusterCredentials(ctx, lg, clusterRT.client, clusterRT.etcdCfg,
-							cfg.ClusterSecret(), authConfig.PublicReadBuckets, authConfig.Keys)
-						if err != nil {
-							return errors.Wrap(err, "cluster credentials")
-						}
-
-						defer func() { _ = clusterCreds.Close() }()
-
-						authStore = clusterCreds.Store()
-						credentials = clusterCreds
-					default:
-						authManager, err = buildAuthManager(cfg, insecureNoAuth, resolveAdminKeysFile(cfg, absRoot))
-						if err != nil {
-							return errors.Wrap(err, "configure auth")
-						}
-
-						authStore = authManager.Store()
-						credentials = authManager
+					authManager, err = buildAuthManager(cfg, insecureNoAuth, resolveAdminKeysFile(cfg, absRoot))
+					if err != nil {
+						return errors.Wrap(err, "configure auth")
 					}
 
-					lg.Info("Credentials", zap.String("source", cfg.AuthSourceValue()))
+					authStore = authManager.Store()
 				}
 
 				// wrap injects OpenTelemetry instrumentation and optional request
@@ -392,12 +291,6 @@ Command-line flags override YAML configuration values.`,
 					return nil
 				})
 
-				if clusterRT != nil {
-					grp.Go(func() error {
-						return clusterRT.Serve(grpCtx)
-					})
-				}
-
 				if cfg.Admin.Enabled {
 					if authStore == nil {
 						return errors.New("admin API requires authentication; remove --insecure-no-auth / auth.disabled or disable admin")
@@ -405,32 +298,10 @@ Command-line flags override YAML configuration values.`,
 
 					adminCfg := adminServerConfig{
 						Admin:       cfg.Admin,
-						Credentials: credentials,
+						Credentials: authManager,
 						AuthEnabled: authStore != nil,
 						StartTime:   startTime,
 						Reloader:    rel,
-					}
-
-					// Set the cluster surfaces only in cluster mode: a non-nil
-					// interface around a nil controller would defeat the
-					// handlers' "disabled" guards.
-					if clusterRT != nil {
-						adminCfg.Rebalance = clusterRT.rebalance
-
-						// Only when this node runs the sharded plane. A
-						// non-nil interface around a nil controller would
-						// defeat the handler's "disabled" guard the same
-						// way, and answer for a plane that is not there.
-						if clusterRT.plane != nil {
-							adminCfg.Plane = clusterRT.plane
-						}
-
-						adminCfg.ClusterStatus = clusterRT.status
-						adminCfg.Migrations = clusterRT.migrate
-						adminCfg.BucketSchemes = newBucketSchemeSource(clusterRT.coord)
-						adminCfg.BucketUsage = newBucketUsageSource(clusterRT.client, clusterRT.etcdCfg)
-						adminCfg.DiskWeights = newDiskWeightSource(clusterRT.client, clusterRT.etcdCfg)
-						adminCfg.ClusterDefaultScheme = clusterRT.schemeID
 					}
 
 					grp.Go(func() error {

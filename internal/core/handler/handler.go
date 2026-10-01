@@ -192,10 +192,8 @@ func missingContentLength(r *http.Request) bool {
 // withRequestID stamps every response with a unique x-amz-request-id (echoed
 // into S3 error bodies) and a Server header, matching what S3 clients expect.
 //
-// The same ID goes into the request context and onto the context logger, so it
-// is both the value the client is told and the value every log line this
-// request produces is tagged with — here and, once clusterstore hands it to the
-// peer transport, on the other nodes the request touches.
+// The same ID goes onto the context logger, so it is both the value the client
+// is told and the value every log line this request produces is tagged with.
 func withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := reqid.New()
@@ -203,8 +201,7 @@ func withRequestID(next http.Handler) http.Handler {
 		w.Header().Set(reqid.Header, id)
 		w.Header().Set("Server", "go-faster/fs")
 
-		ctx := reqid.NewContext(r.Context(), id)
-		ctx = zctx.With(ctx, zap.String(reqid.Field, id))
+		ctx := zctx.With(r.Context(), zap.String(reqid.Field, id))
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

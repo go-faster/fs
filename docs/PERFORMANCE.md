@@ -14,7 +14,6 @@ On a single NVMe node:
 | Small-object (4 KiB) GET p99 < 10 ms at 5k req/s | **met with wide margin** — p99 ≈ 0.7 ms at ~150k req/s |
 | PUT allocations amortized O(1) per request (no full-object buffering) | **met** — 45–47 allocs/op, constant from 4 KiB to 256 MiB |
 | Streaming end-to-end (no full-object buffering) | **met** — ~36 KB/op constant across all object sizes |
-| Cluster adds ≤ 1 intra-DC RTT to coordinated writes | met by design (synchronous W=2 quorum is one round-trip); see the cluster docs |
 
 ## The large-object PUT ceiling is MD5, not the disk
 
@@ -94,6 +93,4 @@ go tool benchstat old.txt new.txt
   logged for tracking and gated at a generous CI ceiling.
 
 The gates run on the single-node filesystem backend (`storagefs`), which is the
-"single NVMe node" NFR-3 is stated against. Cluster write latency (the ≤ 1 RTT
-target) is covered by the cluster's synchronous-quorum design and its
-integration tests.
+"single NVMe node" NFR-3 is stated against.

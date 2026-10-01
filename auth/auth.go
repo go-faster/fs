@@ -51,21 +51,6 @@ func (p Permission) String() string {
 	}
 }
 
-// ParsePermission is the inverse of Permission.String. It rejects any spelling
-// other than "read", "write" or "admin".
-func ParsePermission(s string) (Permission, error) {
-	switch s {
-	case permRead:
-		return Read, nil
-	case permWrite:
-		return Write, nil
-	case permAdmin:
-		return Admin, nil
-	default:
-		return Read, errors.Errorf("invalid permission %q (want read, write or admin)", s)
-	}
-}
-
 // Action is the access level a request requires, derived from its method.
 type Action int
 

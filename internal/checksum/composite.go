@@ -2,7 +2,6 @@ package checksum
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/go-faster/errors"
 )
@@ -31,21 +30,4 @@ func CompositeOf(a Algorithm, partDigests [][]byte) (string, error) {
 	}
 
 	return Encode(h.Sum(nil)) + "-" + strconv.Itoa(len(partDigests)), nil
-}
-
-// SplitComposite separates a composite value into its digest and part count.
-// ok is false when the value carries no suffix, which is what a FULL_OBJECT
-// checksum looks like.
-func SplitComposite(v string) (digest string, parts int, ok bool) {
-	i := strings.LastIndexByte(v, '-')
-	if i < 0 {
-		return v, 0, false
-	}
-
-	n, err := strconv.Atoi(v[i+1:])
-	if err != nil || n <= 0 {
-		return v, 0, false
-	}
-
-	return v[:i], n, true
 }

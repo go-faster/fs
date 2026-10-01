@@ -95,49 +95,6 @@ A flaky test is the one thing this model handles badly: it fails the gate on
 runs where it fails and reports a stale entry on runs where it passes. Fix it
 or, if it is upstream's flake, list it with a comment saying so.
 
-## Cluster mode
-
-The [`s3tests-cluster`](../workflows/s3tests-cluster.yml) workflow runs the
-same suite against a **clustered** fs — three nodes in three racks over etcd,
-writing at quorum across failure domains — because a client must not be able
-to tell how many nodes are behind the endpoint. `clusterstore`'s Go conformance
-test (`storagetest.Run`) already covers the `fs.Storage` contract; it cannot
-see HTTP status codes, headers, SigV4 or real boto3 clients, which is the gap
-this closes.
-
-Bring the cluster up locally and point the suite at it:
-
-```sh
-./scripts/s3tests-cluster.sh up     # etcd (Docker) + 3 fs nodes, S3 on :8177
-
-# The cluster is held to both lists; s3t takes one, so concatenate them.
-cat .github/s3tests/known-failures.txt \
-    .github/s3tests/cluster/known-failures.txt > /tmp/cluster-known.txt
-s3t run -c .github/s3tests/cluster/s3tests.conf --known-failures /tmp/cluster-known.txt
-
-./scripts/s3tests-cluster.sh down
-```
-
-Set `ETCD_ENDPOINT` to reuse an etcd you already have (CI does this with a
-service container) instead of letting the script start one.
-
-Files, alongside the single-node ones above:
-
-- **`cluster/node.yaml.tmpl`** — one node's config, rendered per node by the
-  script. Carries the same s3-tests credentials as `server.yaml`, so the auth
-  surface is identical in both modes.
-- **`cluster/s3tests.conf`** — suite config; identical to `s3tests.conf` except
-  it points at node 0.
-- **`cluster/known-failures.txt`** — tests that pass single-node but **fail in
-  cluster mode**. The job honors the top-level list and ratchets this one.
-
-`cluster/known-failures.txt` is a bug list, not a scope statement: unlike the
-top-level list, where a line means "unimplemented or out of scope", every line
-here is behaviour that already works on `storagefs` and is wrong on the
-replicated data plane. The cluster job *ratchets* that file and merely honors
-the top-level one — a test that fails on one node and passes on three is not a
-cluster bug to fix.
-
 ## Reproducing a gating failure locally
 
 Run the one test CI named:

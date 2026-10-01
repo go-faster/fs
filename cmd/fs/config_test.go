@@ -280,55 +280,6 @@ func TestValidate_BucketNames(t *testing.T) {
 	}
 }
 
-func TestValidate_AuthSource(t *testing.T) {
-	for name, tc := range map[string]struct {
-		mutate  func(*Config)
-		wantErr string
-	}{
-		"default is file": {
-			mutate: func(*Config) {},
-		},
-		"explicit file": {
-			mutate: func(c *Config) { c.Auth.Source = AuthSourceFile },
-		},
-		"etcd on filesystem storage is rejected": {
-			mutate:  func(c *Config) { c.Auth.Source = AuthSourceEtcd },
-			wantErr: "requires cluster storage",
-		},
-		"unknown source is rejected": {
-			mutate:  func(c *Config) { c.Auth.Source = "vault" },
-			wantErr: "invalid auth.source",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			tc.mutate(&cfg)
-
-			err := cfg.Validate()
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tc.wantErr)
-
-				return
-			}
-
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestValidate_AuthSourceEtcdCluster(t *testing.T) {
-	// etcd source is valid in cluster mode, but not with auth disabled.
-	cfg := validClusterConfig()
-	cfg.Auth.Source = AuthSourceEtcd
-	require.NoError(t, cfg.Validate())
-
-	cfg.Auth.Disabled = true
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires authentication enabled")
-}
-
 func TestLoadConfig_WithBuckets(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -408,43 +359,4 @@ func TestSaveConfig_InvalidPath(t *testing.T) {
 	err := SaveConfig(cfg, "/nonexistent/directory/config.yaml")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write config file")
-}
-
-func TestClusterIdentityEnvOverrides(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Cluster.NodeID = "from-config"
-	cfg.Cluster.AdvertiseAddr = "config-host:7080"
-	cfg.Cluster.Secret = "config-secret-0123456789abcdef"
-
-	// Without env, the config values apply.
-	assert.Equal(t, "from-config", cfg.ClusterNodeID())
-	assert.Equal(t, "config-host:7080", cfg.ClusterAdvertiseAddr())
-	assert.Equal(t, "config-secret-0123456789abcdef", cfg.ClusterSecret())
-
-	// Env overrides win (an orchestrator injecting per-pod identity).
-	t.Setenv("FS_CLUSTER_NODE_ID", "pod-2")
-	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", "pod-2.fs.ns.svc:7080")
-	t.Setenv("FS_CLUSTER_SECRET", "env-secret-0123456789abcdef")
-
-	assert.Equal(t, "pod-2", cfg.ClusterNodeID())
-	assert.Equal(t, "pod-2.fs.ns.svc:7080", cfg.ClusterAdvertiseAddr())
-	assert.Equal(t, "env-secret-0123456789abcdef", cfg.ClusterSecret())
-}
-
-func TestValidateClusterAcceptsEnvIdentity(t *testing.T) {
-	// node_id / advertise_addr may come from env instead of the file.
-	cfg := DefaultConfig()
-	cfg.Storage.Type = StorageTypeCluster
-	cfg.Cluster = ClusterConfig{
-		Secret: "0123456789abcdef0123456789abcdef",
-		Etcd:   EtcdConfig{Endpoints: []string{"http://127.0.0.1:2379"}},
-	}
-
-	// Missing identity fails.
-	require.ErrorContains(t, cfg.Validate(), "node_id")
-
-	t.Setenv("FS_CLUSTER_NODE_ID", "pod-0")
-	t.Setenv("FS_CLUSTER_ADVERTISE_ADDR", "pod-0.fs:7080")
-
-	require.NoError(t, cfg.Validate())
 }

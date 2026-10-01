@@ -9,18 +9,12 @@ import (
 	"github.com/go-faster/errors"
 	"gopkg.in/yaml.v3"
 
-	"github.com/go-faster/fs/internal/cluster/scheme"
 	"github.com/go-faster/fs/internal/validate"
 	"github.com/go-faster/fs/server"
 )
 
 // StorageTypeFilesystem is the single-node filesystem storage backend.
 const StorageTypeFilesystem = "filesystem"
-
-// StorageTypeCluster is the replicated cluster storage backend (M3): objects
-// are placed across the nodes registered in etcd, written at quorum and
-// served by any node.
-const StorageTypeCluster = "cluster"
 
 // DefaultStorageRoot is the default directory for filesystem storage.
 const DefaultStorageRoot = ".s3data"
@@ -38,9 +32,6 @@ type Config struct {
 
 	// Admin configuration
 	Admin AdminConfig `yaml:"admin,omitempty"`
-
-	// Cluster configuration (used when storage.type is "cluster")
-	Cluster ClusterConfig `yaml:"cluster,omitempty"`
 
 	// Integrity configuration
 	Integrity IntegrityConfig `yaml:"integrity"`
@@ -93,29 +84,11 @@ type LifecycleConfig struct {
 	Interval time.Duration `yaml:"interval,omitempty"`
 }
 
-// Auth source values for AuthConfig.Source.
-const (
-	// AuthSourceFile keeps credentials in config/env and the local runtime keys
-	// file (the default, single-node behavior).
-	AuthSourceFile = "file"
-	// AuthSourceEtcd keeps credentials in the cluster control plane (etcd),
-	// sealed by the cluster secret and hot-reloaded on every node. Cluster mode
-	// only.
-	AuthSourceEtcd = "etcd"
-)
-
 // AuthConfig configures authentication and authorization.
 type AuthConfig struct {
 	// Disabled turns off authentication entirely (anonymous access). Equivalent
 	// to the --insecure-no-auth flag.
 	Disabled bool `yaml:"disabled,omitempty"`
-
-	// Source selects where runtime credentials live: "file" (the default —
-	// config/env plus the local keys file) or "etcd" (cluster-wide, sealed by
-	// the cluster secret and hot-reloaded on every node). "etcd" requires
-	// cluster storage. The two sources are never merged: with "etcd", config
-	// keys seed an empty namespace once and are authoritative in etcd thereafter.
-	Source string `yaml:"source,omitempty"`
 
 	// OwnerIsolation makes a bucket reachable only by the principal that
 	// created it, plus any credential whose grant names the bucket rather than
@@ -131,16 +104,6 @@ type AuthConfig struct {
 
 	// PublicReadBuckets may be read anonymously.
 	PublicReadBuckets []string `yaml:"public_read_buckets,omitempty"`
-}
-
-// AuthSourceValue returns the effective auth source, defaulting to
-// AuthSourceFile when unset.
-func (c *Config) AuthSourceValue() string {
-	if c.Auth.Source == "" {
-		return AuthSourceFile
-	}
-
-	return c.Auth.Source
 }
 
 // DefaultAdminAddr is the default admin listener address.
@@ -236,415 +199,6 @@ type StorageConfig struct {
 	Buckets []string `yaml:"buckets,omitempty"`
 }
 
-// DefaultClusterAddr is the default cluster (peer replication) listener
-// address.
-const DefaultClusterAddr = ":7080"
-
-// ClusterConfig configures cluster mode: this node's identity and disks, the
-// shared peer-auth secret, the replication scheme and the etcd control plane.
-type ClusterConfig struct {
-	// NodeID uniquely identifies this node in the cluster. Required.
-	NodeID string `yaml:"node_id"`
-
-	// Rack is this node's failure-domain label (nodes sharing a rack share
-	// fate); placement spreads copies across racks first. Empty means the node
-	// is its own failure domain.
-	Rack string `yaml:"rack,omitempty"`
-
-	// Addr is the cluster listener bind address for the peer replication API
-	// (default DefaultClusterAddr). Internal — never expose it publicly; peers
-	// authenticate with the cluster secret.
-	Addr string `yaml:"addr,omitempty"`
-
-	// AdvertiseAddr is the host:port peers dial to reach this node's cluster
-	// listener. Required (a bind address like ":7080" is not dialable).
-	AdvertiseAddr string `yaml:"advertise_addr"`
-
-	// Secret is the shared cluster secret authenticating peer traffic (HMAC,
-	// mutual). Required, min 16 characters; the FS_CLUSTER_SECRET environment
-	// variable takes precedence.
-	Secret string `yaml:"secret,omitempty"`
-
-	// Scheme is the default replication scheme for all buckets: "rf2.5"
-	// (default), "rf3" or "ec:k,m" (e.g. "ec:4,2").
-	Scheme string `yaml:"scheme,omitempty"`
-
-	// Disks are this node's storage devices. Default: a single disk "d0"
-	// under <storage.root>/cluster/d0 with weight 1.
-	Disks []ClusterDiskConfig `yaml:"disks,omitempty"`
-
-	// Etcd configures the control plane connection.
-	Etcd EtcdConfig `yaml:"etcd"`
-
-	// Rebalance tunes the automatic rebalancer.
-	Rebalance RebalanceConfig `yaml:"rebalance,omitempty"`
-
-	// Metadata configures the sharded metadata plane.
-	Metadata MetadataConfig `yaml:"metadata,omitempty"`
-}
-
-// Metadata plane defaults.
-const (
-	// DefaultMetadataRanges is how many ranges a plane is presplit into.
-	//
-	// Comfortably more than the nodes of any cluster small enough not to have
-	// been tuned, because ranges are the unit failover moves: a plane with one
-	// range per node moves a whole node's metadata at once, where a plane with
-	// several moves a fraction of it and spreads the promotions.
-	DefaultMetadataRanges = 64
-
-	// DefaultMetadataReplicas is how many copies of each range exist, owner
-	// included.
-	//
-	// Two rather than three. The store is derived — the sidecars on disk are
-	// the commit point — so a replica is not protecting data, only the cost of
-	// getting it back. One follower already turns the common failure into a
-	// metadata write; a second buys the case where an owner and its follower
-	// are lost together, at the price of shipping every batch twice.
-	DefaultMetadataReplicas = 2
-)
-
-// MetadataConfig configures the sharded metadata plane: one pebble shard per
-// node, partitioned by key range, serving cluster-scope listings.
-//
-// Off by default. The plane is derived, so turning it on costs a rebuild and
-// turning it off costs nothing — a node with it disabled keeps the per-node
-// index and the listing merge, which is what every release so far has run.
-type MetadataConfig struct {
-	// Sharded turns the plane on.
-	Sharded bool `yaml:"sharded,omitempty"`
-
-	// Ranges is how many ranges the key space is presplit into when the plane
-	// is first partitioned (default DefaultMetadataRanges). Ignored afterwards:
-	// re-partitioning a live cluster would move every range at once.
-	Ranges int `yaml:"ranges,omitempty"`
-
-	// Replicas is how many nodes hold each range, owner included (default
-	// DefaultMetadataReplicas). 1 means no followers, so every lost owner costs
-	// a cluster-wide rebuild rather than a promotion.
-	Replicas int `yaml:"replicas,omitempty"`
-
-	// MaxRangeBytes is the size above which a range splits (default
-	// shardstore.DefaultMaxRangeBytes).
-	//
-	// The number that matters is what a *move* of one range costs, since that
-	// is the unit a rebalance shifts: a range too large to hand to another node
-	// in reasonable time is one the cluster cannot rebalance, however even the
-	// partition looks on paper.
-	MaxRangeBytes uint64 `yaml:"max_range_bytes,omitempty"`
-
-	// MaxSplitsPerPass bounds how many ranges one reconciliation splits
-	// (default shardstore.DefaultMaxSplitsPerPass). Splitting moves no data,
-	// but each one is a map revision every node in the cluster refetches.
-	MaxSplitsPerPass int `yaml:"max_splits_per_pass,omitempty"`
-
-	// Rebuild is when the plane rebuilds itself without being asked:
-	// "on_failure" (default), "always" or "never".
-	//
-	// The two ways a plane ends up unbuilt want different answers. Switching it
-	// on over a cluster that already holds objects is planned — an operator
-	// chose the moment, and they can choose the window for the walk of every
-	// disk that follows, which on a large cluster is hours of I/O competing with
-	// serving traffic. A failure that leaves a range with no copy of its data is
-	// not planned: the plane is degraded now, every listing in the cluster is on
-	// the slow path meanwhile, and waiting for a human is waiting for nothing.
-	//
-	// So the default rebuilds after a failure and waits to be told after an
-	// enable. "always" covers both, for a cluster small enough that the walk is
-	// not an event; "never" leaves both to an operator.
-	Rebuild string `yaml:"rebuild,omitempty"`
-
-	// RebalanceGap is how much busier, in writes a second, the busiest node
-	// must be than the quietest before a range is moved to even them out
-	// (default shardstore.DefaultRebalanceGap).
-	//
-	// A floor rather than a ratio, because a quiet node makes any ratio look
-	// infinite: a cluster doing almost nothing would shuffle ranges over a
-	// handful of writes. Raise it on a cluster whose load is spiky, where a
-	// difference that exists now will be gone before a copy of a range
-	// finishes.
-	RebalanceGap float64 `yaml:"rebalance_gap,omitempty"`
-}
-
-// MetadataMaxRangeBytes is the configured split threshold, or the default.
-func (c *Config) MetadataMaxRangeBytes() uint64 { return c.Cluster.Metadata.MaxRangeBytes }
-
-// MetadataMaxSplitsPerPass is the configured per-pass cap, or the default.
-func (c *Config) MetadataMaxSplitsPerPass() int { return c.Cluster.Metadata.MaxSplitsPerPass }
-
-// Metadata rebuild policies.
-const (
-	// RebuildOnFailure rebuilds when a failure orphaned a range, and waits to be
-	// told when the plane has merely never been built.
-	RebuildOnFailure = "on_failure"
-	// RebuildAlways rebuilds whenever the plane is not ready.
-	RebuildAlways = "always"
-	// RebuildNever leaves every rebuild to an operator.
-	RebuildNever = "never"
-)
-
-// MetadataRebuild is the configured rebuild policy, or the default.
-func (c *Config) MetadataRebuild() string {
-	if c.Cluster.Metadata.Rebuild == "" {
-		return RebuildOnFailure
-	}
-
-	return c.Cluster.Metadata.Rebuild
-}
-
-// MetadataRebalanceGap is the configured rebalance threshold, or the default.
-func (c *Config) MetadataRebalanceGap() float64 { return c.Cluster.Metadata.RebalanceGap }
-
-// MetadataRanges is the configured presplit count, or the default.
-func (c *Config) MetadataRanges() int {
-	if c.Cluster.Metadata.Ranges > 0 {
-		return c.Cluster.Metadata.Ranges
-	}
-
-	return DefaultMetadataRanges
-}
-
-// MetadataReplicas is the configured replica count, or the default.
-func (c *Config) MetadataReplicas() int {
-	if c.Cluster.Metadata.Replicas > 0 {
-		return c.Cluster.Metadata.Replicas
-	}
-
-	return DefaultMetadataReplicas
-}
-
-// RebalanceConfig tunes automatic rebalancing: on a settled membership change
-// (node/disk/weight/rack), one node starts the elected rebalance walk without
-// operator action. Manual control (CLI, admin API) always wins.
-type RebalanceConfig struct {
-	// AutoDisabled turns automatic rebalancing off; relocation then happens
-	// only via periodic scrubs and manual runs.
-	AutoDisabled bool `yaml:"auto_disabled,omitempty"`
-	// Settle is how long the membership must be stable before data moves
-	// (hysteresis against flapping nodes and rolling restarts). Default 1m.
-	Settle time.Duration `yaml:"settle,omitempty"`
-	// Cooldown is the minimum gap between this node's automatic trigger
-	// attempts. Default 15m.
-	Cooldown time.Duration `yaml:"cooldown,omitempty"`
-	// FullWatermark is the disk-fullness fraction (0,1] beyond which the node
-	// warns that the disk should be drained (weight lowered) — with
-	// deterministic weighted placement, a weight change is what moves data
-	// off a full disk, and the auto-rebalancer converges it. Default 0.9.
-	FullWatermark float64 `yaml:"full_watermark,omitempty"`
-}
-
-// DefaultDiskWeight is the placement weight of a disk whose config does not
-// give one.
-const DefaultDiskWeight = 1.0
-
-// ClusterDiskConfig is one local disk exposed to the cluster.
-type ClusterDiskConfig struct {
-	// ID identifies the disk within this node. Required.
-	ID string `yaml:"id"`
-	// Path is the disk's root directory. Required.
-	Path string `yaml:"path"`
-	// Weight is the relative capacity weight for placement (default 1). A
-	// weight that is not positive drains the disk: no new data is placed on
-	// it, and the auto-rebalancer moves what it holds elsewhere.
-	//
-	// A pointer so that zero is a value and not an absence. It used to be a
-	// plain float64 with omitempty, which made an omitted key and an explicit
-	// `weight: 0` the same — so 0 was read as "unset" and became 1, and the
-	// documented way to drain a disk placed it at full weight instead.
-	Weight *float64 `yaml:"weight,omitempty"`
-}
-
-// PlacementWeight is the weight this disk is placed at: what the config says,
-// or the default when it says nothing.
-func (d ClusterDiskConfig) PlacementWeight() float64 {
-	if d.Weight == nil {
-		return DefaultDiskWeight
-	}
-
-	return *d.Weight
-}
-
-// EtcdConfig configures the etcd control-plane connection.
-type EtcdConfig struct {
-	// Endpoints are the etcd client URLs. Required in cluster mode. An
-	// "https://" endpoint is served over TLS; see TLS below.
-	Endpoints []string `yaml:"endpoints"`
-	// Prefix namespaces this cluster's keys (default "/fs").
-	Prefix string `yaml:"prefix,omitempty"`
-	// TTL is the node registration lease: how long a dead node lingers in the
-	// topology (default 10s, minimum 1s).
-	TTL time.Duration `yaml:"ttl,omitempty"`
-	// TLS configures the transport to etcd.
-	TLS EtcdTLSConfig `yaml:"tls,omitempty"`
-	// Auth configures etcd role-based authentication.
-	Auth EtcdAuthConfig `yaml:"auth,omitempty"`
-}
-
-// EtcdTLSConfig is the TLS material for the etcd connection.
-//
-// Any of these fields turns TLS on. So does an "https://" endpoint with none
-// of them set, which then verifies against the system roots — the etcd client
-// decides on the transport from this config alone and ignores the URL scheme,
-// so an https endpoint without it would quietly speak cleartext to a port that
-// expects TLS.
-type EtcdTLSConfig struct {
-	// CAFile is the PEM bundle etcd's server certificate is verified against.
-	// Empty uses the system roots.
-	CAFile string `yaml:"ca_file,omitempty"`
-	// CertFile and KeyFile are this client's certificate for mutual TLS. Both
-	// or neither.
-	CertFile string `yaml:"cert_file,omitempty"`
-	KeyFile  string `yaml:"key_file,omitempty"`
-	// ServerName overrides the name verified against the server certificate,
-	// for reaching etcd through an address its certificate does not name.
-	ServerName string `yaml:"server_name,omitempty"`
-	// InsecureSkipVerify disables server certificate verification. It makes
-	// TLS decorative — anything on the path can impersonate etcd, which holds
-	// the cluster's sealed credentials — and exists for development against
-	// self-signed certificates only.
-	InsecureSkipVerify bool `yaml:"insecure_skip_verify,omitempty"`
-}
-
-// enabled reports whether any TLS material was configured.
-func (t EtcdTLSConfig) enabled() bool {
-	return t.CAFile != "" || t.CertFile != "" || t.KeyFile != "" ||
-		t.ServerName != "" || t.InsecureSkipVerify
-}
-
-// EtcdAuthConfig is an etcd username and password.
-type EtcdAuthConfig struct {
-	// Username is the etcd user. The FS_ETCD_USERNAME environment variable
-	// takes precedence.
-	Username string `yaml:"username,omitempty"`
-	// Password authenticates Username. The FS_ETCD_PASSWORD environment
-	// variable takes precedence, and is the way to supply it without writing
-	// a password into a config file.
-	Password string `yaml:"password,omitempty"`
-}
-
-// EtcdUsername and EtcdPassword resolve the effective etcd credentials
-// (FS_ETCD_USERNAME / FS_ETCD_PASSWORD override the config values), so a
-// deployment can keep the password out of the config file entirely.
-func (c *Config) EtcdUsername() string {
-	if env := os.Getenv("FS_ETCD_USERNAME"); env != "" {
-		return env
-	}
-
-	return c.Cluster.Etcd.Auth.Username
-}
-
-func (c *Config) EtcdPassword() string {
-	if env := os.Getenv("FS_ETCD_PASSWORD"); env != "" {
-		return env
-	}
-
-	return c.Cluster.Etcd.Auth.Password
-}
-
-// ClusterSecret resolves the effective cluster secret (FS_CLUSTER_SECRET
-// overrides the config value).
-func (c *Config) ClusterSecret() string {
-	if env := os.Getenv("FS_CLUSTER_SECRET"); env != "" {
-		return env
-	}
-
-	return c.Cluster.Secret
-}
-
-// ClusterNodeID resolves this node's ID (FS_CLUSTER_NODE_ID overrides the
-// config value). The env override lets an orchestrator inject a per-instance
-// identity — e.g. a Kubernetes StatefulSet setting it from the pod name — into
-// an otherwise shared config.
-func (c *Config) ClusterNodeID() string {
-	if env := os.Getenv("FS_CLUSTER_NODE_ID"); env != "" {
-		return env
-	}
-
-	return c.Cluster.NodeID
-}
-
-// ClusterAdvertiseAddr resolves the address peers dial to reach this node
-// (FS_CLUSTER_ADVERTISE_ADDR overrides the config value) — likewise
-// per-instance, e.g. a pod's stable DNS name.
-func (c *Config) ClusterAdvertiseAddr() string {
-	if env := os.Getenv("FS_CLUSTER_ADVERTISE_ADDR"); env != "" {
-		return env
-	}
-
-	return c.Cluster.AdvertiseAddr
-}
-
-// validateCluster checks the cluster section (called when storage.type is
-// "cluster").
-func (c *Config) validateCluster() error {
-	cc := c.Cluster
-
-	if c.ClusterNodeID() == "" {
-		return errors.New("cluster.node_id (or FS_CLUSTER_NODE_ID) is required")
-	}
-
-	if c.ClusterAdvertiseAddr() == "" {
-		return errors.New("cluster.advertise_addr (or FS_CLUSTER_ADVERTISE_ADDR) is required (peers must be able to dial this node)")
-	}
-
-	if len(c.ClusterSecret()) < 16 {
-		return errors.New("cluster.secret (or FS_CLUSTER_SECRET) is required, min 16 characters")
-	}
-
-	if cc.Scheme != "" {
-		if _, err := scheme.Parse(cc.Scheme); err != nil {
-			return errors.Wrap(err, "cluster.scheme")
-		}
-	}
-
-	if len(cc.Etcd.Endpoints) == 0 {
-		return errors.New("cluster.etcd.endpoints is required")
-	}
-
-	switch cc.Metadata.Rebuild {
-	case "", RebuildOnFailure, RebuildAlways, RebuildNever:
-	default:
-		return errors.Errorf("invalid cluster.metadata.rebuild %q (want %q, %q or %q)",
-			cc.Metadata.Rebuild, RebuildOnFailure, RebuildAlways, RebuildNever)
-	}
-
-	if cc.Etcd.TTL != 0 && cc.Etcd.TTL < time.Second {
-		return errors.New("cluster.etcd.ttl must be at least 1s")
-	}
-
-	if err := c.validateEtcdSecurity(); err != nil {
-		return err
-	}
-
-	if cc.Rebalance.Settle < 0 || cc.Rebalance.Cooldown < 0 {
-		return errors.New("cluster.rebalance.settle and .cooldown must not be negative")
-	}
-
-	if cc.Metadata.Ranges < 0 || cc.Metadata.Replicas < 0 {
-		return errors.New("cluster.metadata.ranges and .replicas cannot be negative")
-	}
-
-	if w := cc.Rebalance.FullWatermark; w < 0 || w > 1 {
-		return errors.New("cluster.rebalance.full_watermark must be in (0,1]")
-	}
-
-	seen := make(map[string]struct{}, len(cc.Disks))
-
-	for i, d := range cc.Disks {
-		if d.ID == "" || d.Path == "" {
-			return fmt.Errorf("cluster.disks[%d]: id and path are required", i)
-		}
-
-		if _, dup := seen[d.ID]; dup {
-			return fmt.Errorf("cluster.disks[%d]: duplicate disk id %q", i, d.ID)
-		}
-
-		seen[d.ID] = struct{}{}
-	}
-
-	return nil
-}
-
 // ObservabilityConfig contains telemetry and observability settings.
 type ObservabilityConfig struct {
 	// ServiceName for telemetry
@@ -729,26 +283,8 @@ func (c *Config) Validate() error {
 
 	switch c.Storage.Type {
 	case StorageTypeFilesystem:
-	case StorageTypeCluster:
-		if err := c.validateCluster(); err != nil {
-			return err
-		}
 	default:
-		return fmt.Errorf("unsupported storage type: %s (want %q or %q)", c.Storage.Type, StorageTypeFilesystem, StorageTypeCluster)
-	}
-
-	switch c.Auth.Source {
-	case "", AuthSourceFile:
-	case AuthSourceEtcd:
-		if c.Storage.Type != StorageTypeCluster {
-			return errors.Errorf("auth.source: %q requires cluster storage (storage.type: cluster)", AuthSourceEtcd)
-		}
-
-		if c.Auth.Disabled {
-			return errors.Errorf("auth.source: %q requires authentication enabled (auth.disabled is set)", AuthSourceEtcd)
-		}
-	default:
-		return errors.Errorf("invalid auth.source %q (want %q or %q)", c.Auth.Source, AuthSourceFile, AuthSourceEtcd)
+		return fmt.Errorf("unsupported storage type: %s (want %q)", c.Storage.Type, StorageTypeFilesystem)
 	}
 
 	if c.Server.ReadTimeout <= 0 {
