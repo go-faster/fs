@@ -20,7 +20,7 @@ import (
 // consistent reference environment — the general correctness matrix spans slow
 // shared macOS/windows/386 runners where absolute latency is pure noise and
 // moving hundreds of MiB is wasteful. They therefore run only when
-// FS_PERF_GATES is set, which the dedicated perf workflow does; elsewhere they
+// FS_PERF_GATES is set, which the perf workflow does; elsewhere they
 // skip. The throughput gate stays a machine-relative ratio even so.
 
 // nfr3ThroughputRatio is the NFR-3 large-object floor: backend throughput must
