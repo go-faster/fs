@@ -49,7 +49,7 @@ jobs:
           unzip -q /tmp/rclone.zip -d /tmp/rclone
           sudo install -m 0755 /tmp/rclone/rclone-*-linux-amd64/rclone /usr/local/bin/rclone
           # Report versions
-          aws --version; mcli --version; s3cmd --version; rclone --version | head -1
+          aws --version; mcli --version; s3cmd --version; rclone --version | sed -n 1p
 
       - name: Run CLI smoke matrix
         run: ./scripts/cli-smoke.sh
