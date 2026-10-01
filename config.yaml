@@ -51,7 +51,7 @@ storage:
 #   # Buckets readable anonymously (unsigned GET/HEAD/list).
 #   public_read_buckets: []
 
-# Admin API + web dashboard, on a separate bearer-token-protected listener.
+# Admin API, on a separate bearer-token-protected listener.
 # admin:
 #   enabled: false
 #   addr: "localhost:8090"

@@ -30,8 +30,8 @@ library. It began as a lightweight server for development and testing.
 
 ### Operability
 
-- Admin API + web dashboard on a separate bearer-token listener (runtime
-  access-key CRUD).
+- Admin API on a separate bearer-token listener (runtime access-key CRUD,
+  config reload).
 - `systemd` unit generation (`fs systemd`), commented config generation, and a
   library core with **no forced observability stack**.
 
@@ -87,11 +87,10 @@ verified; TLS certificates hot-reload without dropping connections. As a
 library, enable it with `server.WithAuth(store)` / `server.WithCORS(cfg)` — the
 bare handler stays anonymous unless you opt in.
 
-### Admin API & access-key dashboard
+### Admin API
 
 Multiple access-key/secret credentials can be managed **at runtime** — without a
-restart — through a separate admin listener that also serves a small web
-dashboard. Config-defined keys stay read-only and keys created through the admin
+restart — through a separate admin listener. Config-defined keys stay read-only and keys created through the admin
 API are persisted (`<root>/.access-keys.json`, mode `0600`) and survive restarts
 and `SIGHUP` reloads.
 
@@ -102,13 +101,10 @@ admin:
   token: "change-me"       # or set FS_ADMIN_TOKEN
 ```
 
-The dashboard (open `http://localhost:8090/`, paste the token) lists credentials
-and their grants, creates keys (generating the access key and secret, shown
-once), and deletes runtime keys. The same operations are available as a JSON API
-under `/api/v1` (bearer-token protected), generated from
-[`_oas/admin.yml`](_oas/admin.yml) with [ogen](https://github.com/ogen-go/ogen);
-the dashboard is a TypeScript/React SPA whose typed client is generated from the
-same spec with [Orval](https://orval.dev):
+It is a JSON API under `/api/v1` (bearer-token protected), generated from
+[`_oas/admin.yml`](_oas/admin.yml) with [ogen](https://github.com/ogen-go/ogen):
+list credentials and their grants, create keys (generating the access key and
+secret, shown once), delete runtime keys, and reload the config:
 
 ```bash
 # List credentials

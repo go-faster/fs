@@ -13,41 +13,6 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
-// ApplyMigrations implements applyMigrations operation.
-//
-// Apply every pending migration in order, under the cluster-wide migrate election, and record the new
-// schema version — the admin-API equivalent of `fs cluster migrate`. Run it once a rolling upgrade
-// has replaced every node's binary; until then the cluster keeps operating at the old schema. Returns
-// 409 when a migration is already running or when the cluster's schema is newer than this binary
-// implements.
-//
-// POST /api/v1/cluster/migrate
-func (UnimplementedHandler) ApplyMigrations(ctx context.Context) (r *MigrationStatus, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// ClearDiskWeight implements clearDiskWeight operation.
-//
-// Restore the weight the node registers from its config. Clearing an override that is not set is not
-// an error. Returns 501 when the server is not in cluster mode.
-//
-// DELETE /api/v1/cluster/disk-weights/{node}/{disk}
-func (UnimplementedHandler) ClearDiskWeight(ctx context.Context, params ClearDiskWeightParams) error {
-	return ht.ErrNotImplemented
-}
-
-// ControlRebalance implements controlRebalance operation.
-//
-// Start, pause or resume the cluster-wide rebalance from this node. At most one rebalance runs
-// cluster-wide (etcd election); starting on several nodes leaves the extras waiting as standby
-// runners. Pausing stops this node's runner and keeps the resume cursor, so a later start/resume —
-// on any node — continues where it left off.
-//
-// POST /api/v1/cluster/rebalance
-func (UnimplementedHandler) ControlRebalance(ctx context.Context, req *RebalanceControlRequest) (r *RebalanceStatus, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
 // CreateAccessKey implements createAccessKey operation.
 //
 // Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -67,94 +32,12 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 	return ht.ErrNotImplemented
 }
 
-// GetBucketScheme implements getBucketScheme operation.
-//
-// The bucket's effective replication scheme, its explicit override (empty when the bucket follows the
-// cluster default) and the cluster default. Returns 404 when the bucket does not exist and 501 when
-// the server is not in cluster mode (a single-node server has no per-bucket schemes).
-//
-// GET /api/v1/buckets/{bucket}/scheme
-func (UnimplementedHandler) GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (r *BucketScheme, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// GetBucketUsage implements getBucketUsage operation.
-//
-// How many objects each bucket holds and how many bytes they occupy, read from the cluster's durable
-// usage index rather than computed on demand — counting on demand would mean a scatter-gather over
-// every disk, which is exactly what makes it unusable at the size where the question matters. The
-// totals are maintained incrementally as objects are written and deleted, and re-derived from the
-// objects themselves by a periodic cluster-wide recount. Between recounts a total can drift: a node
-// that dies between committing a write and reporting it leaves its bucket short. Read `counted` to see
-// when a total was last anchored, and `updated` for the last incremental change. Multipart uploads are
-// counted only once completed; parts in flight are not objects and are not charged to the bucket.
-// Returns 501 when the server is not in cluster mode.
-//
-// GET /api/v1/buckets/usage
-func (UnimplementedHandler) GetBucketUsage(ctx context.Context) (r *BucketUsageList, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// GetClusterStatus implements getClusterStatus operation.
-//
-// Cluster-wide view read from the control plane: the agreed schema version, every node with its disks
-// and reported capacity, aggregate capacity, placement skew and whether a rebalance is currently
-// running. State is "disabled" when the server is not in cluster mode.
-//
-// GET /api/v1/cluster/status
-func (UnimplementedHandler) GetClusterStatus(ctx context.Context) (r *ClusterStatus, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
 // GetInfo implements getInfo operation.
 //
 // Build information, uptime and whether authentication is enabled.
 //
 // GET /api/v1/info
 func (UnimplementedHandler) GetInfo(ctx context.Context) (r *InstanceInfo, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// GetMetadataPlaneStatus implements getMetadataPlaneStatus operation.
-//
-// Whether the sharded metadata plane is usable, and when it is not, why. A plane that is building
-// still answers every listing correctly — the request falls back to walking sidecars, which is
-// slower — so this is the difference between a cluster that is slow and one that is broken. State is
-// "disabled" when the server is not running the sharded plane.
-//
-// GET /api/v1/cluster/metadata-plane
-func (UnimplementedHandler) GetMetadataPlaneStatus(ctx context.Context) (r *MetadataPlaneStatus, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// GetMigrationStatus implements getMigrationStatus operation.
-//
-// The schema version the cluster has agreed on, the version this binary implements, and the migrations
-// still pending between them. State is "disabled" when the server is not in cluster mode.
-//
-// GET /api/v1/cluster/migrate
-func (UnimplementedHandler) GetMigrationStatus(ctx context.Context) (r *MigrationStatus, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// GetPublicReadBuckets implements getPublicReadBuckets operation.
-//
-// Buckets readable anonymously (unsigned GET/HEAD/list), cluster-wide. Available only with
-// cluster-wide credentials (auth.source: etcd); returns 501 otherwise, where public-read buckets are
-// managed in the config file per node.
-//
-// GET /api/v1/public-read-buckets
-func (UnimplementedHandler) GetPublicReadBuckets(ctx context.Context) (r *PublicReadBuckets, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// GetRebalanceStatus implements getRebalanceStatus operation.
-//
-// State and progress of the cluster rebalance runner on this node, the persisted resume cursor and the
-// depth of the async repair queue. State is "disabled" when the server is not in cluster mode.
-//
-// GET /api/v1/cluster/rebalance
-func (UnimplementedHandler) GetRebalanceStatus(ctx context.Context) (r *RebalanceStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -167,81 +50,16 @@ func (UnimplementedHandler) ListAccessKeys(ctx context.Context) (r *AccessKeyLis
 	return r, ht.ErrNotImplemented
 }
 
-// ListDiskWeights implements listDiskWeights operation.
-//
-// Every per-disk placement weight override currently set. An override replaces the weight the node
-// registers from its config, and survives the node restarting — it is how a disk is drained without
-// editing a config file. Returns 501 when the server is not in cluster mode.
-//
-// GET /api/v1/cluster/disk-weights
-func (UnimplementedHandler) ListDiskWeights(ctx context.Context) (r *DiskWeightList, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// RebuildMetadataPlane implements rebuildMetadataPlane operation.
-//
-// Start the cluster-wide rebuild the plane owes, now, whatever the configured policy. This is how an
-// operator answers the case the policy deliberately leaves alone: a plane switched on over a cluster
-// that already holds objects, where the walk of every disk that follows is theirs to schedule. At most
-// one rebuild runs cluster-wide (etcd election), and it checkpoints a cursor, so a request that races
-// another node's rebuild costs one campaign and no work. Returns 409 when this node is already running
-// one.
-//
-// POST /api/v1/cluster/metadata-plane
-func (UnimplementedHandler) RebuildMetadataPlane(ctx context.Context) (r *MetadataPlaneStatus, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
 // ReloadConfig implements reloadConfig operation.
 //
 // Re-read the configuration file and apply the parts that change without a restart — the
 // config-defined credentials and grants, the anonymously readable buckets and the TLS certificate —
 // exactly as SIGHUP does. Runtime credentials created through this API are preserved. Returns what was
 // reloaded and the config revision now in effect, so an orchestrator can confirm a config change
-// landed without shelling into the process. Returns 501 on a listener with nothing to reload (the
-// headless cluster admin serves no S3 data).
+// landed without shelling into the process.
 //
 // POST /api/v1/reload
 func (UnimplementedHandler) ReloadConfig(ctx context.Context) (r *ReloadResult, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// SetBucketScheme implements setBucketScheme operation.
-//
-// Override the bucket's replication scheme, or clear the override to restore the cluster default. The
-// scheme must parse ("rf2.5", "rf3" or "ec:k,m") and the current topology must be able to host it. The
-// change affects new writes cluster-wide within seconds; existing objects convert through
-// repair/rebalance. Returns the effective scheme after applying. Returns 400 when the scheme is
-// invalid or the topology cannot host it, 404 when the bucket does not exist and 501 when the server
-// is not in cluster mode.
-//
-// PUT /api/v1/buckets/{bucket}/scheme
-func (UnimplementedHandler) SetBucketScheme(ctx context.Context, req *SetBucketSchemeRequest, params SetBucketSchemeParams) (r *BucketScheme, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// SetDiskWeight implements setDiskWeight operation.
-//
-// Set the weight placement uses for one disk, until it is cleared. A weight that is not positive
-// drains the disk: no new data is placed on it and the auto-rebalancer moves what it holds elsewhere.
-// The override lives outside the node's registration, so a node republishing its record — which it
-// does on every capacity refresh and every restart — does not undo it. Accepted while the node is
-// down: the moment an operator most wants to drain a disk is often the moment it is unreachable. An
-// override for a disk that never appears is inert. Returns 501 when the server is not in cluster mode.
-//
-// PUT /api/v1/cluster/disk-weights/{node}/{disk}
-func (UnimplementedHandler) SetDiskWeight(ctx context.Context, req *SetDiskWeightRequest, params SetDiskWeightParams) (r *DiskWeight, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// SetPublicReadBuckets implements setPublicReadBuckets operation.
-//
-// Replace the cluster-wide public-read bucket list. The change propagates to every node within seconds
-// with no restart. Returns the stored list. Returns 400 on an invalid bucket name and 501 when not
-// using cluster-wide credentials.
-//
-// PUT /api/v1/public-read-buckets
-func (UnimplementedHandler) SetPublicReadBuckets(ctx context.Context, req *SetPublicReadBucketsRequest) (r *PublicReadBuckets, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

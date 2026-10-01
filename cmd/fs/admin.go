@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-faster/fs/adminapi"
+	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/internal/adminhandler"
 )
 
@@ -59,29 +60,17 @@ func resolveAdminKeysFile(cfg Config, absRoot string) string {
 }
 
 // adminServerConfig is what an admin listener serves: the listener settings,
-// the credential store, and the cluster control surfaces — all of the latter
-// nil outside cluster mode, where their endpoints report "disabled".
+// the credential store and the reloader.
 type adminServerConfig struct {
 	Admin       AdminConfig
-	Credentials adminhandler.CredentialManager
-	// AuthEnabled reports whether the S3 server enforces SigV4; false on the
-	// headless admin, which serves no S3.
+	Credentials *auth.Manager
+	// AuthEnabled reports whether the S3 server enforces SigV4.
 	AuthEnabled bool
 	StartTime   time.Time
-
-	Rebalance            adminhandler.RebalanceControl
-	Plane                adminhandler.PlaneControl
-	ClusterStatus        adminhandler.ClusterStatusSource
-	Migrations           adminhandler.MigrationControl
-	BucketSchemes        adminhandler.BucketSchemeStore
-	DiskWeights          adminhandler.DiskWeightStore
-	BucketUsage          adminhandler.BucketUsageSource
-	ClusterDefaultScheme string
-	// Reloader applies hot-reloadable config; nil where there is none.
-	Reloader *reloader
+	Reloader    *reloader
 }
 
-// runAdminServer serves the admin API and its embedded web dashboard on a
+// runAdminServer serves the admin API on a
 // separate listener until ctx is canceled. It requires a bearer token on every
 // API request. It returns an error only on a fatal serve failure.
 func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg adminServerConfig) error {
@@ -102,32 +91,12 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 	build := buildInfo()
 
 	opts := adminhandler.Options{
-		Manager:              cfg.Credentials,
-		Build:                adminhandler.BuildInfo{Version: build.Version, Commit: build.Commit},
-		AuthEnabled:          cfg.AuthEnabled,
-		StartTime:            cfg.StartTime,
-		Rebalance:            cfg.Rebalance,
-		Plane:                cfg.Plane,
-		ClusterStatus:        cfg.ClusterStatus,
-		Migrations:           cfg.Migrations,
-		BucketSchemes:        cfg.BucketSchemes,
-		DiskWeights:          cfg.DiskWeights,
-		BucketUsage:          cfg.BucketUsage,
-		ClusterDefaultScheme: cfg.ClusterDefaultScheme,
-	}
-
-	// Cluster-wide credential stores also manage the public-read bucket list;
-	// the file-backed manager does not, leaving those endpoints at 501.
-	if prs, ok := cfg.Credentials.(adminhandler.PublicReadStore); ok {
-		opts.PublicRead = prs
-	}
-
-	// Set the reload interface only when there is a reloader: a nil *reloader
-	// stored in the interface would read as non-nil and defeat the endpoint's
-	// "nothing to reload" guard.
-	if rel := cfg.Reloader; rel != nil {
-		opts.Reloader = rel
-		opts.ConfigRevision = rel.CurrentRevision
+		Manager:        cfg.Credentials,
+		Build:          adminhandler.BuildInfo{Version: build.Version, Commit: build.Commit},
+		AuthEnabled:    cfg.AuthEnabled,
+		StartTime:      cfg.StartTime,
+		Reloader:       cfg.Reloader,
+		ConfigRevision: cfg.Reloader.CurrentRevision,
 	}
 
 	handler := adminhandler.NewAdminAPI(opts)
@@ -141,14 +110,9 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 		return errors.Wrap(err, "create admin server")
 	}
 
-	// The UI middleware serves the SPA for non-/api paths and forwards /api/ to
-	// the ogen server; the bearer guard protects the API only (static assets and
-	// the SPA shell load without a token so the login page can render).
-	root := adminhandler.UIMiddleware()(bearerAuth(token, s))
-
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           root,
+		Handler:           bearerAuth(token, s),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return t.BaseContext() },
 	}
@@ -172,8 +136,8 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 	return nil
 }
 
-// bearerAuth wraps h so that only /api/ requests carrying the expected bearer
-// token are allowed through; other paths pass unauthenticated (static SPA).
+// bearerAuth wraps h so that only requests carrying the expected bearer token
+// are allowed through.
 func bearerAuth(token string, h http.Handler) http.Handler {
 	want := []byte("Bearer " + token)
 

@@ -20,73 +20,22 @@ type BuildInfo struct {
 	Commit  string
 }
 
-// CredentialManager is the runtime access-key store the admin API manages. Both
-// the local file-backed store (*auth.Manager) and the etcd-backed cluster store
-// satisfy it, so the same endpoints serve single-node and cluster-wide
-// credentials. Its methods do not take a context: the file store is in-memory,
-// and the cluster store reads from a watch-maintained snapshot for List while
-// bounding its own etcd writes for Create/Delete.
-type CredentialManager interface {
-	// List returns every credential, secrets omitted, sorted by access key.
-	List() []auth.KeyInfo
-	// Create adds a credential, generating the access key and/or secret when
-	// CreateInput leaves them empty, and returns the secret exactly once.
-	Create(in auth.CreateInput) (*auth.Created, error)
-	// Delete removes a credential by access key.
-	Delete(accessKey string) error
-}
-
 // Options configures an AdminAPI.
 type Options struct {
-	// Manager is the access-key store to manage. Optional: nil disables the
-	// access-key endpoints (they return 501) — e.g. a headless cluster admin
-	// with file-backed credentials, which live on the data nodes.
-	Manager CredentialManager
+	// Manager is the access-key store to manage. Required.
+	Manager *auth.Manager
 	// Build is reported by GetInfo.
 	Build BuildInfo
 	// AuthEnabled reports whether the S3 server enforces SigV4.
 	AuthEnabled bool
 	// StartTime is the process start, for uptime. Defaults to now.
 	StartTime time.Time
-	// Rebalance drives the cluster rebalance runner; nil outside cluster mode
-	// (the endpoints then report "disabled" / refuse control).
-	Rebalance RebalanceControl
-	// Plane reports the sharded metadata plane and starts the rebuild it owes;
-	// nil when the node does not run the plane (the status endpoint then
-	// reports "disabled" and the rebuild is refused).
-	Plane PlaneControl
-	// ClusterStatus assembles the cluster-wide status; nil outside cluster mode
-	// (the endpoint then reports "disabled").
-	ClusterStatus ClusterStatusSource
-	// Migrations reports and applies cluster schema migrations; nil outside
-	// cluster mode (the endpoint then reports "disabled" and refuses to apply).
-	Migrations MigrationControl
 	// Reloader applies hot-reloadable configuration on demand (POST
-	// /api/v1/reload); nil on a listener with nothing to reload (the headless
-	// cluster admin), where the endpoint returns 501.
+	// /api/v1/reload). Required.
 	Reloader Reloader
 	// ConfigRevision returns the config revision currently in effect, reported
 	// by GetInfo; nil reports none.
 	ConfigRevision func() string
-	// BucketSchemes reads and writes per-bucket replication-scheme overrides
-	// via the control plane; nil outside cluster mode (the scheme endpoints
-	// then return 501).
-	BucketSchemes BucketSchemeStore
-	// DiskWeights reads and writes per-disk placement weight overrides — how a
-	// disk is drained without editing a config file and restarting its node
-	// (fs SPEC §11.6). nil outside cluster mode (the endpoints return 501).
-	DiskWeights DiskWeightStore
-	// BucketUsage reads the durable per-bucket object accounting; nil outside
-	// cluster mode (the endpoint then returns 501), where the index lives in
-	// the control plane.
-	BucketUsage BucketUsageSource
-	// PublicRead reads and writes the cluster-wide public-read bucket list; nil
-	// unless the server uses cluster-wide credentials (the public-read endpoints
-	// then return 501).
-	PublicRead PublicReadStore
-	// ClusterDefaultScheme is the scheme applied to buckets without an override,
-	// echoed by the scheme endpoints. Empty when unknown.
-	ClusterDefaultScheme string
 	// now overrides the clock in tests.
 	now func() time.Time
 }
@@ -133,18 +82,8 @@ func (a *AdminAPI) GetInfo(_ context.Context) (*adminapi.InstanceInfo, error) {
 	return info, nil
 }
 
-// errNoCredentialStore reports that credential management is unavailable
-// (headless admin without a local auth manager).
-func (a *AdminAPI) errNoCredentialStore() *adminapi.ErrorStatusCode {
-	return apiErr(http.StatusNotImplemented, errors.New("credential management is not available on this admin listener"))
-}
-
 // ListAccessKeys returns all credentials, secrets omitted.
 func (a *AdminAPI) ListAccessKeys(_ context.Context) (*adminapi.AccessKeyList, error) {
-	if a.opts.Manager == nil {
-		return nil, a.errNoCredentialStore()
-	}
-
 	infos := a.opts.Manager.List()
 
 	keys := make([]adminapi.AccessKey, 0, len(infos))
@@ -167,10 +106,6 @@ func (a *AdminAPI) ListAccessKeys(_ context.Context) (*adminapi.AccessKeyList, e
 
 // CreateAccessKey creates a runtime credential.
 func (a *AdminAPI) CreateAccessKey(_ context.Context, req *adminapi.CreateAccessKeyRequest) (*adminapi.CreatedAccessKey, error) {
-	if a.opts.Manager == nil {
-		return nil, a.errNoCredentialStore()
-	}
-
 	grants, err := grantsFromAPI(req.Grants)
 	if err != nil {
 		return nil, apiErr(http.StatusBadRequest, err)
@@ -199,10 +134,6 @@ func (a *AdminAPI) CreateAccessKey(_ context.Context, req *adminapi.CreateAccess
 
 // DeleteAccessKey removes a runtime credential.
 func (a *AdminAPI) DeleteAccessKey(_ context.Context, params adminapi.DeleteAccessKeyParams) error {
-	if a.opts.Manager == nil {
-		return a.errNoCredentialStore()
-	}
-
 	err := a.opts.Manager.Delete(params.AccessKey)
 	switch {
 	case err == nil:
