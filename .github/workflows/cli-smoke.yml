@@ -39,10 +39,11 @@ jobs:
           # aws-cli + s3cmd
           pip install --upgrade awscli s3cmd
           # MinIO client (installed as mcli to avoid the Midnight Commander clash).
-          # `install` sets ownership+mode in one atomic step (a plain chmod after
-          # a root-owned copy fails with "Operation not permitted").
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mcli
-          sudo install -m 0755 /tmp/mcli /usr/local/bin/mcli
+          # Built from source: dl.min.io no longer serves community binaries
+          # (410 Gone). `install` sets ownership+mode in one atomic step (a plain
+          # chmod after a root-owned copy fails with "Operation not permitted").
+          GOBIN=/tmp/mcbin go install github.com/minio/mc@latest
+          sudo install -m 0755 /tmp/mcbin/mc /usr/local/bin/mcli
           # rclone
           curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
           unzip -q /tmp/rclone.zip -d /tmp/rclone
