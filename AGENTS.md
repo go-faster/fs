@@ -75,9 +75,10 @@ automated resumable migration and the public API becomes additive-only.
   (turnkey server with health, timeouts, graceful shutdown). No observability
   deps — callers inject via `Config.WrapHandler`.
 - `cmd/fs` — cobra CLI; wires config/flags/otel around `server`.
-- `internal/cluster`, `internal/cluster/placement` — topology types and
-  zone/rack-aware HRW placement, kept for the planned cluster engine (#279);
-  nothing in the server uses them yet.
+- `internal/cluster/layout` — the planned cluster engine's partition
+  assignment (#272): partitions to ordered node slots, spread over zones then
+  racks, stable across changes, balanced by capacity. Pure; nothing in the
+  server uses it yet.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 
