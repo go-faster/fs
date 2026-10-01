@@ -77,8 +77,11 @@ automated resumable migration and the public API becomes additive-only.
 - `cmd/fs` — cobra CLI; wires config/flags/otel around `server`.
 - `internal/cluster/layout` — the planned cluster engine's partition
   assignment (#272): partitions to ordered node slots, spread over zones then
-  racks, stable across changes, balanced by capacity. Pure; nothing in the
-  server uses it yet.
+  racks, stable across changes, balanced by capacity. Pure.
+- `internal/cluster/peer` — peer membership: HMAC-authenticated peer HTTP
+  (`Secret`), the adopted layout persisted under the data dir, and gossip that
+  spreads the highest layout version and discovers peers. Not wired into the
+  server yet.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

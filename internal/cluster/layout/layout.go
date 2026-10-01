@@ -39,27 +39,27 @@ type NodeID string
 
 // Node is a cluster member's role in the layout.
 type Node struct {
-	ID NodeID
+	ID NodeID `json:"id"`
 	// Zone is the coarsest failure domain, e.g. a datacenter.
-	Zone string
+	Zone string `json:"zone,omitempty"`
 	// Rack is the failure domain within a zone.
-	Rack string
+	Rack string `json:"rack,omitempty"`
 	// Capacity is the node's share of data, in bytes. Zero makes it a gateway
 	// that serves requests and holds no slots.
-	Capacity uint64
+	Capacity uint64 `json:"capacity"`
 }
 
 // Layout is one version of the cluster's partition assignment.
 type Layout struct {
 	// Version increases with every applied change; nodes adopt the highest.
-	Version uint64
+	Version uint64 `json:"version"`
 	// Widths are the slot prefixes the layout spreads for, ascending. The last
 	// is the slot count of every partition.
-	Widths []int
+	Widths []int `json:"widths"`
 	// Nodes are the members, sorted by ID.
-	Nodes []Node
+	Nodes []Node `json:"nodes"`
 	// Slots[p] is partition p's ordered node list.
-	Slots [][]NodeID
+	Slots [][]NodeID `json:"slots"`
 }
 
 // Options configures Compute.
@@ -125,6 +125,43 @@ func Compute(prev *Layout, nodes []Node, opts Options) (*Layout, error) {
 	l.Slots = c.slots
 
 	return l, nil
+}
+
+// Validate checks the structure every layout has, for one that arrived from
+// elsewhere: a power-of-two partition count, ascending widths, and every slot
+// filled by a distinct member that holds data.
+func (l *Layout) Validate() error {
+	n := len(l.Slots)
+	if n == 0 || n > 1<<16 || n&(n-1) != 0 {
+		return errors.Errorf("partition count %d is not a power of two up to 65536", n)
+	}
+
+	if len(l.Widths) == 0 || l.Widths[0] <= 0 || !slices.IsSorted(l.Widths) {
+		return errors.Errorf("bad widths %v", l.Widths)
+	}
+
+	data := make(map[NodeID]bool, len(l.Nodes))
+	for _, node := range l.Nodes {
+		data[node.ID] = node.Capacity > 0
+	}
+
+	for p, slots := range l.Slots {
+		if len(slots) != l.Width() {
+			return errors.Errorf("partition %d has %d slots, want %d", p, len(slots), l.Width())
+		}
+
+		for j, id := range slots {
+			if !data[id] {
+				return errors.Errorf("partition %d slot %d: %q is not a member with capacity", p, j, id)
+			}
+
+			if slices.Contains(slots[:j], id) {
+				return errors.Errorf("partition %d: %q holds two slots", p, id)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Width is the slot count of every partition.

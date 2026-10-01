@@ -38,6 +38,7 @@ func compute(t *testing.T, prev *layout.Layout, nodes []layout.Node, widths ...i
 
 	l, err := layout.Compute(prev, nodes, layout.Options{Widths: widths})
 	require.NoError(t, err)
+	require.NoError(t, l.Validate())
 	requireValid(t, l)
 
 	return l
@@ -293,5 +294,25 @@ func BenchmarkCompute(b *testing.B) {
 	for b.Loop() {
 		_, err := layout.Compute(nil, nodes, layout.Options{Partitions: 1024, Widths: []int{3, 6}})
 		require.NoError(b, err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	good := func() *layout.Layout { return compute(t, nil, grid(3, 1, 2), 3) }
+
+	for name, mutate := range map[string]func(*layout.Layout){
+		"no partitions":      func(l *layout.Layout) { l.Slots = nil },
+		"not a power of two": func(l *layout.Layout) { l.Slots = l.Slots[:3] },
+		"no widths":          func(l *layout.Layout) { l.Widths = nil },
+		"short partition":    func(l *layout.Layout) { l.Slots[7] = l.Slots[7][:2] },
+		"unknown node":       func(l *layout.Layout) { l.Slots[0][1] = "ghost" },
+		"node twice":         func(l *layout.Layout) { l.Slots[0][1] = l.Slots[0][0] },
+		"gateway in a slot":  func(l *layout.Layout) { l.Nodes[0].Capacity = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := good()
+			mutate(l)
+			require.Error(t, l.Validate())
+		})
 	}
 }

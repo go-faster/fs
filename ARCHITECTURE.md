@@ -16,8 +16,9 @@ It is usable two ways:
 
 A Garage-style cluster (zone/rack-aware replication) is planned, see
 [#279](https://github.com/go-faster/fs/issues/279). Its first piece is
-`internal/cluster/layout`, the pure partition-to-node assignment; nothing in
-the server uses it yet.
+`internal/cluster/layout`, the pure partition-to-node assignment, and
+`internal/cluster/peer`, which authenticates peer traffic and gossips the
+layout between nodes; nothing in the server uses them yet.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section
