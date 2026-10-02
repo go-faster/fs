@@ -117,13 +117,19 @@ func (e *Engine) response(ctx context.Context, v meta.Version) (*fs.GetObjectRes
 		return nil, err
 	}
 
+	r, err := e.reader(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &fs.GetObjectResponse{
-		Reader:       e.reader(ctx, p),
-		Size:         p.Size,
-		LastModified: p.LastModified,
-		ETag:         p.ETag,
-		Metadata:     p.Meta,
-		TagCount:     len(decodeAttrs(v).Tags),
+		Reader:               r,
+		ServerSideEncryption: algorithm(p.Enc),
+		Size:                 p.Size,
+		LastModified:         p.LastModified,
+		ETag:                 p.ETag,
+		Metadata:             p.Meta,
+		TagCount:             len(decodeAttrs(v).Tags),
 	}
 
 	if !v.Null {

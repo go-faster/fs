@@ -102,7 +102,9 @@ automated resumable migration and the public API becomes additive-only.
   replicated tables and blocks. Buckets are incarnations keyed by ID, objects
   are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are
   serialized on their coordinating node. Versioning is a view over the
-  version list (null versions while unset/suspended). Passes `storagetest` on
+  version list (null versions while unset/suspended). SSE-S3 seals data
+  through `internal/sse`; multipart parts are sealed as they arrive and not
+  re-encrypted at completion. Passes `storagetest` on
   one node and on three; not wired into the server yet.
 - Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
   compare per-(partition, slot) digests with the other replicas, pull what
