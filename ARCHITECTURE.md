@@ -19,7 +19,8 @@ A Garage-style cluster (zone/rack-aware replication) is planned, see
 `internal/cluster/layout`, the pure partition-to-node assignment, and
 `internal/cluster/peer`, which authenticates peer traffic and gossips the
 layout between nodes. `cmd/fs` runs membership when `cluster.node_id` is
-set, and the admin API applies layouts; storage does not use the layout yet.
+set, and the admin API applies layouts. `internal/cluster/table` adds
+replicated CRDT tables on top; storage does not use either yet.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section

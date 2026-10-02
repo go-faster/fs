@@ -87,6 +87,7 @@ type PeerState struct {
 type Member struct {
 	cfg    Config
 	client *http.Client
+	mux    *http.ServeMux
 
 	applyMu sync.Mutex
 
@@ -123,7 +124,10 @@ func New(cfg Config) (*Member, error) {
 			Timeout:   10 * time.Second,
 		},
 		peers: map[string]*PeerState{},
+		mux:   http.NewServeMux(),
 	}
+
+	m.routes()
 
 	for _, addr := range cfg.Peers {
 		m.learn(addr)
@@ -358,7 +362,50 @@ func (m *Member) Status() Status {
 // Handler serves this node's side of the peer protocol, authenticated with the
 // cluster secret.
 func (m *Member) Handler() http.Handler {
-	mux := http.NewServeMux()
+	return m.cfg.Secret.Handler(m.mux, m.cfg.Now)
+}
+
+// Handle registers another peer endpoint, served authenticated like the rest.
+// Register before serving.
+func (m *Member) Handle(pattern string, h http.Handler) {
+	m.mux.Handle(pattern, h)
+}
+
+// ID is this node's identity.
+func (m *Member) ID() layout.NodeID { return m.cfg.ID }
+
+// Addr returns the address of the node with the given ID, as last learned by
+// gossip.
+func (m *Member) Addr(id layout.NodeID) (string, bool) {
+	if id == m.cfg.ID {
+		return m.cfg.Addr, true
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, p := range m.peers {
+		if p.ID == id {
+			return p.Addr, true
+		}
+	}
+
+	return "", false
+}
+
+// Call sends an authenticated JSON request to the node with the given ID and
+// decodes the JSON answer into out, when out is not nil.
+func (m *Member) Call(ctx context.Context, id layout.NodeID, method, path string, in, out any) error {
+	addr, ok := m.Addr(id)
+	if !ok {
+		return errors.Errorf("no address known for node %q", id)
+	}
+
+	return m.call(ctx, method, addr, path, in, out)
+}
+
+func (m *Member) routes() {
+	mux := m.mux
 
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		// The caller just proved it holds the secret, so it is a peer worth
@@ -396,8 +443,6 @@ func (m *Member) Handler() http.Handler {
 
 		w.WriteHeader(http.StatusNoContent)
 	})
-
-	return m.cfg.Secret.Handler(mux, m.cfg.Now)
 }
 
 func (m *Member) call(ctx context.Context, method, addr, path string, in, out any) error {
