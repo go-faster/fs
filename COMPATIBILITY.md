@@ -92,33 +92,31 @@ Rejected with rationale, so expectations are clear:
 
 ## Durability & failure model
 
-**Atomicity.** Object writes (single PUT and multipart complete) stream to a
-staging file and are renamed into place, so a **torn or partially written
-object is never visible** — a crash mid-write leaves at most an orphaned
-temporary file, never a corrupt object in a listing. This holds regardless of
-the fsync setting and is verified by a crash-consistency test that `SIGKILL`s a
-writer mid-flight.
+**Atomicity.** Object content is written first — inline in the metadata row
+when at most 3 KiB, otherwise as 1 MiB content-addressed blocks — and a
+version becomes current only when its metadata row is written, after all of its
+blocks. Metadata writes are bbolt transactions, and a block file is written to a
+temporary file and renamed into place. A **torn or partially written object is
+never visible**: a crash mid-write leaves at most unreferenced blocks, which
+block GC removes. This holds regardless of the fsync setting.
 
 **Durability (`fsync` policy).** Configurable via `storage.fsync`:
 
 | Policy | Guarantee |
 |--------|-----------|
-| `none` | Fastest; an acknowledged write may be lost on power loss (never torn). |
-| `file` *(binary default)* | Object data is flushed before the write is acknowledged. |
-| `file+dir` | Data **and** the directory entry are flushed, so an acknowledged write survives a power loss. |
+| `file` *(default)* | Data and metadata are fsynced before the write is acknowledged, so an acknowledged write survives a power loss. |
+| `none` | No fsync; for development and CI. A crash may lose acknowledged writes (never torn). |
 
-(Directory fsync is a no-op on Windows, where the filesystem journals directory
-metadata; `file+dir` degrades to `file` there.)
+**Integrity.** Every block is named by its SHA-256 and verified on every read;
+corrupt bytes are never served. In a cluster a corrupt copy is dropped and
+fetched again from a replica, and anti-entropy repairs replicas that missed a
+write or lost a block. There is no background scrubber.
 
-**Integrity.** Every object stores a full-content checksum. A configurable
-verify-on-read (`integrity.verify_on_read`) rechecks it before serving and
-refuses to return corrupt bytes (HTTP 500). A background scrubber
-(`integrity.scrub_interval`) periodically walks all objects, reports bit-rot
-loudly, and can quarantine corrupt objects so they stop being served.
-
-**Failure scope.** The current release is **single-node**: it protects against
-process crashes and (under `file` / `file+dir`) power loss, and detects on-disk
-bit-rot. It does **not** protect against loss of the underlying disk — there is
-no replication yet. A Garage-style cluster with zone/rack-aware replication is
-planned ([#279](https://github.com/go-faster/fs/issues/279)); until then, run `go-faster/fs` on redundant storage
-(RAID / replicated volume) if disk-loss tolerance is required.
+**Failure scope.** A single node protects against process crashes and (under
+`file`) power loss, and detects on-disk bit-rot, but not against loss of the
+underlying disk; run it on redundant storage (RAID / replicated volume) if
+disk-loss tolerance is required. In cluster mode
+([#279](https://github.com/go-faster/fs/issues/279), experimental) each
+object's metadata and data are kept on three nodes of the layout, spread over
+zones then racks, and reads and writes need a quorum of 2 of 3, so the loss of
+one node or disk is tolerated.

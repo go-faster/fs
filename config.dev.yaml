@@ -20,8 +20,6 @@ storage:
   # Local development storage
   root: ".s3data"
 
-  type: "filesystem"
-
   # Pre-create development buckets
   buckets:
     - dev-bucket

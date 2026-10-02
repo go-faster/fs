@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/go-faster/errors"
 
@@ -48,22 +49,59 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 	stored := sealed(plain, c)
 	defer func() { _ = stored.Close() }()
 
-	buf := make([]byte, e.blockSize)
+	// Blocks are stored concurrently, a few at a time, while the next ones
+	// are read: a block's hash and its writes on the replicas overlap with
+	// cutting the next, instead of the stream waiting on each in turn.
+	var (
+		w      written
+		sizes  []int64
+		mu     sync.Mutex
+		hashes = map[int]block.Hash{}
+		failed error
+		wg     sync.WaitGroup
+		sem    = make(chan struct{}, inflight)
+	)
 
-	var w written
+	fail := func() error {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return failed
+	}
+
+	buf := make([]byte, e.blockSize)
 
 	for {
 		n, err := io.ReadFull(stored, buf)
 		if n > 0 {
+			// The goroutine owns its copy; buf is read into again at once.
 			chunk := bytes.Clone(buf[:n])
 
 			// Only a first chunk that already reached the end can be inline:
 			// the whole object is in it.
 			last := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
-			if len(w.blocks) == 0 && last && n <= e.inlineLimit {
+			if len(sizes) == 0 && last && n <= e.inlineLimit {
 				w.inline = chunk
-			} else if err := e.putBlock(ctx, owner, chunk, &w); err != nil {
-				return w, err
+			} else {
+				idx := len(sizes)
+				sizes = append(sizes, int64(n))
+
+				sem <- struct{}{}
+
+				wg.Go(func() {
+					defer func() { <-sem }()
+
+					h := block.Sum(chunk)
+					err := e.storeBlock(ctx, owner, h, chunk)
+
+					mu.Lock()
+					hashes[idx] = h
+
+					if err != nil && failed == nil {
+						failed = err
+					}
+					mu.Unlock()
+				})
 			}
 		}
 
@@ -71,11 +109,26 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 			break
 		}
 
-		if err != nil {
-			e.release(ctx, owner, w.blocks)
-
-			return w, errors.Wrap(err, "read object")
+		if err == nil {
+			err = fail()
 		}
+
+		if err != nil {
+			wg.Wait()
+			e.release(ctx, owner, locs(sizes, hashes))
+
+			return w, errors.Wrap(err, "write object")
+		}
+	}
+
+	wg.Wait()
+
+	w.blocks = locs(sizes, hashes)
+
+	if err := fail(); err != nil {
+		e.release(ctx, owner, w.blocks)
+
+		return w, err
 	}
 
 	if len(w.blocks) == 0 && len(w.inline) == 0 {
@@ -86,6 +139,19 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 	w.etag = hex.EncodeToString(h.Sum(nil))
 
 	return w, nil
+}
+
+// inflight bounds the blocks of one object being stored at once.
+const inflight = 4
+
+// locs assembles the stored blocks in order.
+func locs(sizes []int64, hashes map[int]block.Hash) []blockLoc {
+	out := make([]blockLoc, len(sizes))
+	for i, n := range sizes {
+		out[i] = blockLoc{Hash: hashes[i], Size: n}
+	}
+
+	return out
 }
 
 // counter counts the bytes read through it.
@@ -101,22 +167,32 @@ func (c *counter) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *written) error {
-	hash := block.Sum(data)
-
-	if err := e.refs.Insert(ctx, hash.String(), owner, meta.BlockRef{}); err != nil {
-		e.release(ctx, owner, w.blocks)
-
+// storeBlock references a block from owner, then stores it. The reference
+// comes first, so GC never finds the block unreferenced.
+func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, data []byte) error {
+	if err := e.refs.Insert(ctx, h.String(), owner, meta.BlockRef{}); err != nil {
 		return err
 	}
 
 	if _, err := e.blocks.Put(ctx, data); err != nil {
-		e.release(ctx, owner, append(w.blocks, blockLoc{Hash: hash}))
+		return err
+	}
+
+	return nil
+}
+
+// putBlock stores one block for owner and appends it to w; on failure it
+// releases everything w holds.
+func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *written) error {
+	h := block.Sum(data)
+
+	if err := e.storeBlock(ctx, owner, h, data); err != nil {
+		e.release(ctx, owner, append(w.blocks, blockLoc{Hash: h}))
 
 		return err
 	}
 
-	w.blocks = append(w.blocks, blockLoc{Hash: hash, Size: int64(len(data))})
+	w.blocks = append(w.blocks, blockLoc{Hash: h, Size: int64(len(data))})
 
 	return nil
 }

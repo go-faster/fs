@@ -1,7 +1,7 @@
 // Package server provides an embeddable S3-compatible HTTP server.
 //
 // It exposes the go-faster/fs S3 implementation as a library: construct a
-// storage backend (for example github.com/go-faster/fs/storagefs) and either
+// storage backend (for example github.com/go-faster/fs/engine) and either
 // build a bare http.Handler to mount into your own server, or use the Server
 // type for a turnkey HTTP server with health checks, timeouts and graceful
 // shutdown.

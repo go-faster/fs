@@ -1,9 +1,17 @@
 # Deployment
 
-go-faster/fs runs as a **single node** (`storage.type: filesystem`): one
-process, one data directory, no redundancy beyond the underlying disk. A
-Garage-style cluster (zone/rack-aware replication) is planned, see
-[#279](https://github.com/go-faster/fs/issues/279).
+go-faster/fs runs as a **single node** — one process, one data directory, no
+redundancy beyond the underlying disk — or, experimentally, as a replicated
+cluster (see [Cluster mode](#cluster-mode)). Both store data in the engine under
+`<storage.root>/.engine/`.
+
+**Upgrading from a filesystem-backend release.** The filesystem backend has
+been removed and its data directory is not converted. A node started on a root
+it wrote (one holding `.tmp`, `.meta`, `.multipart`, `.versions`,
+`.quarantine` or any non-dot directory) refuses to start and says so. Copy the
+objects out with the previous release (e.g. `aws s3 sync` / `mc mirror`) and
+into a new storage root served by this one. This is a pre-v1 break: there is no
+in-place migration.
 
 One binary (`fs s3`) and one YAML config. `fs s3 --generate-config` prints a
 fully-defaulted config to start from.
@@ -49,7 +57,7 @@ Released images are published to `ghcr.io/go-faster/fs`.
 
 ## Docker Compose
 
-`dev/observability/docker-compose.yml` stands up a **single filesystem node**
+`dev/observability/docker-compose.yml` stands up a **single node**
 plus a full observability stack (Grafana, Prometheus, Tempo, Jaeger, Alloy). It
 is a development/demo topology — the fs node uses a `tmpfs` `/data`
 (ephemeral). `dev/observability/run.sh` builds the binary and brings the stack
@@ -63,14 +71,14 @@ Use it to explore the metrics/traces pipeline, not for durable storage.
 
 ## Kubernetes / Helm
 
-The chart in `helm/go-faster-fs` deploys a **single-node filesystem** instance
+The chart in `helm/go-faster-fs` deploys a **single-node** instance
 (one StatefulSet replica). It is the right tool for a standalone S3 endpoint —
 CI fixtures, dev/test backends, a single-box deployment.
 
 Set `persistence.emptyDir: false` so a PVC (`volumeClaimTemplates`) backs the
 data directory; the default `emptyDir` is **ephemeral** and loses data on pod
 restart. Do **not** raise `replicaCount` or enable the HPA to "scale" it — extra
-replicas are independent, non-replicating filesystem nodes.
+replicas are independent, non-replicating single nodes.
 
 ```sh
 helm install fs ./helm/go-faster-fs \
@@ -104,12 +112,10 @@ exporters).
 
 ## Cluster mode
 
-Experimental (#279). With `storage.type: engine` and `cluster.node_id` set,
+Experimental (#279). With `cluster.node_id` set,
 each object's metadata and data live on three nodes of a layout applied with
 `fs layout apply`; writes and reads need two of them. A node's engine data is
 under `<storage.root>/.engine` (bbolt metadata + content-addressed blocks).
-With another `storage.type`, `cluster:` only forms membership and nothing is
-replicated — the server says so at startup.
 Peer traffic on `cluster.addr` (default `:7080`) is authenticated with the
 shared `cluster.secret` (HMAC over every request and response) but **not
 encrypted** — keep it on a private network and never expose it publicly. Each
@@ -126,7 +132,7 @@ in an unknown format stops the node from starting rather than being misread.
   `OTEL_EXPORTER_PROMETHEUS_HOST:PORT` (compose uses `:9464/metrics`).
 - **Traces**: `OTEL_TRACES_EXPORTER=otlp` + `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
 - **pprof**: set `PPROF_ADDR`.
-- **Engine** (`storage.type: engine`): `fs.engine.blocks.resync_pending` —
+- **Engine**: `fs.engine.blocks.resync_pending` —
   block copies a replica is missing, the number to watch —
   `fs.engine.blocks.corrupt`, `fs.engine.blocks.collected`,
   `fs.engine.sync.{out_of_sync,unreachable,age}{table}` (anti-entropy, cluster

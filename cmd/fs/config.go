@@ -13,8 +13,11 @@ import (
 	"github.com/go-faster/fs/server"
 )
 
-// StorageTypeFilesystem is the single-node filesystem storage backend.
-const StorageTypeFilesystem = "filesystem"
+// storage.fsync values.
+const (
+	fsyncFile = "file"
+	fsyncNone = "none"
+)
 
 // DefaultStorageRoot is the default directory for filesystem storage.
 const DefaultStorageRoot = ".s3data"
@@ -36,10 +39,7 @@ type Config struct {
 	// Cluster configures cluster membership; setting node_id turns it on.
 	Cluster ClusterConfig `yaml:"cluster,omitempty"`
 
-	// Integrity configuration
-	Integrity IntegrityConfig `yaml:"integrity"`
-
-	// Lifecycle configures enforcement of bucket lifecycle rules.
+	// Lifecycle configures	// Lifecycle configures enforcement of bucket lifecycle rules.
 	Lifecycle LifecycleConfig `yaml:"lifecycle,omitempty"`
 
 	// Encryption configures server-side encryption of object bodies at rest.
@@ -57,22 +57,7 @@ type Config struct {
 	Revision string `yaml:"revision,omitempty"`
 }
 
-// IntegrityConfig configures object integrity checking.
-type IntegrityConfig struct {
-	// VerifyOnRead recomputes and checks each object's checksum before serving
-	// it (costs a full extra read per GET). Off by default.
-	VerifyOnRead bool `yaml:"verify_on_read,omitempty"`
-
-	// ScrubInterval, if positive, runs a background scrubber that walks all
-	// objects on this cadence and reports bit-rot. Zero disables it.
-	ScrubInterval time.Duration `yaml:"scrub_interval,omitempty"`
-
-	// ScrubQuarantine moves corrupt objects aside (into <root>/.quarantine)
-	// instead of only reporting them.
-	ScrubQuarantine bool `yaml:"scrub_quarantine,omitempty"`
-}
-
-// DefaultLifecycleInterval is how often lifecycle rules are enforced. Expiry is
+// DefaultLifecycleInterval// DefaultLifecycleInterval is how often lifecycle rules are enforced. Expiry is
 // eventual by design — S3 promises the object goes away, not when — so the pass
 // is spaced to cost little rather than to be prompt.
 const DefaultLifecycleInterval = 12 * time.Hour
@@ -191,11 +176,9 @@ type StorageConfig struct {
 	// Root directory for S3 storage
 	Root string `yaml:"root"`
 
-	// Type of storage backend (currently only "filesystem" is supported)
-	Type string `yaml:"type"`
-
-	// Fsync is the durability policy: "none", "file" or "file+dir". The binary
-	// defaults to "file"; set "none" for dev/CI to trade durability for speed.
+	// Fsync is "file" (the default: an acknowledged write is on disk) or
+	// "none" (no fsync at all — for dev and CI, where a crash may lose
+	// acknowledged writes).
 	Fsync string `yaml:"fsync,omitempty"`
 
 	// Buckets to pre-create on startup (optional)
@@ -229,8 +212,7 @@ func DefaultConfig() Config {
 		},
 		Storage: StorageConfig{
 			Root:  DefaultStorageRoot,
-			Type:  StorageTypeFilesystem,
-			Fsync: "file",
+			Fsync: fsyncFile,
 		},
 		Lifecycle: LifecycleConfig{
 			Interval: DefaultLifecycleInterval,
@@ -288,10 +270,10 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	switch c.Storage.Type {
-	case StorageTypeFilesystem, StorageTypeEngine:
+	switch c.Storage.Fsync {
+	case "", fsyncNone, fsyncFile:
 	default:
-		return fmt.Errorf("unsupported storage type: %s (want %q or %q)", c.Storage.Type, StorageTypeFilesystem, StorageTypeEngine)
+		return fmt.Errorf("invalid storage.fsync %q (want \"file\" or \"none\")", c.Storage.Fsync)
 	}
 
 	if c.Server.ReadTimeout <= 0 {

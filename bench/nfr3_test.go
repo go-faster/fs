@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,10 +42,15 @@ func requirePerfGates(t *testing.T) {
 	}
 }
 
-// TestNFR3PutAllocsConstant verifies PUT allocations are amortized O(1) — a
-// PUT of a 256 MiB object must not allocate materially more than a 64 KiB one
-// (no full-object buffering; the body streams through a fixed copy buffer).
-func TestNFR3PutAllocsConstant(t *testing.T) {
+// TestNFR3PutAllocsPerBlock verifies a PUT streams: whatever it allocates
+// beyond a fixed per-request overhead is a constant per block, never a
+// function of what the body has accumulated so far.
+//
+// The engine stores an object as blocks, and each block is its own reference
+// row and block write, so allocations grow with the block count. What must not
+// happen is anything worse than linear in blocks — buffering, or work that
+// grows with the object.
+func TestNFR3PutAllocsPerBlock(t *testing.T) {
 	if testing.Short() {
 		t.Skip("allocation gate builds large objects")
 	}
@@ -59,14 +68,75 @@ func TestNFR3PutAllocsConstant(t *testing.T) {
 	}
 
 	small := measure(64 << 10)
-	large := measure(sizeHuge) // 256 MiB — 4096× the small object.
+	large := measure(sizeHuge)
 
-	t.Logf("PUT allocs/op: 64KiB=%.0f, 256MiB=%.0f", small, large)
+	const (
+		blockSize      = 1 << 20 // engine.DefaultBlockSize.
+		perBlockBudget = 128
+	)
 
-	// A streaming PUT's allocations are dominated by fixed per-request
-	// overhead; a 4096× size increase must not add more than a small constant.
-	assert.LessOrEqual(t, large, small+8,
-		"PUT allocations must be O(1) in object size (streaming); got %.0f vs %.0f", large, small)
+	blocks := float64(sizeHuge / blockSize)
+	perBlock := (large - small) / blocks
+
+	t.Logf("PUT allocs/op: 64KiB=%.0f, 256MiB=%.0f (%.0f blocks, %.1f allocs/block)", small, large, blocks, perBlock)
+
+	assert.LessOrEqual(t, perBlock, float64(perBlockBudget),
+		"PUT allocations must stay a constant per block; got %.1f per block", perBlock)
+}
+
+// TestNFR3PutMemoryBounded is the guarantee the allocation gate stands in for:
+// a PUT holds a few blocks at once, not the object. The live heap is sampled
+// while a 256 MiB object is written, under an aggressive GC so that garbage
+// does not read as live, and must stay far below the object's size.
+func TestNFR3PutMemoryBounded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("memory gate builds a large object")
+	}
+
+	s, _ := benchStore(t)
+
+	defer debug.SetGCPercent(debug.SetGCPercent(10))
+
+	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+
+	runtime.GC()
+	metrics.Read(sample)
+	base := sample[0].Value.Uint64()
+
+	var (
+		peak atomic.Uint64
+		done = make(chan struct{})
+		wg   sync.WaitGroup
+	)
+
+	wg.Go(func() {
+		local := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Millisecond):
+			}
+
+			metrics.Read(local)
+
+			if v := local[0].Value.Uint64(); v > peak.Load() {
+				peak.Store(v)
+			}
+		}
+	})
+
+	putObject(t, s, "memory", sizeHuge, newBody(sizeHuge))
+	close(done)
+	wg.Wait()
+
+	const ceiling = 64 << 20
+
+	grew := int64(peak.Load()) - int64(base) //nolint:gosec // Heap sizes fit in int64.
+	t.Logf("PUT of %d MiB: live heap grew by at most %d MiB", sizeHuge>>20, grew>>20)
+
+	assert.Less(t, grew, int64(ceiling), "a PUT must hold a few blocks, not the object")
 }
 
 // TestNFR3LargeObjectThroughput gates large-object PUT and GET throughput at

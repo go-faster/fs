@@ -23,8 +23,8 @@ library. It began as a lightweight server for development and testing.
   (`read`/`write`/`admin`), public-read buckets and canned ACLs.
 - Hot-reloadable TLS; credential and certificate reload on `SIGHUP` with no
   restart.
-- Crash-atomic writes, `fsync` policy control, a background bit-rot scrubber and
-  optional verify-on-read.
+- Crash-atomic writes, `fsync` policy control, and content-addressed blocks
+  verified on every read.
 - Compatible with the AWS CLI, MinIO client (`mc`), `s3cmd`, `rclone` and the
   AWS SDKs; liveness/readiness endpoints and OpenTelemetry metrics/traces.
 
@@ -118,7 +118,7 @@ curl -H "Authorization: Bearer $FS_ADMIN_TOKEN" -H "Content-Type: application/js
 
 ### Cluster mode (experimental)
 
-With `storage.type: engine`, nodes form a cluster: every object's metadata and
+With `cluster.node_id` set, nodes form a cluster: every object's metadata and
 data are kept on three nodes, spread across zones then racks, written and read
 at quorum, and repaired in the background (Garage-style; see
 [#279](https://github.com/go-faster/fs/issues/279)). Nodes agree on a
@@ -172,11 +172,15 @@ the hot credential/TLS reload.
 
 ## Operations
 
-- **Durability** — `storage.fsync` (`none` / `file` / `file+dir`, default
-  `file`) controls fsync aggressiveness; writes are always crash-atomic (no torn
-  object). A background scrubber (`integrity.scrub_interval`) detects bit-rot and
-  can quarantine corrupt objects; `integrity.verify_on_read` checks each object
-  before serving.
+- **Durability** — data lives in the engine under `<storage.root>/.engine`
+  (bbolt metadata + SHA-256-named blocks). `storage.fsync` is `file` (default:
+  data and metadata are fsynced before a write is acknowledged) or `none`
+  (dev/CI only); writes are always crash-atomic (no torn object). Every block is
+  verified on read, and in a cluster anti-entropy repairs replicas.
+- **Upgrading from a filesystem-backend release** — the filesystem backend is
+  gone and its data directory is not converted: the server refuses to start on
+  one. Copy the objects out with the previous release into a new storage root
+  (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 - **Health & readiness** — `/health` (liveness: the process is up) and `/ready`
   (readiness: storage is reachable, 503 otherwise). Prometheus `/metrics` and
   pprof are served on a separate listener (default `localhost:9464`,
@@ -241,7 +245,6 @@ server:
 
 storage:
   root: ".s3data"
-  type: "filesystem"
 
 observability:
   service_name: "go-faster/fs"
@@ -253,8 +256,8 @@ observability:
 ## Use as a library
 
 The S3 server is embeddable. Install the module and pick a storage backend —
-[`storagefs`](storagefs) for the filesystem, [`storagemem`](storagemem) for
-in-memory, or your own implementation of the [`fs.Storage`](storage.go)
+[`engine`](engine) for durable storage (open it with `engine.Open` and release
+it with `Close`), [`storagemem`](storagemem) for in-memory, or your own implementation of the [`fs.Storage`](storage.go)
 interface:
 
 ```bash
@@ -286,15 +289,16 @@ package main
 import (
 	"net/http"
 
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/server"
-	"github.com/go-faster/fs/storagefs"
 )
 
 func main() {
-	store, err := storagefs.New("/data")
+	store, err := engine.Open("/data", engine.Options{})
 	if err != nil {
 		panic(err)
 	}
+	defer store.Close()
 
 	mux := http.NewServeMux()
 	mux.Handle("/s3/", http.StripPrefix("/s3", server.NewHandler(store)))

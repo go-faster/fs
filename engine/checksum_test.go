@@ -13,7 +13,6 @@ import (
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/sse"
-	"github.com/go-faster/fs/storagefs"
 )
 
 func digest(t *testing.T, a checksum.Algorithm, data []byte) string {
@@ -27,17 +26,14 @@ func digest(t *testing.T, a checksum.Algorithm, data []byte) string {
 	return checksum.Encode(h.Sum(nil))
 }
 
-// backends are the engine and storagefs, the behavior it replaces: checksums
-// must come out identical from both.
+// backends are the engines the checksum cases run on: one node and three.
 func backends(t *testing.T) map[string]fs.Storage {
 	t.Helper()
 
-	ref, err := storagefs.New(t.TempDir())
-	require.NoError(t, err)
-
-	e := cluster(t, 1, Config{BlockSize: 4096, InlineLimit: 256})[0].engine
-
-	out := map[string]fs.Storage{"engine": e, "storagefs": ref}
+	out := map[string]fs.Storage{
+		"single": cluster(t, 1, Config{BlockSize: 4096, InlineLimit: 256})[0].engine,
+		"three":  cluster(t, 3, Config{BlockSize: 4096, InlineLimit: 256})[0].engine,
+	}
 	for _, s := range out {
 		require.NoError(t, s.CreateBucket(context.Background(), "b"))
 	}
@@ -132,13 +128,34 @@ func TestMultipartChecksum(t *testing.T) {
 			got[name] = done.Checksum
 		}
 
-		require.NotEmpty(t, got["engine"])
-		assert.Equal(t, got["storagefs"], got["engine"], "%s %s", c.alg, c.kind)
+		require.NotEmpty(t, got["single"])
+		assert.Equal(t, got["single"], got["three"], "%s %s", c.alg, c.kind)
 
 		if c.kind == checksum.FullObject {
-			assert.Equal(t, digest(t, c.alg, whole), got["engine"], "FULL_OBJECT is the digest of the whole body")
+			assert.Equal(t, digest(t, c.alg, whole), got["single"], "FULL_OBJECT is the digest of the whole body")
+		} else {
+			assert.Equal(t, composite(t, c.alg, parts), got["single"], "COMPOSITE is the digest of the part digests")
 		}
 	}
+}
+
+// composite computes what S3 reports for a composite multipart checksum: the
+// digest of the parts' digests, suffixed with the part count.
+func composite(t *testing.T, a checksum.Algorithm, parts [][]byte) string {
+	t.Helper()
+
+	raw := make([][]byte, len(parts))
+	for i, p := range parts {
+		d, err := a.Decode(digest(t, a, p))
+		require.NoError(t, err)
+
+		raw[i] = d
+	}
+
+	out, err := checksum.CompositeOf(a, raw)
+	require.NoError(t, err)
+
+	return out
 }
 
 func TestMultipartChecksumRefusals(t *testing.T) {

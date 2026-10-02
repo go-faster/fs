@@ -2,82 +2,32 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/go-faster/fs/internal/cluster/block"
-	"github.com/go-faster/fs/internal/cluster/layout"
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/internal/cluster/peer"
-	"github.com/go-faster/fs/internal/cluster/table"
-	"github.com/go-faster/fs/internal/engine"
 	"github.com/go-faster/fs/internal/sse"
 )
 
-// StorageTypeEngine is the storage engine over replicated metadata tables and
-// content-addressed blocks: a single node, or a cluster when cluster.node_id
-// is set.
-const StorageTypeEngine = "engine"
-
-// soloID is a single node's identity in its own one-node layout.
-const soloID = "local"
-
-// buildEngine opens the engine's metadata database and block store under
-// root. member is the cluster membership, or nil for a single node, which
-// gets a private one with a one-node layout.
-func buildEngine(root string, member *peer.Member, keyring *sse.Keyring) (*engine.Engine, error) {
-	dir := filepath.Join(root, ".engine")
-
-	if member == nil {
-		var err error
-		if member, err = soloMember(filepath.Join(dir, "solo")); err != nil {
-			return nil, err
-		}
-	}
-
-	db, err := table.OpenDB(filepath.Join(dir, "meta.db"))
-	if err != nil {
+// buildEngine opens the engine under root/.engine. member is the cluster
+// membership, nil for a single node.
+func buildEngine(root string, member *peer.Member, keyring *sse.Keyring, noSync bool) (*engine.Engine, error) {
+	if err := refuseLegacyLayout(root); err != nil {
 		return nil, err
 	}
 
-	store, err := block.NewStore(filepath.Join(dir, "blocks"))
-	if err != nil {
-		return nil, err
-	}
-
-	return engine.New(engine.Config{
-		Member:  member,
-		DB:      db,
-		Blocks:  block.NewManager(store, member),
+	return engine.Open(filepath.Join(root, ".engine"), engine.Options{
 		Keyring: keyring,
+		NoSync:  noSync,
+		Member:  member,
 	})
-}
-
-// soloMember is a single node's membership: never served, with a one-node
-// layout applied the first time.
-func soloMember(dir string) (*peer.Member, error) {
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return nil, errors.Wrap(err, "solo secret")
-	}
-
-	m, err := peer.New(peer.Config{ID: soloID, Addr: soloID, Secret: secret, Dir: dir})
-	if err != nil {
-		return nil, errors.Wrap(err, "solo membership")
-	}
-
-	if m.Layout() == nil {
-		roles := []layout.Node{{ID: soloID, Capacity: 1}}
-		if _, _, err := m.Apply(roles, layout.Options{Partitions: 1, Widths: []int{1}}, false); err != nil {
-			return nil, errors.Wrap(err, "solo layout")
-		}
-	}
-
-	return m, nil
 }
 
 // registerEngineMetrics exports what an operator needs to see the engine's
@@ -149,6 +99,41 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 	}, insts...)
 	if err != nil {
 		return errors.Wrap(err, "register engine metrics")
+	}
+
+	return nil
+}
+
+// refuseLegacyLayout stops the server on a data directory the removed
+// filesystem backend wrote. The engine would start on it as an empty store,
+// and the objects would look lost rather than unread.
+func refuseLegacyLayout(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+
+		return errors.Wrap(err, "read storage root")
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+
+		legacy := false
+
+		switch name {
+		case ".tmp", ".meta", ".multipart", ".versions", ".quarantine":
+			legacy = true
+		default:
+			legacy = e.IsDir() && !strings.HasPrefix(name, ".")
+		}
+
+		if legacy {
+			return errors.Errorf(
+				"%s holds data written by the filesystem backend (found %q), which this release no longer reads; "+
+					"copy the objects out with the previous release and into a new storage root", root, name)
+		}
 	}
 
 	return nil

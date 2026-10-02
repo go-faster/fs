@@ -5,14 +5,15 @@ code changes.
 
 ## What this is
 
-`github.com/go-faster/fs` — a single-node S3-compatible object storage server.
-It ships as both a CLI (`cmd/fs`) and an embeddable Go library (`server`,
-`storagefs`, `storagemem`). SigV4 auth is on by default; responses are S3 XML.
-Go 1.25.
+`github.com/go-faster/fs` — an S3-compatible object storage server that runs as
+a single node or as a replicated, failure-domain-aware cluster. It ships as both
+a CLI (`cmd/fs`) and an embeddable Go library (`server`, `engine`,
+`storagemem`). SigV4 auth is on by default; responses are S3 XML. Go 1.25.
 
 Status is **experimental**: the single-node server is mature and heavily
-conformance-tested. A Garage-style cluster (zone/rack-aware replication) is
-planned, see [#279](https://github.com/go-faster/fs/issues/279).
+conformance-tested; cluster mode
+([#279](https://github.com/go-faster/fs/issues/279)) is functional and still
+hardening.
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the layered design, package
 responsibilities, request lifecycle, and extension points. The summary below
@@ -68,7 +69,8 @@ automated resumable migration and the public API becomes additive-only.
 - `auth`, `cors` (public) — credential/grant store and per-bucket CORS config,
   wired via `server.WithAuth` / `server.WithCORS`. `auth.Manager` is the local
   (file) credential store.
-- `storagefs`, `storagemem` — filesystem and in-memory `fs.Storage` backends.
+- `engine` (public, formerly `internal/engine`) — the persistent storage,
+  described below; `storagemem` — the in-memory `fs.Storage` backend.
 - `storagetest` — exported conformance suite; every backend (and any
   third-party one) runs `storagetest.Run(t, factory)`. `RunExcept` skips named
   cases with a reason, for a known gap — never to get CI green on a new one.
@@ -81,14 +83,14 @@ automated resumable migration and the public API becomes additive-only.
   racks, stable across changes, balanced by capacity. Pure.
 - `internal/cluster/peer` — peer membership: HMAC-authenticated peer HTTP
   (`Secret`), the adopted layout persisted under the data dir, and gossip that
-  spreads the highest layout version and discovers peers. Not wired into the
-  server's storage yet: `cmd/fs/cluster.go` starts it (config `cluster:`,
+  spreads the highest layout version and discovers peers. The engine
+  replicates over it; `cmd/fs/cluster.go` starts it (config `cluster:`,
   metrics), the admin API exposes it (`/api/v1/cluster/*`), and `fs layout`
   drives it.
 - `internal/cluster/table` — replicated metadata tables: CRDT rows (merge
   must be commutative, associative, idempotent) keyed by partition key + sort
   key, stored locally in bbolt, written and read at quorum over the layout's
-  first three slots, with read repair. Not used by storage yet (#273).
+  first three slots, with read repair.
 - `internal/cluster/meta` — the metadata rows and their merges: buckets
   (incarnation + per-setting LWW registers), objects (version list: uploads,
   versions, delete markers, null versions; Uploading → Complete → Gone),
@@ -97,12 +99,15 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/cluster/block` — content-addressed blocks: a local disk store
   (SHA-256 names, verified on every read, corrupt copies dropped), replicated
   put/get over the hash's partition at quorum, an in-memory resync queue, and
-  GC of unreferenced blocks after a grace period. Not used by storage yet.
-- `internal/engine` — the storage engine (#277): `fs.Storage` over the
+  GC of unreferenced blocks after a grace period.
+- `engine` — the storage engine (#277): `fs.Storage` over the
   replicated tables and blocks. Buckets are incarnations keyed by ID, objects
   are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are
-  serialized on their coordinating node. Selected by `storage.type: engine`
-  (`cmd/fs/engine.go`: build, single-node membership, `fs.engine.*` metrics);
+  serialized on their coordinating node. It is the server's only persistent
+  storage: `engine.Open(dir, engine.Options{...})` lays out
+  `<root>/.engine/` (`meta.db`, `blocks/`, `solo/`), a single node being a
+  one-node layout (`cmd/fs/engine.go`: open, legacy-layout refusal,
+  `fs.engine.*` metrics);
   `engine.Run` drives anti-entropy, resync and block GC. Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 seals data
   through `internal/sse`; multipart parts are sealed as they arrive and not
@@ -154,7 +159,7 @@ about HTTP or S3; don't import upward.
 
 ## When adding a storage operation
 
-Add it to the `fs.Storage` interface, implement it in **both** `storagefs` and
+Add it to the `fs.Storage` interface, implement it in **both** `engine` and
 `storagemem`, add a `storagetest` conformance case (both backends inherit it),
 then `make generate` for the mock, and wire the handler/service.
 

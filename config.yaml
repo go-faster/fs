@@ -21,14 +21,14 @@ server:
 # Storage configuration
 storage:
   # Root directory for S3 storage
-  # This directory will contain all buckets and objects
+  # The engine keeps metadata (bbolt) and content-addressed blocks under
+  # <root>/.engine; a single node, or a cluster with `cluster:`.
   root: ".s3data"
 
-  # Storage backend type:
-  #   filesystem - one directory tree, a single node
-  #   engine     - replicated metadata tables + content-addressed blocks under
-  #                <root>/.engine; a single node, or a cluster with `cluster:`
-  type: "filesystem"
+  # Durability: "file" (default) fsyncs data and metadata before a write is
+  # acknowledged; "none" skips fsync (dev/CI only — a crash may lose
+  # acknowledged writes).
+  # fsync: "file"
 
   # Pre-create these buckets on startup (optional)
   # Useful for Kubernetes deployments or development environments
@@ -55,7 +55,7 @@ storage:
 #   public_read_buckets: []
 
 # Cluster mode (experimental). Setting node_id turns it on: nodes gossip and
-# agree on a layout (`fs layout`); with storage.type: engine, objects are kept
+# agree on a layout (`fs layout`), and objects are kept
 # on three nodes of it (https://github.com/go-faster/fs/issues/279).
 # cluster:
 #   node_id: "node-1"                 # or FS_CLUSTER_NODE_ID; unique per node

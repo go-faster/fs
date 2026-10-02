@@ -11,15 +11,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/internal/sse"
 	"github.com/go-faster/fs/server"
-	"github.com/go-faster/fs/storagefs"
 	"github.com/go-faster/fs/storagemem"
 )
 
 const sseHeader = "x-amz-server-side-encryption"
 
-// encryptingServer serves an encrypting storagefs over HTTP.
+// encryptingServer serves an engine with a master key over HTTP.
 func encryptingServer(t *testing.T, defaultAlgorithm string) string {
 	t.Helper()
 
@@ -32,8 +32,9 @@ func encryptingServer(t *testing.T, defaultAlgorithm string) string {
 	kr, err := sse.NewKeyring(mk)
 	require.NoError(t, err)
 
-	store, err := storagefs.New(t.TempDir(), storagefs.WithEncryption(kr))
+	store, err := engine.Open(t.TempDir(), engine.Options{Keyring: kr, NoSync: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
 
 	srv, err := server.New(server.Config{
 		Storage:           store,

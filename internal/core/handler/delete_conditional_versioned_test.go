@@ -7,19 +7,20 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/internal/core/handler"
 	"github.com/go-faster/fs/internal/core/service"
-	"github.com/go-faster/fs/storagefs"
 )
 
-// versionedHandler serves a versioned bucket over storagefs, which is the only
+// versionedHandler serves a versioned bucket over the engine, which is the only
 // backend that versions. The in-memory backend used by the rest of these tests
 // is not an fs.Versioner, so it cannot reach the path under test at all.
 func versionedHandler(t testing.TB) http.Handler {
 	t.Helper()
 
-	storage, err := storagefs.New(t.TempDir())
+	storage, err := engine.Open(t.TempDir(), engine.Options{NoSync: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
 
 	h := handler.New(service.New(storage))
 

@@ -23,7 +23,7 @@ and the reasoning as the durable part; refresh them when a cluster moves.
 
 Counts are from [go-faster/s3t](https://github.com/go-faster/s3t) at the
 pinned `S3T_REF`, run against an authenticated single-node server on
-`storagefs` with a fixture master key.
+the engine with a fixture master key.
 
 ## Totals
 

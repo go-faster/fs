@@ -1,6 +1,6 @@
 apiVersion: v2
 name: go-faster-fs
-description: S3-compatible storage server with filesystem backend
+description: S3-compatible object storage server
 
 # A chart can be either an 'application' or a 'library' chart.
 #

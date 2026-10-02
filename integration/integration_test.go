@@ -10,15 +10,16 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-faster/fs/storagefs"
+	"github.com/go-faster/fs/engine"
 )
 
 func newTestClient(t testing.TB) *minio.Client {
 	t.Helper()
 
 	// Create storage with temp directory (real filesystem)
-	storage, err := storagefs.New(t.TempDir())
+	storage, err := engine.Open(t.TempDir(), engine.Options{NoSync: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
 
 	// Create handler and test server (real HTTP server) via the public API
 	srv := newTestServer(t, storage)

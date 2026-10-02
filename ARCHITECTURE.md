@@ -22,9 +22,10 @@ layout between nodes. `cmd/fs` runs membership when `cluster.node_id` is
 set, and the admin API applies layouts. `internal/cluster/table` adds
 replicated CRDT tables on top, and `internal/cluster/meta` the bucket, object
 (version list) and block-ref rows they hold, and `internal/cluster/block`
-the content-addressed data blocks. `internal/engine` implements `fs.Storage`
-over them and passes the conformance suite on one node and on three;
-`storage.type: engine` selects it, alone or as a cluster.
+the content-addressed data blocks. The public `engine` package implements
+`fs.Storage` over them and passes the conformance suite on one node and on
+three; it is the server's only persistent storage, a single node being a
+one-node layout.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section
@@ -51,7 +52,7 @@ one.
    └─────────┬─────────┘
              │ fs.Storage
    ┌─────────▼─────────┐
-   │  storage backend  │  storagefs / storagemem / your own
+   │  storage backend  │  engine / storagemem / your own
    │  (bytes)          │  no knowledge of HTTP or S3
    └───────────────────┘
 ```
@@ -60,8 +61,8 @@ The seam between every layer is the **`fs.Storage`** interface
 (`storage.go`). The service is a validating decorator that implements
 `fs.Storage` and wraps a backend; the handler is constructed over an
 `fs.Storage` and does not know whether validation or a raw backend sits behind
-it. This is why a custom backend, the in-memory backend, and the filesystem
-backend are all interchangeable.
+it. This is why a custom backend, the in-memory backend, and the engine are
+all interchangeable.
 
 ## Packages
 
@@ -201,13 +202,13 @@ already-sanitised inputs.
 
 Both implement `fs.Storage` and are verified by the same conformance suite.
 
-- **`storagefs`** — filesystem backend. Root directory contains one
-  subdirectory per bucket; an object with key `a/b/c.txt` is stored at
-  `<root>/<bucket>/a/b/c.txt` (`toOSPath` maps `/` to the OS separator).
-  Deleting an object prunes now-empty parent directories up to the bucket
-  root, so a bucket whose objects are all gone is genuinely empty and can be
-  removed. ETags are MD5 digests. Multipart uploads are staged by a dedicated
-  manager and assembled on completion.
+- **`engine`** — the persistent storage, single node or cluster. Opened with
+  `engine.Open(dir, engine.Options{Keyring, NoSync, Member})` and released
+  with `Close`. Besides `fs.Storage` it implements versioning, SSE-S3,
+  checksums, object attributes, ownership, bucket CORS/lifecycle/settings and
+  bucket encryption. A nil `Member` runs a single node over a private one-node
+  layout; in cluster mode each object's metadata and data live on three nodes
+  of the layout (see [Engine](#engine)).
 - **`storagemem`** — in-memory backend backed by maps under a mutex. Returns a
   seekable reader from GetObject so the handler's range/conditional logic
   works. Intended for tests and ephemeral use.
@@ -234,7 +235,8 @@ operation; both backends inherit it.
 ### `cmd/fs` — CLI
 
 A cobra command (`fs s3`) that loads YAML/flag configuration, resolves storage
-root, constructs a `storagefs` backend, wraps the handler with OpenTelemetry
+root, opens the `engine` (refusing a data directory left by the removed
+filesystem backend), wraps the handler with OpenTelemetry
 and request logging, and runs `server.Server`. Server defaults are derived from
 the `server` package constants so the two cannot drift.
 
@@ -252,55 +254,48 @@ changing the interface.
 2. It builds a `fs.PutObjectRequest` and calls the `fs.Storage` it was given —
    in the default wiring, the `service`.
 3. `service.PutObject` validates the bucket name and key, then delegates.
-4. The backend writes the bytes (storagefs: stream to a staging temp file while
-   hashing, fsync per policy, rename into the bucket, then write the metadata
-   sidecar; storagemem: store in the map) and returns the ETag.
+4. The backend writes the bytes (engine: store the content as blocks, or
+   inline when small, then commit the version's metadata row; storagemem:
+   store in the map) and returns the ETag.
 5. On error, the backend returns a sentinel; the handler maps it to a status.
    On success, the handler writes the S3 response (headers, ETag).
 
-### storagefs durability
+### Engine
 
-Every object write (single PUT and multipart complete) streams to a temp file
-under a root-level staging directory (`<root>/.tmp`), then renames it into the
-bucket. The rename is atomic and the staging dir is outside the bucket tree, so
-a crash mid-write never leaves a torn or spurious object visible to
-`ListObjects` — only an orphaned temp file. The `SyncPolicy`
-(`none | file | file+dir`, binary default `file`) controls durability on top of
-that atomicity: `file` fsyncs object data before the rename, `file+dir` also
-fsyncs the parent directory afterward so the rename survives a power loss. A
-subprocess crash-consistency test (`SIGKILL` mid-write) asserts the no-torn
-invariant. Sidecar and bucket-meta writes go through the same
-`atomicWrite` (temp + fsync + rename).
+On disk, single node and cluster alike, the engine lives under
+`<storage.root>/.engine/`:
 
-**Integrity.** Each object stores a full-content MD5 in its sidecar
-(`checksum`, distinct from the multipart `-N` ETag; computed on both PUT and
-multipart complete). `WithVerifyReads` makes `GetObject` recompute and check it
-before serving, returning `fs.ErrIntegrity` (500) rather than serving corrupt
-bytes. `Storage.Scrub` walks every object comparing content to its checksum,
-reporting bit-rot and optionally quarantining corrupt objects into
-`<root>/.quarantine`; the binary runs it on a configurable interval and logs
-findings loudly.
+- `meta.db` — the bbolt metadata tables (buckets, object version lists, block
+  references). Every metadata write is a bbolt transaction.
+- `blocks/` — content-addressed data blocks named by their SHA-256. Every read
+  verifies the block against its name; a corrupt copy is dropped and fetched
+  again from a replica; with no good copy reachable the read fails rather
+  than serving corrupt bytes.
+- `solo/` — a single node's private one-node layout.
 
-**Periodic-pass scheduling.** The scrub and the lifecycle sweep both record when
-they last completed — `<root>/.lastrun/<task>.json` — and schedule the next pass one interval
+An object of at most 3 KiB is stored inline in its metadata row; a larger one
+is split into 1 MiB blocks. A block's reference row is written before the
+block itself, and the block file is written to a temp file, fsynced, renamed
+into place, and its directory fsynced. A version becomes current only when its
+metadata row is written, after all of its blocks, so a crash never exposes a
+torn object. `storage.fsync: file` (the default) fsyncs data and metadata
+before a write is acknowledged; `none` (`engine.Options.NoSync`) skips fsync
+and can lose acknowledged writes in a crash.
+
+In cluster mode writes and reads use a quorum of 2 of 3 replicas; anti-entropy
+repairs replicas that missed a write, and a block GC removes blocks nothing
+references. There is no background scrubber: verification happens on every
+read, and repair is anti-entropy's job.
+
+**Periodic-pass scheduling.** The lifecycle sweep records when it last
+completed — `<root>/.lastrun/<task>.json` — and schedules the next pass one interval
 after that rather than one interval after process start. Without the record a
 periodic loop has to pick between two wrong answers: a ticker never fires on a
-node restarted more often than the interval (redeploy hourly, never scrub), and
+node restarted more often than the interval (redeploy hourly, never sweep), and
 running on start makes a node that restarts often re-walk everything every time.
 A pass is recorded only once it finishes, so an interrupted one is still due,
 and a short floor keeps a crashlooping node from repeating an overdue pass on
 every restart.
-
-### storagefs metadata sidecars
-
-Object metadata (ETag, representation headers, `x-amz-meta-*`, tags) lives in
-JSON sidecars under `<root>/.meta/<bucket>/<sha256(key)>.json`, outside the
-bucket directories so sidecars can never collide with object keys. The
-documents carry a format version stamp. A missing or corrupt sidecar degrades
-gracefully: the object stays readable with default metadata and the ETag is
-recomputed (and cached) on read, which keeps pre-sidecar data directories
-working. Root-level dot-directories (`.meta`, `.multipart`,
-`.lastrun`) are internal and never listed as buckets.
 
 ## Testing architecture
 

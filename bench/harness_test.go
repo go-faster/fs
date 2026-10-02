@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
-	"github.com/go-faster/fs/storagefs"
+	"github.com/go-faster/fs/engine"
 )
 
 // object sizes exercised across the suite.
@@ -33,16 +33,17 @@ const (
 	sizeHuge  = 256 << 20 // 256 MiB — streaming-allocation headroom check.
 )
 
-// benchStore builds a filesystem backend under a temp dir with the fastest
-// durability policy (SyncNone) — perf is measured against the OS page cache /
-// device, not fsync latency, which the operator tunes separately.
-func benchStore(tb testing.TB) (store *storagefs.Storage, dir string) {
+// benchStore builds a single-node engine under a temp dir without fsync —
+// perf is measured against the OS page cache / device, not fsync latency,
+// which the operator tunes separately.
+func benchStore(tb testing.TB) (store *engine.Engine, dir string) {
 	tb.Helper()
 
 	dir = tb.TempDir()
 
-	store, err := storagefs.New(dir, storagefs.WithSyncPolicy(storagefs.SyncNone))
+	store, err := engine.Open(dir, engine.Options{NoSync: true})
 	require.NoError(tb, err)
+	tb.Cleanup(func() { _ = store.Close() })
 	require.NoError(tb, store.CreateBucket(context.Background(), "bench"))
 
 	return store, dir
@@ -92,7 +93,7 @@ func (b *deterministicBody) reset(n int64) {
 }
 
 // putObject writes one object of the given size, reusing body.
-func putObject(tb testing.TB, s *storagefs.Storage, key string, size int64, body *deterministicBody) {
+func putObject(tb testing.TB, s *engine.Engine, key string, size int64, body *deterministicBody) {
 	tb.Helper()
 
 	body.reset(size)
@@ -107,7 +108,7 @@ func putObject(tb testing.TB, s *storagefs.Storage, key string, size int64, body
 }
 
 // getObjectDiscard reads one object fully into io.Discard and returns bytes read.
-func getObjectDiscard(tb testing.TB, s *storagefs.Storage, key string) int64 {
+func getObjectDiscard(tb testing.TB, s *engine.Engine, key string) int64 {
 	tb.Helper()
 
 	resp, err := s.GetObject(context.Background(), "bench", key)

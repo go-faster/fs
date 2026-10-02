@@ -79,6 +79,9 @@ const tmpSuffix = ".tmp"
 // Store is the blocks one node holds, on its local disk.
 type Store struct {
 	dir string
+	// NoSync skips fsync: an acknowledged block can be lost in a crash. For
+	// tests and development only.
+	NoSync bool
 }
 
 // NewStore returns the store rooted at dir, creating it.
@@ -132,7 +135,7 @@ func (s *Store) Put(h Hash, data []byte) error {
 		return errors.Wrap(err, "write block")
 	}
 
-	if err := f.Sync(); err != nil {
+	if err := s.sync(f); err != nil {
 		_ = f.Close()
 
 		return errors.Wrap(err, "sync block")
@@ -146,7 +149,19 @@ func (s *Store) Put(h Hash, data []byte) error {
 		return errors.Wrap(err, "place block")
 	}
 
+	if s.NoSync {
+		return nil
+	}
+
 	return syncDir(dir)
+}
+
+func (s *Store) sync(f *os.File) error {
+	if s.NoSync {
+		return nil
+	}
+
+	return f.Sync()
 }
 
 // Get returns the block's content, verified against its hash.

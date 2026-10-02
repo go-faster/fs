@@ -83,8 +83,6 @@ config:
   storage:
     # Root directory for S3 storage (will be mounted as a volume)
     root: "/data"
-    # Storage backend type (currently only "filesystem" is supported)
-    type: "filesystem"
     # Pre-create these buckets on startup (optional)
     # Useful for ensuring required buckets exist
     buckets: []

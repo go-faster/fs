@@ -20,7 +20,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "/health", cfg.Server.HealthPath)
 
 	assert.Equal(t, ".s3data", cfg.Storage.Root)
-	assert.Equal(t, "filesystem", cfg.Storage.Type)
 
 	assert.Equal(t, "go-faster/fs", cfg.Observability.ServiceName)
 	assert.True(t, cfg.Observability.EnableRequestLogging)
@@ -63,7 +62,6 @@ server:
 
 storage:
   root: "/tmp/test-s3"
-  type: "filesystem"
 
 observability:
   service_name: "test-service"
@@ -87,7 +85,6 @@ observability:
 	assert.Equal(t, "/healthz", cfg.Server.HealthPath)
 
 	assert.Equal(t, "/tmp/test-s3", cfg.Storage.Root)
-	assert.Equal(t, "filesystem", cfg.Storage.Type)
 
 	assert.Equal(t, "test-service", cfg.Observability.ServiceName)
 	assert.False(t, cfg.Observability.EnableRequestLogging)
@@ -161,15 +158,6 @@ func TestValidate_EmptyRoot(t *testing.T) {
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage.root is required")
-}
-
-func TestValidate_InvalidStorageType(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Storage.Type = "s3"
-
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported storage type")
 }
 
 func TestValidate_InvalidTimeouts(t *testing.T) {
@@ -290,7 +278,6 @@ server:
 
 storage:
   root: "/data"
-  type: "filesystem"
   buckets:
     - bucket1
     - bucket2
@@ -323,7 +310,6 @@ func TestSaveConfig(t *testing.T) {
 		},
 		Storage: StorageConfig{
 			Root: "/tmp/s3",
-			Type: "filesystem",
 		},
 		Observability: ObservabilityConfig{
 			ServiceName:          "test-service",

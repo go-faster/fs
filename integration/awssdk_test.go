@@ -16,18 +16,19 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-faster/fs/storagefs"
+	"github.com/go-faster/fs/engine"
 )
 
 // newAWSClient returns an aws-sdk-go-v2 S3 client wired to an in-process server
-// backed by storagefs. The SDK is configured for a bare, path-style,
+// backed by the engine. The SDK is configured for a bare, path-style,
 // anonymous endpoint: the server ignores request signatures, so the static
 // credentials are arbitrary placeholders.
 func newAWSClient(t testing.TB) *s3.Client {
 	t.Helper()
 
-	storage, err := storagefs.New(t.TempDir())
+	storage, err := engine.Open(t.TempDir(), engine.Options{NoSync: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
 
 	srv := newTestServer(t, storage)
 

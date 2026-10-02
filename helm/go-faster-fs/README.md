@@ -1,11 +1,11 @@
 # go-faster-fs Helm Chart
 
-This Helm chart deploys an S3-compatible storage server with filesystem backend to Kubernetes.
+This Helm chart deploys a single-node S3-compatible storage server to Kubernetes.
 
 ## Features
 
 - S3-compatible API for object storage
-- Filesystem-based storage backend
+- Durable storage engine (bbolt metadata + checksummed content-addressed blocks)
 - Kubernetes-native deployment
 - Configurable storage (emptyDir or PersistentVolumeClaim)
 - Health checks and probes
@@ -54,7 +54,6 @@ The chart uses a ConfigMap to manage application configuration. All configuratio
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `config.storage.root` | Root directory for S3 storage | `"/data"` |
-| `config.storage.type` | Storage backend type | `"filesystem"` |
 | `config.storage.buckets` | List of buckets to pre-create on startup | `[]` |
 
 #### Observability Configuration
@@ -118,7 +117,6 @@ config:
     idleTimeout: "5m0s"
   storage:
     root: "/data"
-    type: "filesystem"
   observability:
     serviceName: "my-s3-server"
     enableRequestLogging: true

@@ -21,7 +21,6 @@ config:
   # Storage configuration
   storage:
     root: "/data"
-    type: "filesystem"
     # Pre-create production buckets
     # buckets:
     #   - production-data
