@@ -51,6 +51,9 @@ func TestBuildEngineSingleNode(t *testing.T) {
 	again, err := buildEngine(root, nil, nil)
 	require.NoError(t, err)
 
+	// Windows cannot remove the temp dir while the database is open.
+	t.Cleanup(func() { _ = again.DB().Close() })
+
 	resp, err := again.GetObject(ctx, "b", "k")
 	require.NoError(t, err)
 
