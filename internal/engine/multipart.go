@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	"encoding/hex"
@@ -29,6 +30,10 @@ type uploadPayload struct {
 	Owner     fs.Owner          `json:"owner,omitzero"`
 	// Enc seals every part as it arrives, so no part sits in the clear.
 	Enc *encInfo `json:"enc,omitempty"`
+	// ChecksumAlgorithm digests every part; ChecksumType is what the
+	// completed object's digest means.
+	ChecksumAlgorithm string `json:"cksum_alg,omitempty"`
+	ChecksumType      string `json:"cksum_type,omitempty"`
 }
 
 // partRecord is one uploaded part.
@@ -36,6 +41,8 @@ type partRecord struct {
 	ETag         string     `json:"etag"`
 	Size         int64      `json:"size"`
 	LastModified time.Time  `json:"mtime"`
+	Checksum     string     `json:"cksum,omitempty"`
+	ChecksumAlg  string     `json:"cksum_alg,omitempty"`
 	Inline       []byte     `json:"inline,omitempty"`
 	Blocks       []blockLoc `json:"blocks,omitempty"`
 }
@@ -49,6 +56,11 @@ func partOwner(uploadID, partID string) string { return uploadID + "/" + partID 
 
 func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
 	enc, err := e.beginEncryption(req.ServerSideEncryption)
+	if err != nil {
+		return nil, err
+	}
+
+	cksAlg, cksType, err := uploadChecksum(req.ChecksumAlgorithm, req.ChecksumType)
 	if err != nil {
 		return nil, err
 	}
@@ -70,18 +82,24 @@ func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultip
 	initiated := e.now().UTC()
 
 	v := meta.Version{
-		ID:      id,
-		TS:      ts,
-		State:   meta.Uploading,
-		Payload: mustJSON(uploadPayload{Initiated: initiated, Meta: req.Metadata, Owner: req.Owner, Enc: enc}),
-		Attrs:   meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(attrs{Tags: req.Tags, ACL: req.ACL})},
+		ID:    id,
+		TS:    ts,
+		State: meta.Uploading,
+		Payload: mustJSON(uploadPayload{
+			Initiated: initiated, Meta: req.Metadata, Owner: req.Owner, Enc: enc,
+			ChecksumAlgorithm: string(cksAlg), ChecksumType: string(cksType),
+		}),
+		Attrs: meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(attrs{Tags: req.Tags, ACL: req.ACL})},
 	}
 
 	if err := e.objects.Insert(ctx, inc.ID, req.Key, meta.Object{Versions: []meta.Version{v}}); err != nil {
 		return nil, err
 	}
 
-	return &fs.MultipartUpload{UploadID: id, Bucket: req.Bucket, Key: req.Key, Initiated: initiated}, nil
+	return &fs.MultipartUpload{
+		UploadID: id, Bucket: req.Bucket, Key: req.Key, Initiated: initiated,
+		ChecksumAlgorithm: string(cksAlg), ChecksumType: string(cksType),
+	}, nil
 }
 
 // upload returns the in-flight upload id of bucket/key.
@@ -120,14 +138,30 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		return nil, err
 	}
 
-	owner := partOwner(req.UploadID, newID())
-
-	w, err := e.write(ctx, req.Reader, owner, c)
+	// Parts of an upload with an algorithm are all digested with it, since
+	// the object's checksum is composed from theirs.
+	cks, err := newChecksum(cmp.Or(up.ChecksumAlgorithm, req.ChecksumAlgorithm))
 	if err != nil {
 		return nil, err
 	}
 
-	rec := partRecord{ETag: w.etag, Size: w.size, LastModified: e.now().UTC(), Inline: w.inline, Blocks: w.blocks}
+	owner := partOwner(req.UploadID, newID())
+
+	w, err := e.write(ctx, req.Reader, owner, c, cks)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := cks.verify(req.Checksum); err != nil {
+		e.release(ctx, owner, w.blocks)
+
+		return nil, err
+	}
+
+	rec := partRecord{
+		ETag: w.etag, Size: w.size, LastModified: e.now().UTC(), Inline: w.inline, Blocks: w.blocks,
+		Checksum: cks.value(), ChecksumAlg: string(cks.algorithm),
+	}
 
 	prev, _, err := e.parts.Get(ctx, req.UploadID, partSK(req.PartNumber))
 	if err != nil {
@@ -149,7 +183,10 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		e.release(ctx, old.Owner, old.Blocks)
 	}
 
-	return &fs.Part{PartNumber: req.PartNumber, ETag: w.etag, Size: w.size, LastModified: rec.LastModified}, nil
+	return &fs.Part{
+		PartNumber: req.PartNumber, ETag: w.etag, Size: w.size, LastModified: rec.LastModified,
+		Checksum: rec.Checksum, ChecksumAlgorithm: rec.ChecksumAlg,
+	}, nil
 }
 
 type storedPart struct {
@@ -208,7 +245,10 @@ func (e *Engine) ListParts(ctx context.Context, bucket, key, uploadID string) ([
 
 	out := make([]fs.Part, 0, len(parts))
 	for n, p := range parts {
-		out = append(out, fs.Part{PartNumber: n, ETag: p.ETag, Size: p.Size, LastModified: p.LastModified})
+		out = append(out, fs.Part{
+			PartNumber: n, ETag: p.ETag, Size: p.Size, LastModified: p.LastModified,
+			Checksum: p.Checksum, ChecksumAlgorithm: p.ChecksumAlg,
+		})
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].PartNumber < out[j].PartNumber })
@@ -245,7 +285,10 @@ func (e *Engine) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.
 
 				_ = json.Unmarshal(v.Payload, &up)
 
-				out = append(out, fs.MultipartUpload{UploadID: v.ID, Bucket: bucket, Key: r.SK, Initiated: up.Initiated})
+				out = append(out, fs.MultipartUpload{
+					UploadID: v.ID, Bucket: bucket, Key: r.SK, Initiated: up.Initiated,
+					ChecksumAlgorithm: up.ChecksumAlgorithm, ChecksumType: up.ChecksumType,
+				})
 			}
 		}
 
@@ -322,8 +365,9 @@ func (e *Engine) CompleteMultipartUpload(
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	var (
-		p    = payload{Meta: up.Meta, Owner: up.Owner, UploadID: req.UploadID, Enc: up.Enc}
-		used = map[string]bool{}
+		p       = payload{Meta: up.Meta, Owner: up.Owner, UploadID: req.UploadID, Enc: up.Enc}
+		used    = map[string]bool{}
+		digests []partDigest
 	)
 
 	for _, cp := range requested {
@@ -331,6 +375,14 @@ func (e *Engine) CompleteMultipartUpload(
 		if !ok {
 			continue
 		}
+
+		// A completion naming a part's checksum must name the one it was
+		// uploaded with.
+		if cp.Checksum != "" && part.Checksum != "" && cp.Checksum != part.Checksum {
+			return nil, errors.Wrapf(fs.ErrInvalidPart, "part %d checksum does not match what was uploaded", cp.PartNumber)
+		}
+
+		digests = append(digests, partDigest{digest: part.Checksum, size: part.Size})
 
 		sum, err := hex.DecodeString(part.ETag)
 		if err != nil {
@@ -340,7 +392,7 @@ func (e *Engine) CompleteMultipartUpload(
 		_, _ = h.Write(sum)
 
 		p.Size += part.Size
-		p.Parts = append(p.Parts, fs.ObjectPart{PartNumber: cp.PartNumber, Size: part.Size, ETag: part.ETag})
+		p.Parts = append(p.Parts, fs.ObjectPart{PartNumber: cp.PartNumber, Size: part.Size, ETag: part.ETag, Checksum: part.Checksum})
 		used[part.Owner] = true
 
 		if part.Inline != nil {
@@ -368,6 +420,15 @@ func (e *Engine) CompleteMultipartUpload(
 	}
 
 	p.ETag = fmt.Sprintf("%x-%d", h.Sum(nil), len(requested))
+
+	if p.Checksum, err = completionChecksum(up.ChecksumAlgorithm, up.ChecksumType, digests, req.Checksum); err != nil {
+		return nil, err
+	}
+
+	if p.Checksum != "" {
+		p.ChecksumAlgorithm, p.ChecksumType = up.ChecksumAlgorithm, up.ChecksumType
+	}
+
 	p.LastModified = e.now().UTC()
 
 	if p.Size == 0 {
@@ -401,6 +462,9 @@ func completed(req *fs.CompleteMultipartUploadRequest, p payload) *fs.CompleteMu
 		Key:                  req.Key,
 		ETag:                 p.ETag,
 		ServerSideEncryption: algorithm(p.Enc),
+		ChecksumAlgorithm:    p.ChecksumAlgorithm,
+		Checksum:             p.Checksum,
+		ChecksumType:         p.ChecksumType,
 	}
 }
 

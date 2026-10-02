@@ -104,7 +104,9 @@ automated resumable migration and the public API becomes additive-only.
   serialized on their coordinating node. Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 seals data
   through `internal/sse`; multipart parts are sealed as they arrive and not
-  re-encrypted at completion. Passes `storagetest` on
+  re-encrypted at completion. Checksums (`x-amz-checksum-*`) are of the
+  plaintext; a FULL_OBJECT multipart CRC is combined from the parts' CRCs
+  (`checksum.Algorithm.Combine`), not computed over the reassembled body. Passes `storagetest` on
   one node and on three; not wired into the server yet.
 - Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
   compare per-(partition, slot) digests with the other replicas, pull what

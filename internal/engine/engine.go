@@ -149,6 +149,10 @@ type payload struct {
 	UploadID string          `json:"upload_id,omitempty"`
 	// Enc is set for an encrypted version; Size is then the plaintext's.
 	Enc *encInfo `json:"enc,omitempty"`
+	// The client-visible checksum, when one was asked for.
+	ChecksumAlgorithm string `json:"cksum_alg,omitempty"`
+	Checksum          string `json:"cksum,omitempty"`
+	ChecksumType      string `json:"cksum_type,omitempty"`
 }
 
 type blockLoc struct {

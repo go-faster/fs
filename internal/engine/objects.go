@@ -12,6 +12,7 @@ import (
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/cluster/block"
 	"github.com/go-faster/fs/internal/cluster/meta"
 	"github.com/go-faster/fs/internal/sse"
@@ -32,9 +33,17 @@ type written struct {
 // written before the blocks are, so a block is never stored unreferenced past
 // its write; a failure leaves references to blocks that may not exist, which
 // GC treats as live until released.
-func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Cipher) (written, error) {
+//
+// cks, when not nil, is fed the plaintext alongside the ETag's hash.
+func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Cipher, cks io.Writer) (written, error) {
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
-	plain := &counter{r: io.TeeReader(r, h)}
+
+	var sink io.Writer = h
+	if cks != nil {
+		sink = io.MultiWriter(h, cks)
+	}
+
+	plain := &counter{r: io.TeeReader(r, sink)}
 
 	stored := sealed(plain, c)
 	defer func() { _ = stored.Close() }()
@@ -123,6 +132,11 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		return nil, err
 	}
 
+	cks, err := newChecksum(req.ChecksumAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
 	b, inc, err := e.bucket(ctx, req.Bucket)
 	if err != nil {
 		return nil, err
@@ -150,7 +164,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 
 	id := newID()
 
-	w, err := e.write(ctx, req.Reader, id, c)
+	w, err := e.write(ctx, req.Reader, id, c, cks)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +175,14 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		return nil, fs.ErrBadDigest
 	}
 
+	// Checked before the version exists, so a body that is not what the
+	// client says it is never becomes one.
+	if err := cks.verify(req.Checksum); err != nil {
+		e.release(ctx, id, w.blocks)
+
+		return nil, err
+	}
+
 	p := payload{
 		Size:   w.size,
 		ETag:   w.etag,
@@ -169,6 +191,14 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		Inline: w.inline,
 		Blocks: w.blocks,
 		Enc:    enc,
+
+		ChecksumAlgorithm: string(cks.algorithm),
+		Checksum:          cks.value(),
+	}
+
+	if p.Checksum != "" {
+		// A single PUT is one whole object: its digest is of the body itself.
+		p.ChecksumType = string(checksum.FullObject)
 	}
 
 	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}); err != nil {
@@ -177,7 +207,12 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		return nil, err
 	}
 
-	resp := &fs.PutObjectResponse{ETag: w.etag, ServerSideEncryption: algorithm(enc)}
+	resp := &fs.PutObjectResponse{
+		ETag:                 w.etag,
+		ServerSideEncryption: algorithm(enc),
+		ChecksumAlgorithm:    p.ChecksumAlgorithm,
+		Checksum:             p.Checksum,
+	}
 	if versioned {
 		resp.VersionID = id
 	}
@@ -489,10 +524,13 @@ func (e *Engine) ObjectAttributes(ctx context.Context, bucket, key string) (*fs.
 	}
 
 	return &fs.ObjectAttributes{
-		ETag:         p.ETag,
-		Size:         p.Size,
-		LastModified: p.LastModified,
-		Parts:        p.Parts,
-		UploadID:     p.UploadID,
+		ETag:              p.ETag,
+		Size:              p.Size,
+		LastModified:      p.LastModified,
+		Parts:             p.Parts,
+		UploadID:          p.UploadID,
+		ChecksumAlgorithm: p.ChecksumAlgorithm,
+		Checksum:          p.Checksum,
+		ChecksumType:      p.ChecksumType,
 	}, nil
 }
