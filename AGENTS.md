@@ -88,6 +88,11 @@ automated resumable migration and the public API becomes additive-only.
   must be commutative, associative, idempotent) keyed by partition key + sort
   key, stored locally in bbolt, written and read at quorum over the layout's
   first three slots, with read repair. Not used by storage yet (#273).
+- `internal/cluster/meta` — the metadata rows and their merges: buckets
+  (incarnation + per-setting LWW registers), objects (version list: uploads,
+  versions, delete markers, null versions; Uploading → Complete → Gone),
+  block refs. Pure; merge laws are property-tested. Its package doc states
+  the design limits (per-bucket size, non-atomic conditional writes).
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 
