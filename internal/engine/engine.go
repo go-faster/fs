@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
-	"github.com/google/uuid"
 	"go.etcd.io/bbolt"
 
 	"github.com/go-faster/fs"
@@ -125,7 +124,9 @@ func (e *Engine) lock(bucketID, key string) func() {
 
 func (e *Engine) ts() int64 { return e.now().UnixNano() }
 
-func newID() string { return uuid.New().String() }
+// newID mints an ID in the S3 version-ID format, which every version, upload
+// and bucket incarnation uses alike: 32 hex characters, sortable by time.
+func newID() string { return fs.NewVersionID() }
 
 // payload is what an engine version holds beyond what merging needs.
 type payload struct {

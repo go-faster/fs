@@ -55,9 +55,30 @@ type Factory func(t testing.TB) fs.Storage
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
 
+	RunExcept(t, factory, nil)
+}
+
+// RunExcept is Run with named cases skipped, each with the reason. It is for a
+// backend with a known gap: the skip shows in the test output with its
+// reason, where a weakened case would hide it. A name that matches no case
+// fails, so an exception cannot outlive the case it excused.
+func RunExcept(t *testing.T, factory Factory, except map[string]string) {
+	t.Helper()
+
+	for name := range except {
+		if _, ok := suite[name]; !ok {
+			t.Errorf("storagetest: no case %q to except", name)
+		}
+	}
+
 	for name, test := range suite {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+
+			if reason, ok := except[name]; ok {
+				t.Skip(reason)
+			}
+
 			test(t, factory(t))
 		})
 	}
@@ -126,6 +147,13 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"CORS/RoundTrip":                        testBucketCORS,
 	"Lifecycle/RoundTrip":                   testBucketLifecycle,
 	"Versioning/BucketState":                testBucketVersioningState,
+	"Versioning/EnabledKeepsEveryVersion":   testVersioningEnabledKeepsEveryVersion,
+	"Versioning/DeleteMarker":               testVersioningDeleteMarker,
+	"Versioning/PermanentDelete":            testVersioningPermanentDelete,
+	"Versioning/NullBeforeEnable":           testVersioningNullBeforeEnable,
+	"Versioning/Suspended":                  testVersioningSuspended,
+	"Versioning/UnsetDeleteLeavesNoMarker":  testVersioningUnsetDeleteLeavesNoMarker,
+	"Versioning/ConditionalDelete":          testVersioningConditionalDelete,
 	"Settings/PublicAccessAndOwnership":     testBucketSettings,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
