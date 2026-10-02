@@ -47,8 +47,8 @@ BenchmarkPutObject/4KiB     10 MB/s    1.1 MB/op   318 allocs/op   (~0.4 ms per 
 BenchmarkPutObject/1MiB    320 MB/s    2.1 MB/op   301 allocs/op
 BenchmarkPutObject/64MiB   775 MB/s     69 MB/op  6044 allocs/op   (MD5-bound)
 BenchmarkGetObject/4KiB     62 MB/s     15 KB/op   128 allocs/op
-BenchmarkGetObject/1MiB   1260 MB/s    1.1 MB/op   133 allocs/op
-BenchmarkGetObject/64MiB  5500 MB/s     68 MB/op  1166 allocs/op
+BenchmarkGetObject/1MiB   3000 MB/s    1.1 MB/op   133 allocs/op
+BenchmarkGetObject/64MiB  8700 MB/s     68 MB/op  1166 allocs/op
 
 NFR-3 gates:
   PUT 64MiB   : at or above 80% of the stream+MD5+write ceiling
@@ -58,10 +58,11 @@ NFR-3 gates:
   4KiB GET    : p50 ≈ 0.35 ms, p99 ≈ 2.3 ms at ~29k req/s, 16 workers
 ```
 
-Large objects run at the speed the filesystem backend did; small ones do not.
+Large objects run at least as fast as the filesystem backend did; small ones do not.
 A 4 KiB PUT is two metadata commits, a block write and a quorum's worth of
-bookkeeping — about 0.4 ms against the old backend's 60 µs — and a small GET
-verifies a block's hash where the old backend read a file. Merging a PUT's
+bookkeeping — about 0.4 ms against the old backend's 60 µs. Reads check a
+CRC-32C stored with each block (hardware-accelerated) rather than re-hashing
+it with SHA-256, which is what keeps GET near raw read on a 4-core runner. Merging a PUT's
 metadata writes into one commit is the obvious next step if small-object rates
 matter.
 

@@ -267,10 +267,13 @@ On disk, single node and cluster alike, the engine lives under
 
 - `meta.db` — the bbolt metadata tables (buckets, object version lists, block
   references). Every metadata write is a bbolt transaction.
-- `blocks/` — content-addressed data blocks named by their SHA-256. Every read
-  verifies the block against its name; a corrupt copy is dropped and fetched
-  again from a replica; with no good copy reachable the read fails rather
-  than serving corrupt bytes.
+- `blocks/` — content-addressed data blocks named by their SHA-256, each file
+  the block plus a CRC-32C trailer (stamped by `blocks/FORMAT`; a store with
+  blocks but no stamp is refused). Every local read checks the CRC, and a
+  block fetched from a peer is checked against its name; a corrupt copy is
+  dropped and fetched again from a replica; with no good copy reachable the
+  read fails rather than serving corrupt bytes. SHA-256 is computed once per
+  block on write, and again only where a peer receives it.
 - `solo/` — a single node's private one-node layout.
 
 An object of at most 3 KiB is stored inline in its metadata row; a larger one

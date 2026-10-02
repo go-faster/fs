@@ -174,7 +174,7 @@ func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, dat
 		return err
 	}
 
-	if _, err := e.blocks.Put(ctx, data); err != nil {
+	if err := e.blocks.PutHashed(ctx, h, data); err != nil {
 		return err
 	}
 

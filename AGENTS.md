@@ -97,7 +97,8 @@ automated resumable migration and the public API becomes additive-only.
   block refs. Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
 - `internal/cluster/block` — content-addressed blocks: a local disk store
-  (SHA-256 names, verified on every read, corrupt copies dropped), replicated
+  (SHA-256 names; a CRC-32C trailer per file checked on every local read,
+  peers' blocks checked against their name; corrupt copies dropped), replicated
   put/get over the hash's partition at quorum, an in-memory resync queue, and
   GC of unreferenced blocks after a grace period.
 - `engine` — the storage engine (#277): `fs.Storage` over the

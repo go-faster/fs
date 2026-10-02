@@ -35,11 +35,44 @@ func TestStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, data, got)
 
-	require.ErrorIs(t, s.Put(h, []byte("other")), ErrMismatch)
-
 	require.NoError(t, s.Delete(h))
 	require.NoError(t, s.Delete(h), "deleting an absent block is not an error")
 	assert.False(t, s.Has(h))
+}
+
+func TestStoreFormat(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := NewStore(dir)
+	require.NoError(t, err)
+
+	data := []byte("stamped")
+	require.NoError(t, s.Put(Sum(data), data))
+
+	_, err = NewStore(dir)
+	require.NoError(t, err, "a store reopens over its own format")
+
+	// Blocks without the stamp are a format this binary does not know.
+	unstamped := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(unstamped, "ab"), 0o750))
+
+	_, err = NewStore(unstamped)
+	require.ErrorContains(t, err, "unknown format")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, formatFile), []byte("future\n"), 0o600))
+
+	_, err = NewStore(dir)
+	require.ErrorContains(t, err, "has format")
+}
+
+func TestPeerPutMismatchRefused(t *testing.T) {
+	nodes := cluster(t, 3)
+	h := Sum([]byte("claimed"))
+
+	status, _, err := nodes[0].member.Raw(context.Background(), nodes[1].member.ID(), "PUT", "/v1/block/"+h.String(), []byte("actual"))
+	require.NoError(t, err)
+	assert.Equal(t, 400, status, "a peer stores nothing under a hash its bytes do not have")
+	assert.False(t, nodes[1].store.Has(h))
 }
 
 func TestStoreCorrupt(t *testing.T) {

@@ -56,7 +56,8 @@ func TestIntegrity_CorruptBlockNeverServed(t *testing.T) {
 	var blocks []string
 
 	require.NoError(t, filepath.WalkDir(filepath.Join(root, "blocks"), func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
+		// The store's format stamp sits beside the blocks.
+		if err == nil && !d.IsDir() && d.Name() != "FORMAT" {
 			blocks = append(blocks, p)
 		}
 

@@ -107,8 +107,9 @@ block GC removes. This holds regardless of the fsync setting.
 | `file` *(default)* | Data and metadata are fsynced before the write is acknowledged, so an acknowledged write survives a power loss. |
 | `none` | No fsync; for development and CI. A crash may lose acknowledged writes (never torn). |
 
-**Integrity.** Every block is named by its SHA-256 and verified on every read;
-corrupt bytes are never served. In a cluster a corrupt copy is dropped and
+**Integrity.** Every block is named by its SHA-256 and checked on every read —
+against a CRC-32C stored with it, or against its name when it comes from a
+peer; corrupt bytes are never served. In a cluster a corrupt copy is dropped and
 fetched again from a replica, and anti-entropy repairs replicas that missed a
 write or lost a block. There is no background scrubber.
 

@@ -3,8 +3,10 @@
 // A block is an immutable byte string named by its SHA-256. Its replicas are
 // the first three slots of the layout partition its hash maps to, so any node
 // can find a block from its hash alone, and identical content is stored once.
-// Every read verifies the hash: a block that rotted on disk is detected,
-// dropped and fetched again from another replica, never served.
+// Every read is verified: a block that rotted on disk is detected, dropped
+// and fetched again from another replica, never served. Locally that is a
+// CRC-32C stored with the block — hardware-accelerated, so a read is not
+// bound by hashing — and a block from a peer is checked against its name.
 //
 // Blocks are referenced from object versions through the block_refs table;
 // one with no live reference is collected after a grace period (see
@@ -13,7 +15,9 @@ package block
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"hash/crc32"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -23,6 +27,16 @@ import (
 
 	"github.com/go-faster/errors"
 )
+
+// format stamps a store's on-disk layout: each block file is the block
+// followed by the big-endian CRC-32C of it. A store holding blocks without
+// this stamp is refused rather than read as this format.
+const format = "crc32c-trailer-1\n"
+
+const formatFile = "FORMAT"
+
+//nolint:gochecknoglobals // A CRC table is immutable and costly to rebuild.
+var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
 // Hash names a block: the SHA-256 of its content.
 type Hash [sha256.Size]byte
@@ -90,6 +104,30 @@ func NewStore(dir string) (*Store, error) {
 		return nil, errors.Wrap(err, "create block dir")
 	}
 
+	stamp := filepath.Join(dir, formatFile)
+
+	got, err := os.ReadFile(stamp) // #nosec G304 -- under the store root
+	switch {
+	case err == nil && string(got) == format:
+	case err == nil:
+		return nil, errors.Errorf("block store %s has format %q, this binary reads %q", dir, got, format)
+	case errors.Is(err, fs.ErrNotExist):
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, errors.Wrap(err, "read block dir")
+		}
+
+		if len(entries) > 0 {
+			return nil, errors.Errorf("block store %s holds blocks of an unknown format; rebuild it", dir)
+		}
+
+		if err := os.WriteFile(stamp, []byte(format), 0o600); err != nil {
+			return nil, errors.Wrap(err, "stamp block store")
+		}
+	default:
+		return nil, errors.Wrap(err, "read block store format")
+	}
+
 	return &Store{dir: dir}, nil
 }
 
@@ -101,15 +139,12 @@ func (s *Store) path(h Hash) string {
 	return filepath.Join(s.dir, name[:2], name[2:4], name)
 }
 
-// Put stores data under h. A block already present is not rewritten, but its
-// time is refreshed: GC spares blocks touched within the grace period, which
-// is what keeps a block being re-referenced by a new upload from being
-// collected between its write and its reference.
+// Put stores data under h; the caller vouches that h is its hash, having
+// computed or checked it already. A block already present is not rewritten,
+// but its time is refreshed: GC spares blocks touched within the grace
+// period, which is what keeps a block being re-referenced by a new upload from
+// being collected between its write and its reference.
 func (s *Store) Put(h Hash, data []byte) error {
-	if Sum(data) != h {
-		return ErrMismatch
-	}
-
 	p := s.path(h)
 
 	now := time.Now()
@@ -129,7 +164,15 @@ func (s *Store) Put(h Hash, data []byte) error {
 
 	defer func() { _ = os.Remove(f.Name()) }()
 
+	trailer := binary.BigEndian.AppendUint32(nil, crc32.Checksum(data, castagnoli))
+
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+
+		return errors.Wrap(err, "write block")
+	}
+
+	if _, err := f.Write(trailer); err != nil {
 		_ = f.Close()
 
 		return errors.Wrap(err, "write block")
@@ -177,15 +220,16 @@ func (s *Store) Get(h Hash) ([]byte, error) {
 		return nil, errors.Wrap(err, "read block")
 	}
 
-	if Sum(data) != h {
-		// A copy that fails its hash is worse than none: drop it so the
+	n := len(data) - crc32.Size
+	if n < 0 || crc32.Checksum(data[:n], castagnoli) != binary.BigEndian.Uint32(data[n:]) {
+		// A copy that fails its checksum is worse than none: drop it so the
 		// replica reads as missing and is resynced.
 		_ = os.Remove(p)
 
 		return nil, ErrCorrupt
 	}
 
-	return data, nil
+	return data[:n:n], nil
 }
 
 // Has reports whether the block is present, without verifying it.

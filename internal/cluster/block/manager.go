@@ -97,13 +97,20 @@ func NewManager(store *Store, member *peer.Member) *Manager {
 func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 	h := Sum(data)
 
+	return h, m.PutHashed(ctx, h, data)
+}
+
+// PutHashed is Put for a caller that already has the block's hash: it is not
+// computed again here. A replica receiving the block over the network still
+// checks it against h.
+func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte) error {
 	if len(data) > MaxSize {
-		return h, errors.Errorf("block of %d bytes exceeds %d", len(data), MaxSize)
+		return errors.Errorf("block of %d bytes exceeds %d", len(data), MaxSize)
 	}
 
 	nodes, err := m.replicas(h)
 	if err != nil {
-		return h, err
+		return err
 	}
 
 	// Replicas past the quorum still get the block: detach from the caller,
@@ -143,7 +150,7 @@ func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 			errs = append(errs, err)
 
 			if len(nodes)-failed < need {
-				return h, errors.Wrapf(ErrQuorum, "block %s: %v", h, errors.Join(errs...))
+				return errors.Wrapf(ErrQuorum, "block %s: %v", h, errors.Join(errs...))
 			}
 
 			continue
@@ -151,11 +158,11 @@ func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 
 		ok++
 		if ok == need {
-			return h, nil
+			return nil
 		}
 	}
 
-	return h, errors.Wrapf(ErrQuorum, "block %s", h)
+	return errors.Wrapf(ErrQuorum, "block %s", h)
 }
 
 // Get returns the block's content from the first replica that has a valid
@@ -424,9 +431,15 @@ func (m *Manager) servePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The sender's hash is checked here, where the bytes arrive from
+	// elsewhere; the store trusts what it is given.
+	if Sum(data) != h {
+		http.Error(w, ErrMismatch.Error(), http.StatusBadRequest)
+
+		return
+	}
+
 	switch err := m.store.Put(h, data); {
-	case errors.Is(err, ErrMismatch):
-		http.Error(w, err.Error(), http.StatusBadRequest)
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	default:
