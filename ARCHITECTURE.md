@@ -14,7 +14,7 @@ It is usable two ways:
 - as an **embeddable library** — mount the S3 handler into your own server, or
   run the managed `server.Server`, with a pluggable storage backend.
 
-A Garage-style cluster (zone/rack-aware replication) is planned, see
+A Garage-style cluster (zone/rack-aware replication) is being built, see
 [#279](https://github.com/go-faster/fs/issues/279). Its first piece is
 `internal/cluster/layout`, the pure partition-to-node assignment, and
 `internal/cluster/peer`, which authenticates peer traffic and gossips the
@@ -23,8 +23,8 @@ set, and the admin API applies layouts. `internal/cluster/table` adds
 replicated CRDT tables on top, and `internal/cluster/meta` the bucket, object
 (version list) and block-ref rows they hold, and `internal/cluster/block`
 the content-addressed data blocks. `internal/engine` implements `fs.Storage`
-over them and passes the conformance suite on one node and on three; the
-server does not use it yet.
+over them and passes the conformance suite on one node and on three;
+`storage.type: engine` selects it, alone or as a cluster.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section

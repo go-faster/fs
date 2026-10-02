@@ -134,3 +134,71 @@ jobs:
       - name: Stop server
         if: always()
         run: kill "$(cat fs.pid)" 2>/dev/null || true
+
+  # The same suite against a three-node engine cluster: node 1 serves S3, every
+  # write is replicated to the other two at quorum. Same deny-list as above.
+  s3tests-cluster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fs
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install s3t
+        run: |
+          for attempt in 1 2 3; do
+            if go install "github.com/go-faster/s3t/cmd/s3t@${S3T_REF}"; then
+              exit 0
+            fi
+            echo "install attempt ${attempt} failed; retrying"
+            sleep 5
+          done
+          echo "::error::could not install s3t after 3 attempts"
+          exit 1
+
+      - name: Build server
+        run: go build -o fs ./cmd/fs
+
+      - name: Start cluster
+        run: scripts/s3tests-cluster.sh up ./fs
+
+      - name: Run the suite
+        run: |
+          s3t run \
+            --config .github/s3tests/s3tests.conf \
+            --known-failures .github/s3tests/known-failures.txt \
+            --junit s3tests-cluster.xml \
+            --json s3tests-cluster.json \
+            --timeout 60s
+
+      - name: Show why the tests failed
+        if: failure()
+        run: |
+          jq -r 'select(.status == "failed" or .status == "error")
+                 | "\n=== \(.node_id) ===\n\(.output // "no output recorded")"' \
+            s3tests-cluster.json || true
+
+      - name: Show server logs on failure
+        if: failure()
+        run: tail -n 100 .s3tests-cluster/n*/server.log || true
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3tests-cluster-reports-attempt-${{ github.run_attempt }}
+          path: |
+            s3tests-cluster.xml
+            s3tests-cluster.json
+            .s3tests-cluster/n*/server.log
+          if-no-files-found: ignore
+
+      - name: Stop cluster
+        if: always()
+        run: scripts/s3tests-cluster.sh down

@@ -116,14 +116,18 @@ curl -H "Authorization: Bearer $FS_ADMIN_TOKEN" -H "Content-Type: application/js
   localhost:8090/api/v1/access-keys
 ```
 
-### Cluster membership (experimental)
+### Cluster mode (experimental)
 
-Nodes can form a cluster and agree on a **layout** — which nodes hold which
-partitions, spread across zones and racks. Objects are not replicated yet; the
-storage engine that uses the layout is tracked in
-[#279](https://github.com/go-faster/fs/issues/279).
+With `storage.type: engine`, nodes form a cluster: every object's metadata and
+data are kept on three nodes, spread across zones then racks, written and read
+at quorum, and repaired in the background (Garage-style; see
+[#279](https://github.com/go-faster/fs/issues/279)). Nodes agree on a
+**layout** — which nodes hold which partitions — and any node serves any key.
+The same engine runs a single server: leave `cluster:` out.
 
 ```yaml
+storage:
+  type: engine
 cluster:
   node_id: "node-1"
   advertise_addr: "10.0.0.1:7080"

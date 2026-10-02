@@ -102,3 +102,10 @@ Run the one test CI named:
 ```sh
 s3t run -c .github/s3tests/s3tests.conf -k '^the_one_that_failed$'
 ```
+
+## Cluster
+
+The `s3tests-cluster` job runs the same suite, against the same deny-list, on a
+three-node engine cluster: `scripts/s3tests-cluster.sh up ./fs` starts the
+nodes (S3 on 8077–8079, node 1 being the one `s3tests.conf` names), applies a
+three-zone layout and waits until every node has it; `down` stops them.

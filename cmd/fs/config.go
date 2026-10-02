@@ -289,9 +289,9 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.Storage.Type {
-	case StorageTypeFilesystem:
+	case StorageTypeFilesystem, StorageTypeEngine:
 	default:
-		return fmt.Errorf("unsupported storage type: %s (want %q)", c.Storage.Type, StorageTypeFilesystem)
+		return fmt.Errorf("unsupported storage type: %s (want %q or %q)", c.Storage.Type, StorageTypeFilesystem, StorageTypeEngine)
 	}
 
 	if c.Server.ReadTimeout <= 0 {

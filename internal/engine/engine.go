@@ -58,6 +58,7 @@ type Config struct {
 
 // Engine implements fs.Storage.
 type Engine struct {
+	db      *bbolt.DB
 	buckets *table.Table[meta.Bucket]
 	objects *table.Table[meta.Object]
 	refs    *table.Table[meta.BlockRef]
@@ -70,6 +71,9 @@ type Engine struct {
 
 	locks [256]sync.Mutex
 	now   func() time.Time
+
+	gcMu sync.Mutex
+	gc   gcStats
 }
 
 var (
@@ -87,6 +91,7 @@ func New(cfg Config) (*Engine, error) {
 		blockSize:   cmp.Or(cfg.BlockSize, DefaultBlockSize),
 		inlineLimit: cmp.Or(cfg.InlineLimit, DefaultInlineLimit),
 		keyring:     cfg.Keyring,
+		db:          cfg.DB,
 		now:         time.Now,
 	}
 
@@ -114,6 +119,10 @@ func New(cfg Config) (*Engine, error) {
 
 	return e, nil
 }
+
+// DB is the metadata database the engine was built over, for its owner to
+// close.
+func (e *Engine) DB() *bbolt.DB { return e.db }
 
 // lock serializes writes to one key on this node.
 func (e *Engine) lock(bucketID, key string) func() {

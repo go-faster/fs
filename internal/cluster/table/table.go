@@ -20,6 +20,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -550,6 +552,10 @@ func quorum[T any](nodes []layout.NodeID, need int, fn func(layout.NodeID) (T, e
 // lone writer on every insert — several per object written — so it is cut to
 // a millisecond: still enough to coalesce under load.
 func OpenDB(path string) (*bbolt.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, errors.Wrap(err, "create metadata dir")
+	}
+
 	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: time.Second})
 	if err != nil {
 		return nil, errors.Wrapf(err, "open %s", path)
