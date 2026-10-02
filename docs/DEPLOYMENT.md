@@ -102,9 +102,14 @@ exporters).
   `GET /api/v1/info` (`config_revision`) or the reload response to confirm a
   node has loaded a specific config, e.g. after an orchestrator rewrites it.
 
-## Cluster membership
+## Cluster mode
 
-Experimental: nodes agree on a layout, objects are not replicated yet (#279).
+Experimental (#279). With `storage.type: engine` and `cluster.node_id` set,
+each object's metadata and data live on three nodes of a layout applied with
+`fs layout apply`; writes and reads need two of them. A node's engine data is
+under `<storage.root>/.engine` (bbolt metadata + content-addressed blocks).
+With another `storage.type`, `cluster:` only forms membership and nothing is
+replicated — the server says so at startup.
 Peer traffic on `cluster.addr` (default `:7080`) is authenticated with the
 shared `cluster.secret` (HMAC over every request and response) but **not
 encrypted** — keep it on a private network and never expose it publicly. Each
@@ -121,6 +126,11 @@ in an unknown format stops the node from starting rather than being misread.
   `OTEL_EXPORTER_PROMETHEUS_HOST:PORT` (compose uses `:9464/metrics`).
 - **Traces**: `OTEL_TRACES_EXPORTER=otlp` + `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
 - **pprof**: set `PPROF_ADDR`.
+- **Engine** (`storage.type: engine`): `fs.engine.blocks.resync_pending` —
+  block copies a replica is missing, the number to watch —
+  `fs.engine.blocks.corrupt`, `fs.engine.blocks.collected`,
+  `fs.engine.sync.{out_of_sync,unreachable,age}{table}` (anti-entropy, cluster
+  only) and `fs.engine.gc.age`.
 - **Cluster** (when `cluster.node_id` is set): `fs.cluster.layout.version` —
   compare across nodes; one lagging means gossip is not reaching it — and
   `fs.cluster.peers{state=up|down}`. `fs layout nodes` shows the same per

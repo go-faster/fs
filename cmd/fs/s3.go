@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/internal/engine"
 	"github.com/go-faster/fs/internal/lastrun"
 	"github.com/go-faster/fs/server"
 	"github.com/go-faster/fs/storagefs"
@@ -144,17 +145,46 @@ Command-line flags override YAML configuration values.`,
 					return errors.Wrap(err, "configure auth")
 				}
 
-				var storage fs.Storage
+				keyring, err := cfg.Encryption.Keyring()
+				if err != nil {
+					return errors.Wrap(err, "server-side encryption")
+				}
 
-				{
+				// Built before the storage: the engine registers its peer
+				// endpoints on it, and it is served once they are.
+				member, err := newClusterMember(cfg, absRoot)
+				if err != nil {
+					return err
+				}
+
+				var (
+					storage fs.Storage
+					eng     *engine.Engine
+				)
+
+				// When each periodic pass last completed. On a single node
+				// that lives in the data directory: there is no control plane
+				// to ask, and the data directory is the one thing that
+				// outlives the process.
+				state := lastrun.NewFile(absRoot)
+
+				switch cfg.Storage.Type {
+				case StorageTypeEngine:
+					if eng, err = buildEngine(absRoot, member, keyring); err != nil {
+						return errors.Wrap(err, "storage engine")
+					}
+
+					defer func() { _ = eng.DB().Close() }()
+
+					if err := registerEngineMetrics(t.MeterProvider(), eng); err != nil {
+						return err
+					}
+
+					storage = eng
+				default: // StorageTypeFilesystem, enforced by Validate.
 					syncPolicy, err := storagefs.ParseSyncPolicy(cfg.Storage.Fsync)
 					if err != nil {
 						return errors.Wrap(err, "storage fsync policy")
-					}
-
-					keyring, err := cfg.Encryption.Keyring()
-					if err != nil {
-						return errors.Wrap(err, "server-side encryption")
 					}
 
 					fsStorage, err := storagefs.New(absRoot,
@@ -168,20 +198,18 @@ Command-line flags override YAML configuration values.`,
 
 					storage = fsStorage
 
-					// When each periodic pass last completed. On a single node
-					// that lives in the data directory: there is no control
-					// plane to ask, and the data directory is the one thing
-					// that outlives the process.
-					state := lastrun.NewFile(absRoot)
-
 					// Background integrity scrubber (no-op unless an interval is
-					// set).
+					// set). The engine verifies every block on read instead.
 					go runScrubber(ctx, lg, fsStorage, cfg.Integrity, state)
-
-					// Bucket lifecycle rules: the sweep that makes a stored
-					// expiry rule actually delete something.
-					go runLifecycle(ctx, lg, fsStorage, cfg.Lifecycle, state)
 				}
+
+				// Bucket lifecycle rules: the sweep that makes a stored expiry
+				// rule actually delete something.
+				//
+				// ponytail: in a cluster every node sweeps; deletes are
+				// idempotent, so the cost is duplicated listing. Elect one
+				// sweeper if that shows.
+				go runLifecycle(ctx, lg, storage, cfg.Lifecycle, state)
 
 				lg.Info("Durability",
 					zap.String("fsync", cfg.Storage.Fsync),
@@ -280,9 +308,18 @@ Command-line flags override YAML configuration values.`,
 				// listeners. A failure in any cancels the group.
 				grp, grpCtx := errgroup.WithContext(t.ShutdownContext())
 
-				member, err := startCluster(grpCtx, lg, cfg, absRoot, t.MeterProvider(), grp.Go)
-				if err != nil {
-					return err
+				if member != nil {
+					if err := serveCluster(grpCtx, lg, cfg, member, t.MeterProvider(), grp.Go); err != nil {
+						return err
+					}
+				}
+
+				if eng != nil {
+					grp.Go(func() error {
+						eng.Run(grpCtx, engine.RunConfig{Cluster: member != nil})
+
+						return nil
+					})
 				}
 
 				grp.Go(func() error {

@@ -101,13 +101,17 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/engine` — the storage engine (#277): `fs.Storage` over the
   replicated tables and blocks. Buckets are incarnations keyed by ID, objects
   are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are
-  serialized on their coordinating node. Versioning is a view over the
+  serialized on their coordinating node. Selected by `storage.type: engine`
+  (`cmd/fs/engine.go`: build, single-node membership, `fs.engine.*` metrics);
+  `engine.Run` drives anti-entropy, resync and block GC. Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 seals data
   through `internal/sse`; multipart parts are sealed as they arrive and not
   re-encrypted at completion. Checksums (`x-amz-checksum-*`) are of the
   plaintext; a FULL_OBJECT multipart CRC is combined from the parts' CRCs
-  (`checksum.Algorithm.Combine`), not computed over the reassembled body. Passes `storagetest` on
-  one node and on three; not wired into the server yet.
+  (`checksum.Algorithm.Combine`), not computed over the reassembled body.
+  Passes `storagetest` on one node and on three; CI runs the s3-tests against
+  a single engine server and a three-node cluster
+  (`scripts/s3tests-cluster.sh`).
 - Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
   compare per-(partition, slot) digests with the other replicas, pull what
   differs, and hand over data of partitions the layout moved away.

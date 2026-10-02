@@ -25,3 +25,6 @@ dist
 /s3tests
 
 helm/*.tgz
+
+# Run dir of scripts/s3tests-cluster.sh: node configs, data, logs.
+.s3tests-cluster/

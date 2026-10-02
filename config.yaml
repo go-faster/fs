@@ -24,7 +24,10 @@ storage:
   # This directory will contain all buckets and objects
   root: ".s3data"
 
-  # Storage backend type: "filesystem"
+  # Storage backend type:
+  #   filesystem - one directory tree, a single node
+  #   engine     - replicated metadata tables + content-addressed blocks under
+  #                <root>/.engine; a single node, or a cluster with `cluster:`
   type: "filesystem"
 
   # Pre-create these buckets on startup (optional)
@@ -51,9 +54,9 @@ storage:
 #   # Buckets readable anonymously (unsigned GET/HEAD/list).
 #   public_read_buckets: []
 
-# Cluster membership (experimental). Setting node_id turns it on: nodes gossip
-# and agree on a layout (`fs layout`), but objects are not replicated yet
-# (https://github.com/go-faster/fs/issues/279).
+# Cluster mode (experimental). Setting node_id turns it on: nodes gossip and
+# agree on a layout (`fs layout`); with storage.type: engine, objects are kept
+# on three nodes of it (https://github.com/go-faster/fs/issues/279).
 # cluster:
 #   node_id: "node-1"                 # or FS_CLUSTER_NODE_ID; unique per node
 #   addr: ":7080"                     # peer listener; never expose publicly

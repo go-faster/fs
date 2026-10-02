@@ -21,9 +21,8 @@ import (
 const DefaultClusterAddr = ":7080"
 
 // ClusterConfig configures cluster membership. Setting NodeID turns it on.
-//
-// Membership only, for now: nodes gossip and agree on a layout, but objects
-// are still stored on the node that received them (#279).
+// With storage.type engine the engine replicates over the layout; with any
+// other storage, membership alone replicates nothing.
 type ClusterConfig struct {
 	// NodeID is this node's identity in the layout. Unique per node; the
 	// FS_CLUSTER_NODE_ID environment variable takes precedence.
@@ -86,12 +85,10 @@ func (c *Config) validateCluster() error {
 	return nil
 }
 
-// startCluster joins the cluster: it serves the peer protocol, gossips until
-// ctx is canceled and exports membership metrics. It returns nil when cluster
-// mode is off.
-func startCluster(
-	ctx context.Context, lg *zap.Logger, cfg Config, root string, mp metric.MeterProvider, serve func(func() error),
-) (*peer.Member, error) {
+// newClusterMember returns this node's cluster membership, nil when cluster
+// mode is off. It does not serve yet: storage registers its own peer endpoints
+// on the member first.
+func newClusterMember(cfg Config, root string) (*peer.Member, error) {
 	if !cfg.clusterEnabled() {
 		return nil, nil
 	}
@@ -107,8 +104,16 @@ func startCluster(
 		return nil, errors.Wrap(err, "cluster membership")
 	}
 
+	return m, nil
+}
+
+// serveCluster serves the peer protocol, gossips until ctx is canceled and
+// exports membership metrics.
+func serveCluster(
+	ctx context.Context, lg *zap.Logger, cfg Config, m *peer.Member, mp metric.MeterProvider, serve func(func() error),
+) error {
 	if err := registerClusterMetrics(mp, m); err != nil {
-		return nil, err
+		return err
 	}
 
 	addr := cfg.Cluster.Addr
@@ -123,11 +128,17 @@ func startCluster(
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
-	lg.Warn("Cluster membership is on; objects are not replicated yet (#279)",
+	fields := []zap.Field{
 		zap.String("node_id", cfg.clusterNodeID()),
 		zap.String("addr", addr),
 		zap.String("advertise_addr", cfg.clusterAdvertiseAddr()),
-	)
+	}
+
+	if cfg.Storage.Type == StorageTypeEngine {
+		lg.Info("Cluster membership is on", fields...)
+	} else {
+		lg.Warn("Cluster membership is on, but storage.type is not engine: objects are not replicated", fields...)
+	}
 
 	serve(func() error {
 		go m.Run(ctx)
@@ -148,7 +159,7 @@ func startCluster(
 		return nil
 	})
 
-	return m, nil
+	return nil
 }
 
 // registerClusterMetrics exports the adopted layout version — compare it
