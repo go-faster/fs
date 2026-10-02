@@ -84,6 +84,10 @@ automated resumable migration and the public API becomes additive-only.
   server's storage yet: `cmd/fs/cluster.go` starts it (config `cluster:`,
   metrics), the admin API exposes it (`/api/v1/cluster/*`), and `fs layout`
   drives it.
+- `internal/cluster/table` — replicated metadata tables: CRDT rows (merge
+  must be commutative, associative, idempotent) keyed by partition key + sort
+  key, stored locally in bbolt, written and read at quorum over the layout's
+  first three slots, with read repair. Not used by storage yet (#273).
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 
