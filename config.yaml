@@ -51,6 +51,16 @@ storage:
 #   # Buckets readable anonymously (unsigned GET/HEAD/list).
 #   public_read_buckets: []
 
+# Cluster membership (experimental). Setting node_id turns it on: nodes gossip
+# and agree on a layout (`fs layout`), but objects are not replicated yet
+# (https://github.com/go-faster/fs/issues/279).
+# cluster:
+#   node_id: "node-1"                 # or FS_CLUSTER_NODE_ID; unique per node
+#   addr: ":7080"                     # peer listener; never expose publicly
+#   advertise_addr: "10.0.0.1:7080"   # or FS_CLUSTER_ADVERTISE_ADDR
+#   peers: ["10.0.0.2:7080"]          # one is enough, the rest are gossiped
+#   secret: "change-me-0123456789"    # or FS_CLUSTER_SECRET; same on every node
+
 # Admin API, on a separate bearer-token-protected listener.
 # admin:
 #   enabled: false

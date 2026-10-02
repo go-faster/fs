@@ -28,6 +28,16 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// ApplyLayout invokes applyLayout operation.
+	//
+	// Compute the next layout from the full set of member roles and adopt it on this node; gossip carries
+	// it to every other node. Slots keep their node wherever it is still valid, so only the data that has
+	// to move does. With dry_run the computed layout and the number of slots that would move are returned
+	// without adopting anything. Returns 400 when the roles cannot produce a layout, e.g. fewer members
+	// with capacity than the widest width.
+	//
+	// POST /api/v1/cluster/layout
+	ApplyLayout(ctx context.Context, request *ApplyLayoutRequest, params ApplyLayoutParams) (*LayoutChange, error)
 	// CreateAccessKey invokes createAccessKey operation.
 	//
 	// Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -47,12 +57,27 @@ type Invoker interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetLayout invokes getLayout operation.
+	//
+	// The layout this node has adopted: version, partitions, the widths it spreads for, each member's role
+	// and share of slots, and how many slots a single zone or rack holds per width. Returns 501 when
+	// cluster mode is off and 404 before any layout has been applied.
+	//
+	// GET /api/v1/cluster/layout
+	GetLayout(ctx context.Context) (*Layout, error)
 	// ListAccessKeys invokes listAccessKeys operation.
 	//
 	// Every credential the server accepts, secrets omitted.
 	//
 	// GET /api/v1/access-keys
 	ListAccessKeys(ctx context.Context) (*AccessKeyList, error)
+	// ListClusterNodes invokes listClusterNodes operation.
+	//
+	// This node and every peer it gossips with: address, the layout version each last reported, and
+	// whether the last exchange succeeded. Returns 501 when cluster mode is off.
+	//
+	// GET /api/v1/cluster/nodes
+	ListClusterNodes(ctx context.Context) (*ClusterNodeList, error)
 	// ReloadConfig invokes reloadConfig operation.
 	//
 	// Re-read the configuration file and apply the parts that change without a restart — the
@@ -102,6 +127,114 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// ApplyLayout invokes applyLayout operation.
+//
+// Compute the next layout from the full set of member roles and adopt it on this node; gossip carries
+// it to every other node. Slots keep their node wherever it is still valid, so only the data that has
+// to move does. With dry_run the computed layout and the number of slots that would move are returned
+// without adopting anything. Returns 400 when the roles cannot produce a layout, e.g. fewer members
+// with capacity than the widest width.
+//
+// POST /api/v1/cluster/layout
+func (c *Client) ApplyLayout(ctx context.Context, request *ApplyLayoutRequest, params ApplyLayoutParams) (*LayoutChange, error) {
+	res, err := c.sendApplyLayout(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendApplyLayout(ctx context.Context, request *ApplyLayoutRequest, params ApplyLayoutParams) (res *LayoutChange, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("applyLayout"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/layout"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ApplyLayoutOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/layout"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "dry_run" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "dry_run",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.DryRun.Get(); ok {
+				return e.EncodeValue(conv.BoolToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeApplyLayoutRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeApplyLayoutResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // CreateAccessKey invokes createAccessKey operation.
@@ -366,6 +499,88 @@ func (c *Client) sendGetInfo(ctx context.Context) (res *InstanceInfo, err error)
 	return result, nil
 }
 
+// GetLayout invokes getLayout operation.
+//
+// The layout this node has adopted: version, partitions, the widths it spreads for, each member's role
+// and share of slots, and how many slots a single zone or rack holds per width. Returns 501 when
+// cluster mode is off and 404 before any layout has been applied.
+//
+// GET /api/v1/cluster/layout
+func (c *Client) GetLayout(ctx context.Context) (*Layout, error) {
+	res, err := c.sendGetLayout(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetLayout(ctx context.Context) (res *Layout, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getLayout"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/layout"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetLayoutOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/layout"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetLayoutResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListAccessKeys invokes listAccessKeys operation.
 //
 // Every credential the server accepts, secrets omitted.
@@ -439,6 +654,87 @@ func (c *Client) sendListAccessKeys(ctx context.Context) (res *AccessKeyList, er
 
 	stage = "DecodeResponse"
 	result, err := decodeListAccessKeysResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListClusterNodes invokes listClusterNodes operation.
+//
+// This node and every peer it gossips with: address, the layout version each last reported, and
+// whether the last exchange succeeded. Returns 501 when cluster mode is off.
+//
+// GET /api/v1/cluster/nodes
+func (c *Client) ListClusterNodes(ctx context.Context) (*ClusterNodeList, error) {
+	res, err := c.sendListClusterNodes(ctx)
+	return res, err
+}
+
+func (c *Client) sendListClusterNodes(ctx context.Context) (res *ClusterNodeList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listClusterNodes"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/nodes"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListClusterNodesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/cluster/nodes"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListClusterNodesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

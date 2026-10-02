@@ -18,7 +18,8 @@ A Garage-style cluster (zone/rack-aware replication) is planned, see
 [#279](https://github.com/go-faster/fs/issues/279). Its first piece is
 `internal/cluster/layout`, the pure partition-to-node assignment, and
 `internal/cluster/peer`, which authenticates peer traffic and gossips the
-layout between nodes; nothing in the server uses them yet.
+layout between nodes. `cmd/fs` runs membership when `cluster.node_id` is
+set, and the admin API applies layouts; storage does not use the layout yet.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section

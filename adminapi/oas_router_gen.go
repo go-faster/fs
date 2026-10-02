@@ -11,6 +11,9 @@ import (
 )
 
 var (
+	rn3AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
+	}
 	rn1AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
@@ -84,7 +87,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					default:
 						s.notAllowed(w, r, notAllowedParams{
 							allowedMethods: "GET,POST",
-							allowedHeaders: rn1AllowedHeaders,
+							allowedHeaders: rn3AllowedHeaders,
 							acceptPost:     "application/json",
 							acceptPatch:    "",
 						})
@@ -120,6 +123,72 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						default:
 							s.notAllowed(w, r, notAllowedParams{
 								allowedMethods: "DELETE",
+								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				}
+
+			case 'c': // Prefix: "cluster/"
+
+				if l := len("cluster/"); len(elem) >= l && elem[0:l] == "cluster/" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					break
+				}
+				switch elem[0] {
+				case 'l': // Prefix: "layout"
+
+					if l := len("layout"); len(elem) >= l && elem[0:l] == "layout" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetLayoutRequest([0]string{}, elemIsEscaped, w, r)
+						case "POST":
+							s.handleApplyLayoutRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET,POST",
+								allowedHeaders: rn1AllowedHeaders,
+								acceptPost:     "application/json",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				case 'n': // Prefix: "nodes"
+
+					if l := len("nodes"); len(elem) >= l && elem[0:l] == "nodes" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleListClusterNodesRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
 								allowedHeaders: nil,
 								acceptPost:     "",
 								acceptPatch:    "",
@@ -342,6 +411,79 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 							r.pathPattern = "/api/v1/access-keys/{accessKey}"
 							r.args = args
 							r.count = 1
+							return r, true
+						default:
+							return
+						}
+					}
+
+				}
+
+			case 'c': // Prefix: "cluster/"
+
+				if l := len("cluster/"); len(elem) >= l && elem[0:l] == "cluster/" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					break
+				}
+				switch elem[0] {
+				case 'l': // Prefix: "layout"
+
+					if l := len("layout"); len(elem) >= l && elem[0:l] == "layout" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetLayoutOperation
+							r.summary = "Current cluster layout"
+							r.operationID = "getLayout"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/cluster/layout"
+							r.args = args
+							r.count = 0
+							return r, true
+						case "POST":
+							r.name = ApplyLayoutOperation
+							r.summary = "Apply a cluster layout"
+							r.operationID = "applyLayout"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/cluster/layout"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 'n': // Prefix: "nodes"
+
+					if l := len("nodes"); len(elem) >= l && elem[0:l] == "nodes" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = ListClusterNodesOperation
+							r.summary = "Cluster nodes"
+							r.operationID = "listClusterNodes"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/cluster/nodes"
+							r.args = args
+							r.count = 0
 							return r, true
 						default:
 							return

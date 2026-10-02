@@ -6,9 +6,12 @@ package adminapi
 type OperationName = string
 
 const (
-	CreateAccessKeyOperation OperationName = "CreateAccessKey"
-	DeleteAccessKeyOperation OperationName = "DeleteAccessKey"
-	GetInfoOperation         OperationName = "GetInfo"
-	ListAccessKeysOperation  OperationName = "ListAccessKeys"
-	ReloadConfigOperation    OperationName = "ReloadConfig"
+	ApplyLayoutOperation      OperationName = "ApplyLayout"
+	CreateAccessKeyOperation  OperationName = "CreateAccessKey"
+	DeleteAccessKeyOperation  OperationName = "DeleteAccessKey"
+	GetInfoOperation          OperationName = "GetInfo"
+	GetLayoutOperation        OperationName = "GetLayout"
+	ListAccessKeysOperation   OperationName = "ListAccessKeys"
+	ListClusterNodesOperation OperationName = "ListClusterNodes"
+	ReloadConfigOperation     OperationName = "ReloadConfig"
 )

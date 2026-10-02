@@ -33,6 +33,9 @@ type Config struct {
 	// Admin configuration
 	Admin AdminConfig `yaml:"admin,omitempty"`
 
+	// Cluster configures cluster membership; setting node_id turns it on.
+	Cluster ClusterConfig `yaml:"cluster,omitempty"`
+
 	// Integrity configuration
 	Integrity IntegrityConfig `yaml:"integrity"`
 
@@ -113,8 +116,8 @@ const DefaultAdminAddr = "localhost:8090"
 // persisted runtime-created access keys.
 const DefaultAdminKeysFile = ".access-keys.json"
 
-// AdminConfig configures the admin API and its embedded web dashboard, served
-// on a separate listener protected by a bearer token.
+// AdminConfig configures the admin API, served on a separate listener
+// protected by a bearer token.
 type AdminConfig struct {
 	// Enabled turns on the admin listener. Off by default.
 	Enabled bool `yaml:"enabled,omitempty"`
@@ -279,6 +282,10 @@ func (c *Config) Validate() error {
 
 	if c.Storage.Root == "" {
 		return errors.New("storage.root is required")
+	}
+
+	if err := c.validateCluster(); err != nil {
+		return err
 	}
 
 	switch c.Storage.Type {

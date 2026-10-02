@@ -13,6 +13,19 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// ApplyLayout implements applyLayout operation.
+//
+// Compute the next layout from the full set of member roles and adopt it on this node; gossip carries
+// it to every other node. Slots keep their node wherever it is still valid, so only the data that has
+// to move does. With dry_run the computed layout and the number of slots that would move are returned
+// without adopting anything. Returns 400 when the roles cannot produce a layout, e.g. fewer members
+// with capacity than the widest width.
+//
+// POST /api/v1/cluster/layout
+func (UnimplementedHandler) ApplyLayout(ctx context.Context, req *ApplyLayoutRequest, params ApplyLayoutParams) (r *LayoutChange, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateAccessKey implements createAccessKey operation.
 //
 // Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -41,12 +54,33 @@ func (UnimplementedHandler) GetInfo(ctx context.Context) (r *InstanceInfo, _ err
 	return r, ht.ErrNotImplemented
 }
 
+// GetLayout implements getLayout operation.
+//
+// The layout this node has adopted: version, partitions, the widths it spreads for, each member's role
+// and share of slots, and how many slots a single zone or rack holds per width. Returns 501 when
+// cluster mode is off and 404 before any layout has been applied.
+//
+// GET /api/v1/cluster/layout
+func (UnimplementedHandler) GetLayout(ctx context.Context) (r *Layout, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListAccessKeys implements listAccessKeys operation.
 //
 // Every credential the server accepts, secrets omitted.
 //
 // GET /api/v1/access-keys
 func (UnimplementedHandler) ListAccessKeys(ctx context.Context) (r *AccessKeyList, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListClusterNodes implements listClusterNodes operation.
+//
+// This node and every peer it gossips with: address, the layout version each last reported, and
+// whether the last exchange succeeded. Returns 501 when cluster mode is off.
+//
+// GET /api/v1/cluster/nodes
+func (UnimplementedHandler) ListClusterNodes(ctx context.Context) (r *ClusterNodeList, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

@@ -81,7 +81,9 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/cluster/peer` — peer membership: HMAC-authenticated peer HTTP
   (`Secret`), the adopted layout persisted under the data dir, and gossip that
   spreads the highest layout version and discovers peers. Not wired into the
-  server yet.
+  server's storage yet: `cmd/fs/cluster.go` starts it (config `cluster:`,
+  metrics), the admin API exposes it (`/api/v1/cluster/*`), and `fs layout`
+  drives it.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

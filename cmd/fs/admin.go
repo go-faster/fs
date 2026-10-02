@@ -18,6 +18,7 @@ import (
 	"github.com/go-faster/fs/adminapi"
 	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/internal/adminhandler"
+	"github.com/go-faster/fs/internal/cluster/peer"
 )
 
 // buildMeta is version metadata extracted from the build.
@@ -68,6 +69,8 @@ type adminServerConfig struct {
 	AuthEnabled bool
 	StartTime   time.Time
 	Reloader    *reloader
+	// Cluster is this node's membership; nil when cluster mode is off.
+	Cluster *peer.Member
 }
 
 // runAdminServer serves the admin API on a
@@ -97,6 +100,7 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 		StartTime:      cfg.StartTime,
 		Reloader:       cfg.Reloader,
 		ConfigRevision: cfg.Reloader.CurrentRevision,
+		Cluster:        cfg.Cluster,
 	}
 
 	handler := adminhandler.NewAdminAPI(opts)
