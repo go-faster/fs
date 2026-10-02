@@ -97,19 +97,35 @@ func NewManager(store *Store, member *peer.Member) *Manager {
 func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 	h := Sum(data)
 
-	return h, m.PutHashed(ctx, h, data)
+	return h, m.PutHashed(ctx, h, data, nil)
 }
 
 // PutHashed is Put for a caller that already has the block's hash: it is not
 // computed again here. A replica receiving the block over the network still
 // checks it against h.
-func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte) error {
+//
+// It returns at quorum while the remaining replicas may still be sending
+// data. release, when not nil, is called exactly once when nothing reads data
+// any more, so the caller can reuse the buffer.
+func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte, release func()) error {
+	var once sync.Once
+
+	done := func() {
+		if release != nil {
+			once.Do(release)
+		}
+	}
+
 	if len(data) > MaxSize {
+		done()
+
 		return errors.Errorf("block of %d bytes exceeds %d", len(data), MaxSize)
 	}
 
 	nodes, err := m.replicas(h)
 	if err != nil {
+		done()
+
 		return err
 	}
 
@@ -135,6 +151,7 @@ func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte) error {
 	go func() {
 		wg.Wait()
 		cancel()
+		done()
 	}()
 
 	need := len(nodes)/2 + 1

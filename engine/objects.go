@@ -69,19 +69,28 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 		return failed
 	}
 
-	buf := make([]byte, e.blockSize)
-
 	for {
-		n, err := io.ReadFull(stored, buf)
-		if n > 0 {
-			// The goroutine owns its copy; buf is read into again at once.
-			chunk := bytes.Clone(buf[:n])
+		// Each block is read into its own pooled buffer, owned by the store
+		// until every replica has it, then returned for the next block.
+		bufp := e.buffer()
+		chunk := (*bufp)[:e.blockSize]
 
+		n, err := io.ReadFull(stored, chunk)
+		chunk = chunk[:max(n, 0)]
+
+		if n == 0 {
+			e.bufs.Put(bufp)
+		}
+
+		if n > 0 {
 			// Only a first chunk that already reached the end can be inline:
-			// the whole object is in it.
+			// the whole object is in it. The version keeps it, so it is
+			// copied out of the pooled buffer.
 			last := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 			if len(sizes) == 0 && last && n <= e.inlineLimit {
-				w.inline = chunk
+				w.inline = bytes.Clone(chunk)
+
+				e.bufs.Put(bufp)
 			} else {
 				idx := len(sizes)
 				sizes = append(sizes, int64(n))
@@ -92,7 +101,7 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 					defer func() { <-sem }()
 
 					h := block.Sum(chunk)
-					err := e.storeBlock(ctx, owner, h, chunk)
+					err := e.storeBlock(ctx, owner, h, chunk, func() { e.bufs.Put(bufp) })
 
 					mu.Lock()
 					hashes[idx] = h
@@ -168,17 +177,33 @@ func (c *counter) Read(p []byte) (int, error) {
 }
 
 // storeBlock references a block from owner, then stores it. The reference
-// comes first, so GC never finds the block unreferenced.
-func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, data []byte) error {
+// comes first, so GC never finds the block unreferenced. release, when not
+// nil, is called once nothing reads data any more.
+func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, data []byte, release func()) error {
 	if err := e.refs.Insert(ctx, h.String(), owner, meta.BlockRef{}); err != nil {
+		if release != nil {
+			release()
+		}
+
 		return err
 	}
 
-	if err := e.blocks.PutHashed(ctx, h, data); err != nil {
+	if err := e.blocks.PutHashed(ctx, h, data, release); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// buffer returns a pooled buffer large enough for a block and its trailer.
+func (e *Engine) buffer() *[]byte {
+	if p, ok := e.bufs.Get().(*[]byte); ok && cap(*p) >= e.blockSize+4 {
+		return p
+	}
+
+	b := make([]byte, e.blockSize+4)
+
+	return &b
 }
 
 // putBlock stores one block for owner and appends it to w; on failure it
@@ -186,7 +211,7 @@ func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, dat
 func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *written) error {
 	h := block.Sum(data)
 
-	if err := e.storeBlock(ctx, owner, h, data); err != nil {
+	if err := e.storeBlock(ctx, owner, h, data, nil); err != nil {
 		e.release(ctx, owner, append(w.blocks, blockLoc{Hash: h}))
 
 		return err
