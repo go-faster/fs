@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -455,34 +456,62 @@ func (m *Member) call(ctx context.Context, method, addr, path string, in, out an
 		}
 	}
 
-	// from carries this node's address, so the callee can gossip back.
-	u := url.URL{Scheme: "http", Host: addr, Path: path, RawQuery: url.Values{"from": {m.cfg.Addr}}.Encode()}
-
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
+	status, resp, err := m.raw(ctx, method, addr, path, body)
 	if err != nil {
-		return errors.Wrap(err, "build request")
+		return err
 	}
 
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return errors.Wrapf(err, "%s %s", method, path)
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode/100 != 2 {
-		return errors.Errorf("%s %s: status %d", method, path, resp.StatusCode)
+	if status/100 != 2 {
+		return errors.Errorf("%s %s: status %d", method, path, status)
 	}
 
 	if out == nil {
 		return nil
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.Unmarshal(resp, out); err != nil {
 		return errors.Wrapf(err, "decode %s", path)
 	}
 
 	return nil
+}
+
+// Raw sends an authenticated request with a raw body to the node with the
+// given ID and returns the status and body of its answer. Unlike Call, a
+// status that is not 2xx is an answer, not an error: a peer saying 404 is
+// telling the caller something.
+func (m *Member) Raw(ctx context.Context, id layout.NodeID, method, path string, body []byte) (status int, resp []byte, err error) {
+	addr, ok := m.Addr(id)
+	if !ok {
+		return 0, nil, errors.Errorf("no address known for node %q", id)
+	}
+
+	return m.raw(ctx, method, addr, path, body)
+}
+
+func (m *Member) raw(ctx context.Context, method, addr, path string, body []byte) (code int, payload []byte, err error) {
+	// from carries this node's address, so the callee can gossip back.
+	u := url.URL{Scheme: "http", Host: addr, Path: path, RawQuery: url.Values{"from": {m.cfg.Addr}}.Encode()}
+
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, errors.Wrap(err, "build request")
+	}
+
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return 0, nil, errors.Wrapf(err, "%s %s", method, path)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	// The signing transport has already buffered and verified the body.
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, errors.Wrapf(err, "read %s", path)
+	}
+
+	return resp.StatusCode, b, nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -21,8 +21,8 @@ A Garage-style cluster (zone/rack-aware replication) is planned, see
 layout between nodes. `cmd/fs` runs membership when `cluster.node_id` is
 set, and the admin API applies layouts. `internal/cluster/table` adds
 replicated CRDT tables on top, and `internal/cluster/meta` the bucket, object
-(version list) and block-ref rows they hold; storage does not use any of it
-yet.
+(version list) and block-ref rows they hold, and `internal/cluster/block`
+the content-addressed data blocks; storage does not use any of it yet.
 
 Scope is stated by [COMPATIBILITY.md](COMPATIBILITY.md), not here: what it
 lists as implemented is in, and everything in its "Not implemented" section
