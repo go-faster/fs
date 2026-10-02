@@ -49,13 +49,15 @@ func TestGetObject(t *testing.T) {
 	obj, err := client.GetObject(ctx, bucketName, objectKey, minio.GetObjectOptions{})
 	require.NoError(t, err)
 
-	content, err := io.ReadAll(obj)
-	require.NoError(t, err)
-	require.Equal(t, expectedContent, content)
-
+	// Stat before reading: since minio-go 7.3 it reports the bytes left to
+	// read, so after a full read the size is 0.
 	info, err := obj.Stat()
 	require.NoError(t, err)
 	require.Equal(t, int64(len(expectedContent)), info.Size)
+
+	content, err := io.ReadAll(obj)
+	require.NoError(t, err)
+	require.Equal(t, expectedContent, content)
 }
 
 func TestGetObject_NotFound(t *testing.T) {
