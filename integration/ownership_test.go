@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/server"
-	"github.com/go-faster/fs/storagefs"
 )
 
 // ownershipConfig gives three principals the shapes that matter: the bucket's
@@ -42,8 +42,9 @@ func ownershipConfig() auth.Config {
 func newOwnershipServer(t testing.TB, isolation bool) string {
 	t.Helper()
 
-	storage, err := storagefs.New(t.TempDir())
+	storage, err := engine.Open(t.TempDir(), engine.Options{NoSync: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
 
 	store, err := auth.NewStore(ownershipConfig())
 	require.NoError(t, err)

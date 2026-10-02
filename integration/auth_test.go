@@ -18,8 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/server"
-	"github.com/go-faster/fs/storagefs"
 )
 
 const (
@@ -32,8 +32,9 @@ const (
 func newAuthServer(t testing.TB, cfg auth.Config) string {
 	t.Helper()
 
-	storage, err := storagefs.New(t.TempDir())
+	storage, err := engine.Open(t.TempDir(), engine.Options{NoSync: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
 
 	store, err := auth.NewStore(cfg)
 	require.NoError(t, err)

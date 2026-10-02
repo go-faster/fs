@@ -21,8 +21,6 @@ storage:
   # Should be mounted to a persistent volume in containerized environments
   root: "/data/s3"
 
-  type: "filesystem"
-
   # Pre-create production buckets (optional)
   # Uncomment and configure as needed
   # buckets:
@@ -59,8 +57,9 @@ observability:
 #   # x-amz-server-side-encryption.
 #   default_algorithm: "AES256"
 #
-#   # Keys kept only to read objects written before a rotation. Remove an entry
-#   # once nothing is wrapped by it — earlier, and those objects become
-#   # unreadable.
+#   # Keys kept only to read objects written before a rotation. Objects are not
+#   # re-wrapped onto the current key yet
+#   # (https://github.com/go-faster/fs/issues/308), so keep every previous key:
+#   # removing one makes the objects it wrapped unreadable.
 #   # previous_key_files:
 #   #   - "/run/secrets/fs-master-key.old"

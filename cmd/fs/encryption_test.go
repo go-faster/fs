@@ -183,7 +183,7 @@ func TestMasterKeyPathIsRelativeToConfig(t *testing.T) {
 
 	cfgPath := filepath.Join(dir, "server.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(
-		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n  type: \"filesystem\"\n"+
+		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n"+
 			"observability:\n  service_name: \"go-faster/fs\"\n"+
 			"encryption:\n  master_key_file: \"master.key\"\n"), 0o600))
 
@@ -208,7 +208,7 @@ func TestMasterKeyAbsolutePathUnchanged(t *testing.T) {
 
 	cfgPath := filepath.Join(t.TempDir(), "server.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(
-		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n  type: \"filesystem\"\n"+
+		"server:\n  addr: \":8080\"\nstorage:\n  root: \"/tmp/x\"\n"+
 			"observability:\n  service_name: \"go-faster/fs\"\n"+
 			// Single-quoted: YAML does not read backslash escapes there, and on
 			// Windows an absolute path is full of them.

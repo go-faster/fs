@@ -8,7 +8,6 @@ server:
   region: default
 storage:
   root: ./.s3data-ci
-  type: engine
 auth:
   keys:
     - access_key: 0555b35654ad1656d804

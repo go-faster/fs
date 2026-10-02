@@ -20,9 +20,8 @@ import (
 // DefaultClusterAddr is the default peer listener address.
 const DefaultClusterAddr = ":7080"
 
-// ClusterConfig configures cluster membership. Setting NodeID turns it on.
-// With storage.type engine the engine replicates over the layout; with any
-// other storage, membership alone replicates nothing.
+// ClusterConfig configures cluster mode. Setting NodeID turns it on: the
+// engine then keeps each object on three nodes of the applied layout.
 type ClusterConfig struct {
 	// NodeID is this node's identity in the layout. Unique per node; the
 	// FS_CLUSTER_NODE_ID environment variable takes precedence.
@@ -134,11 +133,7 @@ func serveCluster(
 		zap.String("advertise_addr", cfg.clusterAdvertiseAddr()),
 	}
 
-	if cfg.Storage.Type == StorageTypeEngine {
-		lg.Info("Cluster membership is on", fields...)
-	} else {
-		lg.Warn("Cluster membership is on, but storage.type is not engine: objects are not replicated", fields...)
-	}
+	lg.Info("Cluster membership is on", fields...)
 
 	serve(func() error {
 		go m.Run(ctx)

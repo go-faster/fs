@@ -227,8 +227,12 @@ func TestReadRepair(t *testing.T) {
 		return err == nil && ok && got.V == "new"
 	}, 5*time.Second, 10*time.Millisecond)
 
-	// Every replica that answered with less is brought up to date.
+	// Every replica that answered with less is brought up to date. A read
+	// waits for two of three answers, so which two answer is timing: keep
+	// reading until one includes n1.
 	require.Eventually(t, func() bool {
+		_, _, _ = nodes[1].table.Get(ctx, "b", "k")
+
 		resp, err := nodes[1].table.localGet("b", "k")
 
 		return err == nil && string(resp.Row) == `{"v":"new","ts":2}`

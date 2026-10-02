@@ -6,14 +6,15 @@ benchmark suite that turns those targets into CI regression gates.
 
 ## Targets (NFR-3)
 
-On a single NVMe node:
+On a single NVMe node (results in this table and below were measured on the
+removed filesystem backend unless stated as a gate):
 
 | Target | Result |
 |---|---|
 | Large-object throughput ≥ 80% of raw disk sequential bandwidth | **met** — PUT at the MD5 ceiling, GET ≈ raw read (see below) |
 | Small-object (4 KiB) GET p99 < 10 ms at 5k req/s | **met with wide margin** — p99 ≈ 0.7 ms at ~150k req/s |
-| PUT allocations amortized O(1) per request (no full-object buffering) | **met** — 45–47 allocs/op, constant from 4 KiB to 256 MiB |
-| Streaming end-to-end (no full-object buffering) | **met** — ~36 KB/op constant across all object sizes |
+| PUT allocations a constant per 1 MiB block (no full-object buffering) | gated at ≤ 128 allocs per block |
+| Streaming end-to-end (no full-object buffering) | gated — live heap grows < 64 MiB during a 256 MiB PUT |
 
 ## The large-object PUT ceiling is MD5, not the disk
 
@@ -27,9 +28,10 @@ slower than the device.
 
 The benchmark suite therefore gates PUT against the honest ceiling: the rate at
 which the same machine can **stream the object through MD5 and write it**
-(`stream + MD5 + write`, no fsync). The backend adds only a temp-file write, an
-atomic rename, and a small sidecar on top of that mandatory work — and measures
-at ~100–105% of the ceiling (within noise of it). The pure-disk figure is
+(`stream + MD5 + write`, no fsync). On top of that mandatory work the engine
+splits the body into 1 MiB blocks, hashes each with SHA-256 for its name, and
+writes a metadata row per block and per version; it stores up to 4 blocks
+concurrently, and GET reads ahead 8 blocks. The pure-disk figure is
 reported alongside for transparency.
 
 GET has no such tax (the ETag is already known), so it is gated directly
@@ -37,22 +39,35 @@ against raw sequential read and lands at ~95–105% of it.
 
 ## Measured results
 
-Reference machine (AMD Ryzen 9 5950X, NVMe, Linux, `SyncNone`):
+Reference machine (AMD Ryzen 9 5950X, NVMe, Linux), single-node engine with
+`NoSync`:
 
 ```
-BenchmarkPutObject/4KiB     67 MB/s     36 KB/op    46 allocs/op
-BenchmarkPutObject/1MiB    720 MB/s     36 KB/op    45 allocs/op
-BenchmarkPutObject/64MiB   750 MB/s     37 KB/op    46 allocs/op    (MD5-bound)
-BenchmarkGetObject/4KiB    205 MB/s      3 KB/op    26 allocs/op
-BenchmarkGetObject/1MiB   7100 MB/s      3 KB/op    26 allocs/op
-BenchmarkGetObject/64MiB  5700 MB/s      3 KB/op    26 allocs/op
+BenchmarkPutObject/4KiB     20 MB/s     75 KB/op   305 allocs/op   (~0.2 ms per PUT)
+BenchmarkPutObject/1MiB    560 MB/s    100 KB/op   291 allocs/op
+BenchmarkPutObject/64MiB   900 MB/s    2.3 MB/op  5865 allocs/op   (MD5-bound)
+BenchmarkGetObject/4KiB     65 MB/s     10 KB/op   128 allocs/op
+BenchmarkGetObject/1MiB   6000 MB/s     15 KB/op   128 allocs/op
+BenchmarkGetObject/64MiB 15000 MB/s    185 KB/op  1150 allocs/op   (read-ahead over cores)
 
 NFR-3 gates:
-  PUT 64MiB : ~105% of the stream+MD5+write ceiling (pure disk ~2.9 GB/s, MD5-bound)
-  GET 64MiB : ~100% of raw sequential read
-  PUT allocs: 45 at 64 KiB == 45 at 256 MiB (O(1), no buffering)
-  4KiB GET  : p50 ≈ 40 µs, p99 ≈ 0.7 ms, p99.9 ≈ 3 ms at ~150k req/s
+  PUT 64MiB   : at or above 80% of the stream+MD5+write ceiling
+  GET 64MiB   : at or above 80% of raw sequential read
+  PUT allocs  : ~87 per 1 MiB block (budget 128)
+  PUT memory  : live heap grows ≤ 2 MiB while a 256 MiB object is written
+  4KiB GET    : p50 ≈ 0.35 ms, p99 ≈ 2.3 ms at ~29k req/s, 16 workers
 ```
+
+Large objects run at least as fast as the filesystem backend did; small ones do not.
+A 4 KiB PUT is two metadata commits, a block write and a quorum's worth of
+bookkeeping — about 0.2 ms against the old backend's 60 µs. Reads check a
+CRC-32C stored with each block (hardware-accelerated) rather than re-hashing
+it with SHA-256, and reuses block buffers from a pool instead of allocating one
+per block; together that keeps GET above raw single-stream read on a 4-core
+runner. PUT reads each block into a pooled buffer too, returned once every
+replica has it. Merging a PUT's
+metadata writes into one commit is the obvious next step if small-object rates
+matter.
 
 Numbers vary with hardware; the CI gates are **machine-relative** (a ratio to
 the same box's raw bandwidth) so they hold on slower shared runners.
@@ -64,7 +79,7 @@ make bench-gate   # NFR-3 regression gates (sets FS_PERF_GATES; the perf CI job 
 make bench        # full ns/op / MB/s / allocs run for benchstat
 ```
 
-The deterministic **allocation** gate runs in every `go test ./...` (including
+The deterministic **allocation** and **memory** gates run in every `go test ./...` (including
 the multi-platform CI matrix). The wall-clock **throughput** and **latency**
 gates run only when `FS_PERF_GATES` is set — the `perf` workflow sets it and
 runs on a GitHub-hosted runner, so treat its absolute numbers as noisy; the
@@ -83,14 +98,19 @@ go tool benchstat old.txt new.txt
 
 ## What the gates enforce (bench/nfr3_test.go)
 
-- **`TestNFR3PutAllocsConstant`** — a 256 MiB PUT must not allocate materially
-  more than a 64 KiB one. Deterministic and hardware-independent; the strongest
-  guard against a regression that starts buffering whole objects.
+- **`TestNFR3PutAllocsPerBlock`** — a 256 MiB PUT may allocate at most 128
+  more per 1 MiB block than a 64 KiB PUT does: a constant per block, never a
+  function of how much of the body has accumulated. Deterministic and
+  hardware-independent.
+- **`TestNFR3PutMemoryBounded`** — the live heap, sampled under an aggressive
+  GC while a 256 MiB object is written, must grow by less than 64 MiB: a PUT
+  holds a few blocks, not the object. The strongest guard against a regression
+  that starts buffering whole objects.
 - **`TestNFR3LargeObjectThroughput`** — PUT ≥ 80% of the stream+MD5+write
   ceiling and GET ≥ 80% of raw sequential read, both measured on the same
   filesystem in the same run (a ratio, so runner speed cancels out).
 - **`TestNFR3SmallObjectGetLatency`** — 4 KiB GET p99 under concurrent load,
   logged for tracking and gated at a generous CI ceiling.
 
-The gates run on the single-node filesystem backend (`storagefs`), which is the
-"single NVMe node" NFR-3 is stated against.
+The gates run on a single-node engine with fsync off (`engine.Options.NoSync`),
+which is the "single NVMe node" NFR-3 is stated against.

@@ -97,13 +97,36 @@ func NewManager(store *Store, member *peer.Member) *Manager {
 func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 	h := Sum(data)
 
+	return h, m.PutHashed(ctx, h, data, nil)
+}
+
+// PutHashed is Put for a caller that already has the block's hash: it is not
+// computed again here. A replica receiving the block over the network still
+// checks it against h.
+//
+// It returns at quorum while the remaining replicas may still be sending
+// data. release, when not nil, is called exactly once when nothing reads data
+// any more, so the caller can reuse the buffer.
+func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte, release func()) error {
+	var once sync.Once
+
+	done := func() {
+		if release != nil {
+			once.Do(release)
+		}
+	}
+
 	if len(data) > MaxSize {
-		return h, errors.Errorf("block of %d bytes exceeds %d", len(data), MaxSize)
+		done()
+
+		return errors.Errorf("block of %d bytes exceeds %d", len(data), MaxSize)
 	}
 
 	nodes, err := m.replicas(h)
 	if err != nil {
-		return h, err
+		done()
+
+		return err
 	}
 
 	// Replicas past the quorum still get the block: detach from the caller,
@@ -128,6 +151,7 @@ func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 	go func() {
 		wg.Wait()
 		cancel()
+		done()
 	}()
 
 	need := len(nodes)/2 + 1
@@ -143,7 +167,7 @@ func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 			errs = append(errs, err)
 
 			if len(nodes)-failed < need {
-				return h, errors.Wrapf(ErrQuorum, "block %s: %v", h, errors.Join(errs...))
+				return errors.Wrapf(ErrQuorum, "block %s: %v", h, errors.Join(errs...))
 			}
 
 			continue
@@ -151,11 +175,11 @@ func (m *Manager) Put(ctx context.Context, data []byte) (Hash, error) {
 
 		ok++
 		if ok == need {
-			return h, nil
+			return nil
 		}
 	}
 
-	return h, errors.Wrapf(ErrQuorum, "block %s", h)
+	return errors.Wrapf(ErrQuorum, "block %s", h)
 }
 
 // Get returns the block's content from the first replica that has a valid
@@ -206,6 +230,26 @@ func (m *Manager) Get(ctx context.Context, h Hash) ([]byte, error) {
 	}
 
 	return nil, errors.Wrapf(errors.Join(errs...), "block %s", h)
+}
+
+// GetInto is Get reading into buf when this node holds a good copy, so a
+// reader of many blocks can reuse its buffers; otherwise it is Get. The
+// result may alias buf.
+func (m *Manager) GetInto(ctx context.Context, h Hash, buf []byte) ([]byte, error) {
+	nodes, err := m.replicas(h)
+	if err != nil {
+		return nil, err
+	}
+
+	if slices.Contains(nodes, m.member.ID()) {
+		if data, err := m.store.GetInto(h, buf); err == nil {
+			return data, nil
+		} else if errors.Is(err, ErrCorrupt) {
+			m.corrupt.Add(1)
+		}
+	}
+
+	return m.Get(ctx, h)
 }
 
 // GC removes this node's blocks that live reports unreferenced and that have
@@ -424,9 +468,15 @@ func (m *Manager) servePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The sender's hash is checked here, where the bytes arrive from
+	// elsewhere; the store trusts what it is given.
+	if Sum(data) != h {
+		http.Error(w, ErrMismatch.Error(), http.StatusBadRequest)
+
+		return
+	}
+
 	switch err := m.store.Put(h, data); {
-	case errors.Is(err, ErrMismatch):
-		http.Error(w, err.Error(), http.StatusBadRequest)
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	default:

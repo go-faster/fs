@@ -74,6 +74,10 @@ type Engine struct {
 
 	gcMu sync.Mutex
 	gc   gcStats
+
+	// bufs recycles block buffers between reads, so a GET does not allocate
+	// (and the kernel zero) a fresh block for every block it serves.
+	bufs sync.Pool
 }
 
 var (
@@ -119,10 +123,6 @@ func New(cfg Config) (*Engine, error) {
 
 	return e, nil
 }
-
-// DB is the metadata database the engine was built over, for its owner to
-// close.
-func (e *Engine) DB() *bbolt.DB { return e.db }
 
 // lock serializes writes to one key on this node.
 func (e *Engine) lock(bucketID, key string) func() {

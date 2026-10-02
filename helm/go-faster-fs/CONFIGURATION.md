@@ -32,7 +32,6 @@ Controls where and how data is stored:
 config:
   storage:
     root: "/data"           # Storage root directory
-    type: "filesystem"      # Storage backend (only filesystem supported)
 ```
 
 ### Observability Configuration
@@ -209,7 +208,8 @@ If the pod fails to start due to invalid configuration:
 2. Common issues:
    - Invalid duration format (must be like `30s`, `2m`)
    - Missing required fields
-   - Invalid storage.type (must be "filesystem")
+   - A data directory written by the removed filesystem backend (copy the
+     objects out with the previous release into a fresh volume)
 
 ### View Running Configuration
 

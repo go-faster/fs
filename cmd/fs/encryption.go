@@ -28,9 +28,8 @@ type EncryptionConfig struct {
 
 	// PreviousKeyFiles are master keys retained only to decrypt objects
 	// written before a rotation. New objects are always wrapped with
-	// MasterKeyFile's key. Remove an entry once `fs encrypt rotate` reports no
-	// objects left under it — before that, removing it makes those objects
-	// unreadable.
+	// MasterKeyFile's key. Removing an entry makes every object still sealed
+	// under it unreadable; moving objects onto the current key is #308.
 	PreviousKeyFiles []string `yaml:"previous_key_files,omitempty"`
 
 	// DefaultAlgorithm, when set to "AES256", encrypts every object whose

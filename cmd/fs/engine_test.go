@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,27 +14,11 @@ import (
 	"github.com/go-faster/fs"
 )
 
-func TestSoloMemberKeepsItsLayout(t *testing.T) {
-	dir := t.TempDir()
-
-	m, err := soloMember(dir)
-	require.NoError(t, err)
-	require.NotNil(t, m.Layout())
-
-	first := m.Layout()
-	assert.Equal(t, uint64(1), first.Version)
-	assert.Len(t, first.Slots, 1)
-
-	again, err := soloMember(dir)
-	require.NoError(t, err)
-	assert.Equal(t, first, again.Layout(), "a restart keeps the layout it applied, and applies none")
-}
-
 func TestBuildEngineSingleNode(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()
 
-	e, err := buildEngine(root, nil, nil)
+	e, err := buildEngine(root, nil, nil, false)
 	require.NoError(t, err)
 
 	require.NoError(t, e.CreateBucket(ctx, "b"))
@@ -45,14 +30,13 @@ func TestBuildEngineSingleNode(t *testing.T) {
 	require.DirExists(t, filepath.Join(root, ".engine", "blocks"))
 
 	// A restart over the same root finds the object.
-	db := e.DB()
-	require.NoError(t, db.Close())
+	require.NoError(t, e.Close())
 
-	again, err := buildEngine(root, nil, nil)
+	again, err := buildEngine(root, nil, nil, false)
 	require.NoError(t, err)
 
 	// Windows cannot remove the temp dir while the database is open.
-	t.Cleanup(func() { _ = again.DB().Close() })
+	t.Cleanup(func() { _ = again.Close() })
 
 	resp, err := again.GetObject(ctx, "b", "k")
 	require.NoError(t, err)
@@ -62,11 +46,44 @@ func TestBuildEngineSingleNode(t *testing.T) {
 	assert.Equal(t, "hello", string(body))
 }
 
-func TestValidateStorageType(t *testing.T) {
+func TestValidateFsync(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Storage.Type = StorageTypeEngine
 	require.NoError(t, cfg.Validate())
 
-	cfg.Storage.Type = "tape"
-	require.ErrorContains(t, cfg.Validate(), "unsupported storage type")
+	cfg.Storage.Fsync = "none"
+	require.NoError(t, cfg.Validate())
+
+	cfg.Storage.Fsync = "sometimes"
+	require.ErrorContains(t, cfg.Validate(), "storage.fsync")
+}
+
+func TestRefuseLegacyLayout(t *testing.T) {
+	for name, layout := range map[string][]string{
+		"staging dir":  {".tmp/"},
+		"sidecars":     {".meta/"},
+		"bucket dir":   {"photos/"},
+		"versions dir": {".versions/"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, p := range layout {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, p), 0o750))
+			}
+
+			_, err := buildEngine(root, nil, nil, true)
+			require.ErrorContains(t, err, "filesystem backend")
+		})
+	}
+
+	// What the engine and the server write themselves is not legacy.
+	root := t.TempDir()
+	for _, p := range []string{".engine/", ".cluster/", ".lastrun/"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, p), 0o750))
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".access-keys.json"), []byte("{}"), 0o600))
+
+	e, err := buildEngine(root, nil, nil, true)
+	require.NoError(t, err)
+	require.NoError(t, e.Close())
 }
