@@ -542,3 +542,20 @@ func quorum[T any](nodes []layout.NodeID, need int, fn func(layout.NodeID) (T, e
 
 	return nil, errors.Wrap(ErrQuorum, "not enough replicas")
 }
+
+// OpenDB opens the bbolt database tables live in, tuned for them.
+//
+// Writes go through bbolt's Batch, which holds each one up to MaxBatchDelay to
+// coalesce it with concurrent writes. bbolt's default of 10ms is paid by a
+// lone writer on every insert — several per object written — so it is cut to
+// a millisecond: still enough to coalesce under load.
+func OpenDB(path string) (*bbolt.DB, error) {
+	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: time.Second})
+	if err != nil {
+		return nil, errors.Wrapf(err, "open %s", path)
+	}
+
+	db.MaxBatchDelay = time.Millisecond
+
+	return db, nil
+}

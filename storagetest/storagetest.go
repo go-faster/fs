@@ -592,13 +592,15 @@ func testMultipartCreateBucketNotFound(t *testing.T, storage fs.Storage) {
 	require.ErrorIs(t, err, fs.ErrBucketNotFound)
 }
 
-func uploadPart(t *testing.T, storage fs.Storage, uploadID string, partNumber int, content []byte) *fs.Part {
+func uploadPart(t *testing.T, storage fs.Storage, upload *fs.MultipartUpload, partNumber int, content []byte) *fs.Part {
 	t.Helper()
 
+	// The upload's own bucket and key: S3 rejects a part sent for another
+	// key with NoSuchUpload, and a backend may hold it to that.
 	part, err := storage.UploadPart(t.Context(), &fs.UploadPartRequest{
-		Bucket:     testBucket,
-		Key:        testKey,
-		UploadID:   uploadID,
+		Bucket:     upload.Bucket,
+		Key:        upload.Key,
+		UploadID:   upload.UploadID,
 		PartNumber: partNumber,
 		Reader:     bytes.NewReader(content),
 		Size:       int64(len(content)),
@@ -618,7 +620,7 @@ func testMultipartUploadPart(t *testing.T, storage fs.Storage) {
 	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
-	part := uploadPart(t, storage, upload.UploadID, 1, []byte("part data"))
+	part := uploadPart(t, storage, upload, 1, []byte("part data"))
 	require.Equal(t, int64(len("part data")), part.Size)
 }
 
@@ -646,8 +648,8 @@ func testMultipartComplete(t *testing.T, storage fs.Storage) {
 	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
-	part1 := uploadPart(t, storage, upload.UploadID, 1, []byte("hello, "))
-	part2 := uploadPart(t, storage, upload.UploadID, 2, []byte("world!"))
+	part1 := uploadPart(t, storage, upload, 1, []byte("hello, "))
+	part2 := uploadPart(t, storage, upload, 2, []byte("world!"))
 
 	resp, err := storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket:   testBucket,
@@ -677,8 +679,8 @@ func testMultipartCompleteETag(t *testing.T, storage fs.Storage) {
 
 	part1Data := []byte("hello, ")
 	part2Data := []byte("world!")
-	part1 := uploadPart(t, storage, upload.UploadID, 1, part1Data)
-	part2 := uploadPart(t, storage, upload.UploadID, 2, part2Data)
+	part1 := uploadPart(t, storage, upload, 1, part1Data)
+	part2 := uploadPart(t, storage, upload, 2, part2Data)
 
 	resp, err := storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket:   testBucket,
@@ -722,8 +724,8 @@ func testMultipartCompleteOutOfOrder(t *testing.T, storage fs.Storage) {
 	require.NoError(t, err)
 
 	// Upload parts in reverse order; completion must assemble by part number.
-	part2 := uploadPart(t, storage, upload.UploadID, 2, []byte("world!"))
-	part1 := uploadPart(t, storage, upload.UploadID, 1, []byte("hello, "))
+	part2 := uploadPart(t, storage, upload, 2, []byte("world!"))
+	part1 := uploadPart(t, storage, upload, 1, []byte("hello, "))
 
 	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket:   testBucket,
@@ -762,7 +764,7 @@ func testMultipartAbort(t *testing.T, storage fs.Storage) {
 	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
-	uploadPart(t, storage, upload.UploadID, 1, []byte("data"))
+	uploadPart(t, storage, upload, 1, []byte("data"))
 
 	require.NoError(t, storage.AbortMultipartUpload(ctx, testBucket, testKey, upload.UploadID))
 
@@ -799,9 +801,9 @@ func testMultipartListParts(t *testing.T, storage fs.Storage) {
 	require.NoError(t, err)
 
 	// Upload out of order; the listing must come back sorted by part number.
-	part3 := uploadPart(t, storage, upload.UploadID, 3, []byte("ccc"))
-	part1 := uploadPart(t, storage, upload.UploadID, 1, []byte("a"))
-	part2 := uploadPart(t, storage, upload.UploadID, 2, []byte("bb"))
+	part3 := uploadPart(t, storage, upload, 3, []byte("ccc"))
+	part1 := uploadPart(t, storage, upload, 1, []byte("a"))
+	part2 := uploadPart(t, storage, upload, 2, []byte("bb"))
 
 	parts, err := storage.ListParts(ctx, testBucket, testKey, upload.UploadID)
 	require.NoError(t, err)
@@ -823,8 +825,8 @@ func testMultipartListPartsOverwrite(t *testing.T, storage fs.Storage) {
 	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
 	require.NoError(t, err)
 
-	uploadPart(t, storage, upload.UploadID, 1, []byte("first attempt"))
-	replaced := uploadPart(t, storage, upload.UploadID, 1, []byte("second"))
+	uploadPart(t, storage, upload, 1, []byte("first attempt"))
+	replaced := uploadPart(t, storage, upload, 1, []byte("second"))
 
 	parts, err := storage.ListParts(ctx, testBucket, testKey, upload.UploadID)
 	require.NoError(t, err)
@@ -909,7 +911,7 @@ func testMultipartListUploadsLifecycle(t *testing.T, storage fs.Storage) {
 	aborted, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: "gone.bin"})
 	require.NoError(t, err)
 
-	part := uploadPart(t, storage, completed.UploadID, 1, []byte("data"))
+	part := uploadPart(t, storage, completed, 1, []byte("data"))
 
 	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket:   testBucket,
@@ -1042,7 +1044,7 @@ func testMetadataMultipart(t *testing.T, storage fs.Storage) {
 	})
 	require.NoError(t, err)
 
-	part := uploadPart(t, storage, upload.UploadID, 1, []byte("data"))
+	part := uploadPart(t, storage, upload, 1, []byte("data"))
 
 	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
 		Bucket:   testBucket,

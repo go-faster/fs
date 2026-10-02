@@ -47,6 +47,10 @@ func randomWrite(r *rand.Rand) Version {
 		v.Completed = r.IntN(2) == 0
 	}
 
+	if v.State != Gone && r.IntN(2) == 0 {
+		v.Attrs = LWW[json.RawMessage]{TS: r.Int64N(3), V: json.RawMessage(fmt.Sprintf(`{"tags":%d}`, r.IntN(3)))}
+	}
+
 	return v
 }
 
@@ -267,4 +271,19 @@ func TestLWW(t *testing.T) {
 
 	assert.Equal(t, int64(10), NextTS(10, 3))
 	assert.Equal(t, int64(4), NextTS(2, 3), "a clock behind the row still orders after it")
+}
+
+func TestAttrsMergeApart(t *testing.T) {
+	// Tags changed on two replicas of one complete version: the later change
+	// wins, whatever else the copies agree on.
+	base := Version{ID: "a", TS: 1, State: Complete, Payload: json.RawMessage(`{"etag":"x"}`)}
+
+	older, newer := base, base
+	older.Attrs = LWW[json.RawMessage]{TS: 5, V: json.RawMessage(`{"tags":"old"}`)}
+	newer.Attrs = LWW[json.RawMessage]{TS: 9, V: json.RawMessage(`{"tags":"new"}`)}
+
+	o := MergeObject(row(older), row(newer))
+	require.Len(t, o.Versions, 1)
+	assert.JSONEq(t, `{"tags":"new"}`, string(o.Versions[0].Attrs.V))
+	assert.JSONEq(t, `{"etag":"x"}`, string(o.Versions[0].Payload))
 }

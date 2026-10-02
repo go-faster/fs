@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/bbolt"
 
 	"github.com/go-faster/fs/internal/cluster/layout"
 	"github.com/go-faster/fs/internal/cluster/peer"
@@ -99,7 +98,7 @@ func clusterOf(t *testing.T, n, members int) []*node {
 		_, err = m.Adopt(l)
 		require.NoError(t, err)
 
-		db, err := bbolt.Open(filepath.Join(t.TempDir(), "meta.db"), 0o600, nil)
+		db, err := OpenDB(filepath.Join(t.TempDir(), "meta.db"))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
@@ -240,7 +239,7 @@ func TestNoLayout(t *testing.T) {
 	m, err := peer.New(peer.Config{ID: "n0", Addr: "127.0.0.1:1", Secret: peer.Secret("cluster-secret-0123456789"), Dir: t.TempDir()})
 	require.NoError(t, err)
 
-	db, err := bbolt.Open(filepath.Join(t.TempDir(), "meta.db"), 0o600, nil)
+	db, err := OpenDB(filepath.Join(t.TempDir(), "meta.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 

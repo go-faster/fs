@@ -97,6 +97,11 @@ automated resumable migration and the public API becomes additive-only.
   (SHA-256 names, verified on every read, corrupt copies dropped), replicated
   put/get over the hash's partition at quorum, an in-memory resync queue, and
   GC of unreferenced blocks after a grace period. Not used by storage yet.
+- `internal/engine` — the storage engine (#277): `fs.Storage` over the
+  replicated tables and blocks. Buckets are incarnations keyed by ID, objects
+  are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are
+  serialized on their coordinating node. Passes `storagetest` on one node and
+  on three; not wired into the server yet.
 - Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
   compare per-(partition, slot) digests with the other replicas, pull what
   differs, and hand over data of partitions the layout moved away.
