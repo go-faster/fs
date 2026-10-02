@@ -102,6 +102,15 @@ exporters).
   `GET /api/v1/info` (`config_revision`) or the reload response to confirm a
   node has loaded a specific config, e.g. after an orchestrator rewrites it.
 
+## Cluster membership
+
+Experimental: nodes agree on a layout, objects are not replicated yet (#279).
+Peer traffic on `cluster.addr` (default `:7080`) is authenticated with the
+shared `cluster.secret` (HMAC over every request and response) but **not
+encrypted** — keep it on a private network and never expose it publicly. Each
+node keeps its adopted layout in `<storage.root>/.cluster/layout.json`; a file
+in an unknown format stops the node from starting rather than being misread.
+
 ## Observability
 
 - **Health**: `/health` (liveness, always 200 once serving) and `/ready`
@@ -112,5 +121,9 @@ exporters).
   `OTEL_EXPORTER_PROMETHEUS_HOST:PORT` (compose uses `:9464/metrics`).
 - **Traces**: `OTEL_TRACES_EXPORTER=otlp` + `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
 - **pprof**: set `PPROF_ADDR`.
+- **Cluster** (when `cluster.node_id` is set): `fs.cluster.layout.version` —
+  compare across nodes; one lagging means gossip is not reaching it — and
+  `fs.cluster.peers{state=up|down}`. `fs layout nodes` shows the same per
+  peer, with the last error.
 - Toggle whole subsystems with `observability.enable_metrics` /
   `enable_tracing` / `enable_request_logging`.

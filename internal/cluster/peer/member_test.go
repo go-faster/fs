@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -277,4 +278,29 @@ func TestRunStops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop")
 	}
+}
+
+func TestApply(t *testing.T) {
+	m := cluster(t, 1)[0]
+	roles := testLayout(t, nil, "a", "b", "c").Nodes
+
+	first, moved, err := m.Apply(roles, layout.Options{Partitions: 16}, true)
+	require.NoError(t, err)
+	assert.Zero(t, moved)
+	assert.Nil(t, m.Layout(), "a dry run adopts nothing")
+
+	_, _, err = m.Apply(roles, layout.Options{Partitions: 16}, false)
+	require.NoError(t, err)
+	assert.Equal(t, first.Slots, m.Layout().Slots)
+
+	grown := append(slices.Clone(roles), layout.Node{ID: "d", Zone: "z0", Capacity: 1 << 40})
+	next, moved, err := m.Apply(grown, layout.Options{}, false)
+	require.NoError(t, err)
+	assert.Equal(t, first.Version+1, next.Version)
+	assert.Equal(t, layout.Moved(first, next), moved)
+	assert.Positive(t, moved)
+	assert.Len(t, next.Slots, 16, "partitions are kept")
+
+	_, _, err = m.Apply(roles[:2], layout.Options{}, false)
+	require.Error(t, err, "two members cannot hold three slots")
 }

@@ -116,6 +116,37 @@ curl -H "Authorization: Bearer $FS_ADMIN_TOKEN" -H "Content-Type: application/js
   localhost:8090/api/v1/access-keys
 ```
 
+### Cluster membership (experimental)
+
+Nodes can form a cluster and agree on a **layout** — which nodes hold which
+partitions, spread across zones and racks. Objects are not replicated yet; the
+storage engine that uses the layout is tracked in
+[#279](https://github.com/go-faster/fs/issues/279).
+
+```yaml
+cluster:
+  node_id: "node-1"
+  advertise_addr: "10.0.0.1:7080"
+  peers: ["10.0.0.2:7080"]
+  secret: "change-me-0123456789"   # or FS_CLUSTER_SECRET
+```
+
+Assign roles through any node's admin API; gossip carries the result to the
+rest:
+
+```bash
+cat > roles.yaml <<'YAML'
+members:
+  - {id: node-1, zone: dc1, capacity: 4TB}
+  - {id: node-2, zone: dc2, capacity: 4TB}
+  - {id: node-3, zone: dc3, capacity: 4TB}
+YAML
+fs layout apply -f roles.yaml --dry-run   # what would move
+fs layout apply -f roles.yaml
+fs layout show
+fs layout nodes
+```
+
 ### Run as a systemd service
 
 Generate a unit for `fs s3` — a per-user service by default, or a hardened

@@ -88,6 +88,8 @@ type Member struct {
 	cfg    Config
 	client *http.Client
 
+	applyMu sync.Mutex
+
 	mu     sync.Mutex
 	layout *layout.Layout
 	digest string
@@ -197,6 +199,42 @@ func (m *Member) Adopt(l *layout.Layout) (bool, error) {
 	return true, nil
 }
 
+// Apply computes the layout that follows the adopted one for nodes — the
+// full set of member roles — and, unless dryRun, adopts it; gossip carries it
+// from here. It reports the computed layout and how many slots it moves.
+// Widths default to the adopted layout's.
+func (m *Member) Apply(nodes []layout.Node, opts layout.Options, dryRun bool) (*layout.Layout, int, error) {
+	// One apply at a time: two computed from the same layout would share a
+	// version, and only one would survive.
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+
+	cur := m.Layout()
+	if cur != nil && len(opts.Widths) == 0 {
+		opts.Widths = cur.Widths
+	}
+
+	next, err := layout.Compute(cur, nodes, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	moved := 0
+	if cur != nil {
+		moved = layout.Moved(cur, next)
+	}
+
+	if dryRun {
+		return next, moved, nil
+	}
+
+	if _, err := m.Adopt(next); err != nil {
+		return nil, 0, err
+	}
+
+	return next, moved, nil
+}
+
 func newer(v uint64, d string, than uint64, thanDigest string) bool {
 	return v > than || v == than && d > thanDigest
 }
@@ -298,7 +336,8 @@ func (m *Member) learn(addr string) {
 	}
 }
 
-func (m *Member) status() Status {
+// Status is what this node reports about itself to its peers.
+func (m *Member) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -329,7 +368,7 @@ func (m *Member) Handler() http.Handler {
 			m.learn(from)
 		}
 
-		writeJSON(w, m.status())
+		writeJSON(w, m.Status())
 	})
 	mux.HandleFunc("GET /v1/layout", func(w http.ResponseWriter, _ *http.Request) {
 		l := m.Layout()

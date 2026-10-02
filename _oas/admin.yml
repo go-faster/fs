@@ -97,6 +97,73 @@ paths:
           description: Deleted.
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/layout:
+    get:
+      operationId: "getLayout"
+      summary: "Current cluster layout"
+      description: >
+        The layout this node has adopted: version, partitions, the widths it
+        spreads for, each member's role and share of slots, and how many slots
+        a single zone or rack holds per width. Returns 501 when cluster mode is
+        off and 404 before any layout has been applied.
+      responses:
+        200:
+          description: Layout summary.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Layout"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: "applyLayout"
+      summary: "Apply a cluster layout"
+      description: >
+        Compute the next layout from the full set of member roles and adopt it
+        on this node; gossip carries it to every other node. Slots keep their
+        node wherever it is still valid, so only the data that has to move
+        does. With dry_run the computed layout and the number of slots that
+        would move are returned without adopting anything. Returns 400 when
+        the roles cannot produce a layout, e.g. fewer members with capacity
+        than the widest width.
+      parameters:
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/ApplyLayoutRequest"
+      responses:
+        200:
+          description: The computed layout and what it changes.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/LayoutChange"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/cluster/nodes:
+    get:
+      operationId: "listClusterNodes"
+      summary: "Cluster nodes"
+      description: >
+        This node and every peer it gossips with: address, the layout version
+        each last reported, and whether the last exchange succeeded. Returns
+        501 when cluster mode is off.
+      responses:
+        200:
+          description: Nodes.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ClusterNodeList"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   schemas:
     InstanceInfo:
@@ -244,6 +311,140 @@ components:
         created_at:
           type: string
           format: date-time
+    LayoutRole:
+      type: object
+      required:
+        - id
+        - capacity
+      properties:
+        id:
+          type: string
+          example: "node-1"
+        zone:
+          type: string
+          example: "dc1"
+        rack:
+          type: string
+          example: "r1"
+        capacity:
+          type: integer
+          format: uint64
+          description: "Bytes of data the node takes. Zero makes it a gateway that holds no slots."
+    LayoutMember:
+      allOf:
+        - $ref: "#/components/schemas/LayoutRole"
+        - type: object
+          required:
+            - slots
+          properties:
+            slots:
+              type: integer
+              description: "Slots this member holds."
+    LayoutSpread:
+      type: object
+      required:
+        - width
+        - max_per_zone
+        - max_per_rack
+      properties:
+        width:
+          type: integer
+        max_per_zone:
+          type: integer
+          description: "Most slots of one partition's first width slots in a single zone."
+        max_per_rack:
+          type: integer
+          description: "Most slots of one partition's first width slots in a single rack."
+    Layout:
+      type: object
+      required:
+        - version
+        - partitions
+        - widths
+        - members
+        - spread
+      properties:
+        version:
+          type: integer
+          format: uint64
+        partitions:
+          type: integer
+        widths:
+          type: array
+          items:
+            type: integer
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/LayoutMember"
+        spread:
+          type: array
+          items:
+            $ref: "#/components/schemas/LayoutSpread"
+    ApplyLayoutRequest:
+      type: object
+      required:
+        - members
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/LayoutRole"
+        widths:
+          type: array
+          description: "Slot prefixes to spread for: 3 for replicated data, k+m per erasure scheme. Default: the current layout's, else [3]."
+          items:
+            type: integer
+        partitions:
+          type: integer
+          description: "Partition count, a power of two. Only used for the first layout; default 256."
+    LayoutChange:
+      type: object
+      required:
+        - layout
+        - moved_slots
+        - applied
+      properties:
+        layout:
+          $ref: "#/components/schemas/Layout"
+        moved_slots:
+          type: integer
+          description: "Slots whose node differs from the current layout."
+        applied:
+          type: boolean
+    ClusterNode:
+      type: object
+      required:
+        - addr
+        - self
+        - up
+      properties:
+        id:
+          type: string
+        addr:
+          type: string
+        self:
+          type: boolean
+        up:
+          type: boolean
+          description: "The last exchange with this peer succeeded. Always true for this node."
+        layout_version:
+          type: integer
+          format: uint64
+        last_seen:
+          type: string
+          format: date-time
+        error:
+          type: string
+    ClusterNodeList:
+      type: object
+      required:
+        - nodes
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterNode"
     Error:
       title: Structured error
       description: Error occurred while processing request

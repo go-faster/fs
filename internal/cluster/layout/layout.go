@@ -175,6 +175,22 @@ func (l *Layout) Partition(key []byte) int {
 	return int(mix(h.Sum64()) % uint64(len(l.Slots))) //nolint:gosec // Below the partition count, at most 1<<16.
 }
 
+// Moved counts the slots whose node differs between two layouts of the same
+// shape: the data a change sends over the network.
+func Moved(a, b *Layout) int {
+	n := 0
+
+	for p := range min(len(a.Slots), len(b.Slots)) {
+		for j := range min(len(a.Slots[p]), len(b.Slots[p])) {
+			if a.Slots[p][j] != b.Slots[p][j] {
+				n++
+			}
+		}
+	}
+
+	return n
+}
+
 // Load reports how many slots each node holds.
 func (l *Layout) Load() map[NodeID]int {
 	load := make(map[NodeID]int, len(l.Nodes))

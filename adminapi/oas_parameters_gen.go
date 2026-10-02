@@ -14,6 +14,75 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
+// ApplyLayoutParams is parameters of applyLayout operation.
+type ApplyLayoutParams struct {
+	DryRun OptBool `json:",omitempty,omitzero"`
+}
+
+func unpackApplyLayoutParams(packed middleware.Parameters) (params ApplyLayoutParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "dry_run",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.DryRun = v.(OptBool)
+		}
+	}
+	return params
+}
+
+func decodeApplyLayoutParams(args [0]string, argsEscaped bool, r *http.Request) (params ApplyLayoutParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Set default value for query: dry_run.
+	{
+		val := bool(false)
+		params.DryRun.SetTo(val)
+	}
+	// Decode query: dry_run.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "dry_run",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotDryRunVal bool
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToBool(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotDryRunVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.DryRun.SetTo(paramsDotDryRunVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "dry_run",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // DeleteAccessKeyParams is parameters of deleteAccessKey operation.
 type DeleteAccessKeyParams struct {
 	// The access key ID to delete.

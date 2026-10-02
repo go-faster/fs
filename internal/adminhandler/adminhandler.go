@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-faster/fs/adminapi"
 	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/internal/cluster/peer"
 )
 
 // BuildInfo is static build metadata reported by GetInfo.
@@ -36,6 +37,9 @@ type Options struct {
 	// ConfigRevision returns the config revision currently in effect, reported
 	// by GetInfo; nil reports none.
 	ConfigRevision func() string
+	// Cluster is this node's cluster membership; nil when cluster mode is
+	// off, where the cluster endpoints return 501.
+	Cluster *peer.Member
 	// now overrides the clock in tests.
 	now func() time.Time
 }

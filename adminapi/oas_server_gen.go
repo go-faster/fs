@@ -8,6 +8,16 @@ import (
 
 // Handler handles operations described by OpenAPI v3 specification.
 type Handler interface {
+	// ApplyLayout implements applyLayout operation.
+	//
+	// Compute the next layout from the full set of member roles and adopt it on this node; gossip carries
+	// it to every other node. Slots keep their node wherever it is still valid, so only the data that has
+	// to move does. With dry_run the computed layout and the number of slots that would move are returned
+	// without adopting anything. Returns 400 when the roles cannot produce a layout, e.g. fewer members
+	// with capacity than the widest width.
+	//
+	// POST /api/v1/cluster/layout
+	ApplyLayout(ctx context.Context, req *ApplyLayoutRequest, params ApplyLayoutParams) (*LayoutChange, error)
 	// CreateAccessKey implements createAccessKey operation.
 	//
 	// Create a runtime credential. The access key and secret are generated when not supplied. The secret
@@ -27,12 +37,27 @@ type Handler interface {
 	//
 	// GET /api/v1/info
 	GetInfo(ctx context.Context) (*InstanceInfo, error)
+	// GetLayout implements getLayout operation.
+	//
+	// The layout this node has adopted: version, partitions, the widths it spreads for, each member's role
+	// and share of slots, and how many slots a single zone or rack holds per width. Returns 501 when
+	// cluster mode is off and 404 before any layout has been applied.
+	//
+	// GET /api/v1/cluster/layout
+	GetLayout(ctx context.Context) (*Layout, error)
 	// ListAccessKeys implements listAccessKeys operation.
 	//
 	// Every credential the server accepts, secrets omitted.
 	//
 	// GET /api/v1/access-keys
 	ListAccessKeys(ctx context.Context) (*AccessKeyList, error)
+	// ListClusterNodes implements listClusterNodes operation.
+	//
+	// This node and every peer it gossips with: address, the layout version each last reported, and
+	// whether the last exchange succeeded. Returns 501 when cluster mode is off.
+	//
+	// GET /api/v1/cluster/nodes
+	ListClusterNodes(ctx context.Context) (*ClusterNodeList, error)
 	// ReloadConfig implements reloadConfig operation.
 	//
 	// Re-read the configuration file and apply the parts that change without a restart — the

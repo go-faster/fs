@@ -67,20 +67,7 @@ func requireValid(t *testing.T, l *layout.Layout) {
 	}
 }
 
-// moved counts slots whose node differs between two layouts.
-func moved(a, b *layout.Layout) int {
-	n := 0
-
-	for p := range a.Slots {
-		for j := range a.Slots[p] {
-			if a.Slots[p][j] != b.Slots[p][j] {
-				n++
-			}
-		}
-	}
-
-	return n
-}
+var moved = layout.Moved
 
 func TestComputeSpreadsAcrossZones(t *testing.T) {
 	l := compute(t, nil, grid(3, 2, 2), 3)

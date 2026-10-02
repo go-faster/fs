@@ -77,6 +77,143 @@ func (s *AccessKeyList) SetKeys(val []AccessKey) {
 	s.Keys = val
 }
 
+// Ref: #/components/schemas/ApplyLayoutRequest
+type ApplyLayoutRequest struct {
+	Members []LayoutRole `json:"members"`
+	// Slot prefixes to spread for: 3 for replicated data, k+m per erasure scheme. Default: the current
+	// layout's, else [3].
+	Widths []int `json:"widths"`
+	// Partition count, a power of two. Only used for the first layout; default 256.
+	Partitions OptInt `json:"partitions"`
+}
+
+// GetMembers returns the value of Members.
+func (s *ApplyLayoutRequest) GetMembers() []LayoutRole {
+	return s.Members
+}
+
+// GetWidths returns the value of Widths.
+func (s *ApplyLayoutRequest) GetWidths() []int {
+	return s.Widths
+}
+
+// GetPartitions returns the value of Partitions.
+func (s *ApplyLayoutRequest) GetPartitions() OptInt {
+	return s.Partitions
+}
+
+// SetMembers sets the value of Members.
+func (s *ApplyLayoutRequest) SetMembers(val []LayoutRole) {
+	s.Members = val
+}
+
+// SetWidths sets the value of Widths.
+func (s *ApplyLayoutRequest) SetWidths(val []int) {
+	s.Widths = val
+}
+
+// SetPartitions sets the value of Partitions.
+func (s *ApplyLayoutRequest) SetPartitions(val OptInt) {
+	s.Partitions = val
+}
+
+// Ref: #/components/schemas/ClusterNode
+type ClusterNode struct {
+	ID   OptString `json:"id"`
+	Addr string    `json:"addr"`
+	Self bool      `json:"self"`
+	// The last exchange with this peer succeeded. Always true for this node.
+	Up            bool        `json:"up"`
+	LayoutVersion OptUint64   `json:"layout_version"`
+	LastSeen      OptDateTime `json:"last_seen"`
+	Error         OptString   `json:"error"`
+}
+
+// GetID returns the value of ID.
+func (s *ClusterNode) GetID() OptString {
+	return s.ID
+}
+
+// GetAddr returns the value of Addr.
+func (s *ClusterNode) GetAddr() string {
+	return s.Addr
+}
+
+// GetSelf returns the value of Self.
+func (s *ClusterNode) GetSelf() bool {
+	return s.Self
+}
+
+// GetUp returns the value of Up.
+func (s *ClusterNode) GetUp() bool {
+	return s.Up
+}
+
+// GetLayoutVersion returns the value of LayoutVersion.
+func (s *ClusterNode) GetLayoutVersion() OptUint64 {
+	return s.LayoutVersion
+}
+
+// GetLastSeen returns the value of LastSeen.
+func (s *ClusterNode) GetLastSeen() OptDateTime {
+	return s.LastSeen
+}
+
+// GetError returns the value of Error.
+func (s *ClusterNode) GetError() OptString {
+	return s.Error
+}
+
+// SetID sets the value of ID.
+func (s *ClusterNode) SetID(val OptString) {
+	s.ID = val
+}
+
+// SetAddr sets the value of Addr.
+func (s *ClusterNode) SetAddr(val string) {
+	s.Addr = val
+}
+
+// SetSelf sets the value of Self.
+func (s *ClusterNode) SetSelf(val bool) {
+	s.Self = val
+}
+
+// SetUp sets the value of Up.
+func (s *ClusterNode) SetUp(val bool) {
+	s.Up = val
+}
+
+// SetLayoutVersion sets the value of LayoutVersion.
+func (s *ClusterNode) SetLayoutVersion(val OptUint64) {
+	s.LayoutVersion = val
+}
+
+// SetLastSeen sets the value of LastSeen.
+func (s *ClusterNode) SetLastSeen(val OptDateTime) {
+	s.LastSeen = val
+}
+
+// SetError sets the value of Error.
+func (s *ClusterNode) SetError(val OptString) {
+	s.Error = val
+}
+
+// Ref: #/components/schemas/ClusterNodeList
+type ClusterNodeList struct {
+	Nodes []ClusterNode `json:"nodes"`
+}
+
+// GetNodes returns the value of Nodes.
+func (s *ClusterNodeList) GetNodes() []ClusterNode {
+	return s.Nodes
+}
+
+// SetNodes sets the value of Nodes.
+func (s *ClusterNodeList) SetNodes(val []ClusterNode) {
+	s.Nodes = val
+}
+
 // Ref: #/components/schemas/CreateAccessKeyRequest
 type CreateAccessKeyRequest struct {
 	// Access key ID; generated when omitted.
@@ -344,6 +481,299 @@ func (s *InstanceInfo) SetConfigRevision(val OptString) {
 	s.ConfigRevision = val
 }
 
+// Ref: #/components/schemas/Layout
+type Layout struct {
+	Version    uint64         `json:"version"`
+	Partitions int            `json:"partitions"`
+	Widths     []int          `json:"widths"`
+	Members    []LayoutMember `json:"members"`
+	Spread     []LayoutSpread `json:"spread"`
+}
+
+// GetVersion returns the value of Version.
+func (s *Layout) GetVersion() uint64 {
+	return s.Version
+}
+
+// GetPartitions returns the value of Partitions.
+func (s *Layout) GetPartitions() int {
+	return s.Partitions
+}
+
+// GetWidths returns the value of Widths.
+func (s *Layout) GetWidths() []int {
+	return s.Widths
+}
+
+// GetMembers returns the value of Members.
+func (s *Layout) GetMembers() []LayoutMember {
+	return s.Members
+}
+
+// GetSpread returns the value of Spread.
+func (s *Layout) GetSpread() []LayoutSpread {
+	return s.Spread
+}
+
+// SetVersion sets the value of Version.
+func (s *Layout) SetVersion(val uint64) {
+	s.Version = val
+}
+
+// SetPartitions sets the value of Partitions.
+func (s *Layout) SetPartitions(val int) {
+	s.Partitions = val
+}
+
+// SetWidths sets the value of Widths.
+func (s *Layout) SetWidths(val []int) {
+	s.Widths = val
+}
+
+// SetMembers sets the value of Members.
+func (s *Layout) SetMembers(val []LayoutMember) {
+	s.Members = val
+}
+
+// SetSpread sets the value of Spread.
+func (s *Layout) SetSpread(val []LayoutSpread) {
+	s.Spread = val
+}
+
+// Ref: #/components/schemas/LayoutChange
+type LayoutChange struct {
+	Layout Layout `json:"layout"`
+	// Slots whose node differs from the current layout.
+	MovedSlots int  `json:"moved_slots"`
+	Applied    bool `json:"applied"`
+}
+
+// GetLayout returns the value of Layout.
+func (s *LayoutChange) GetLayout() Layout {
+	return s.Layout
+}
+
+// GetMovedSlots returns the value of MovedSlots.
+func (s *LayoutChange) GetMovedSlots() int {
+	return s.MovedSlots
+}
+
+// GetApplied returns the value of Applied.
+func (s *LayoutChange) GetApplied() bool {
+	return s.Applied
+}
+
+// SetLayout sets the value of Layout.
+func (s *LayoutChange) SetLayout(val Layout) {
+	s.Layout = val
+}
+
+// SetMovedSlots sets the value of MovedSlots.
+func (s *LayoutChange) SetMovedSlots(val int) {
+	s.MovedSlots = val
+}
+
+// SetApplied sets the value of Applied.
+func (s *LayoutChange) SetApplied(val bool) {
+	s.Applied = val
+}
+
+// Merged schema.
+// Ref: #/components/schemas/LayoutMember
+type LayoutMember struct {
+	ID   string    `json:"id"`
+	Zone OptString `json:"zone"`
+	Rack OptString `json:"rack"`
+	// Bytes of data the node takes. Zero makes it a gateway that holds no slots.
+	Capacity uint64 `json:"capacity"`
+	// Slots this member holds.
+	Slots int `json:"slots"`
+}
+
+// GetID returns the value of ID.
+func (s *LayoutMember) GetID() string {
+	return s.ID
+}
+
+// GetZone returns the value of Zone.
+func (s *LayoutMember) GetZone() OptString {
+	return s.Zone
+}
+
+// GetRack returns the value of Rack.
+func (s *LayoutMember) GetRack() OptString {
+	return s.Rack
+}
+
+// GetCapacity returns the value of Capacity.
+func (s *LayoutMember) GetCapacity() uint64 {
+	return s.Capacity
+}
+
+// GetSlots returns the value of Slots.
+func (s *LayoutMember) GetSlots() int {
+	return s.Slots
+}
+
+// SetID sets the value of ID.
+func (s *LayoutMember) SetID(val string) {
+	s.ID = val
+}
+
+// SetZone sets the value of Zone.
+func (s *LayoutMember) SetZone(val OptString) {
+	s.Zone = val
+}
+
+// SetRack sets the value of Rack.
+func (s *LayoutMember) SetRack(val OptString) {
+	s.Rack = val
+}
+
+// SetCapacity sets the value of Capacity.
+func (s *LayoutMember) SetCapacity(val uint64) {
+	s.Capacity = val
+}
+
+// SetSlots sets the value of Slots.
+func (s *LayoutMember) SetSlots(val int) {
+	s.Slots = val
+}
+
+// Ref: #/components/schemas/LayoutRole
+type LayoutRole struct {
+	ID   string    `json:"id"`
+	Zone OptString `json:"zone"`
+	Rack OptString `json:"rack"`
+	// Bytes of data the node takes. Zero makes it a gateway that holds no slots.
+	Capacity uint64 `json:"capacity"`
+}
+
+// GetID returns the value of ID.
+func (s *LayoutRole) GetID() string {
+	return s.ID
+}
+
+// GetZone returns the value of Zone.
+func (s *LayoutRole) GetZone() OptString {
+	return s.Zone
+}
+
+// GetRack returns the value of Rack.
+func (s *LayoutRole) GetRack() OptString {
+	return s.Rack
+}
+
+// GetCapacity returns the value of Capacity.
+func (s *LayoutRole) GetCapacity() uint64 {
+	return s.Capacity
+}
+
+// SetID sets the value of ID.
+func (s *LayoutRole) SetID(val string) {
+	s.ID = val
+}
+
+// SetZone sets the value of Zone.
+func (s *LayoutRole) SetZone(val OptString) {
+	s.Zone = val
+}
+
+// SetRack sets the value of Rack.
+func (s *LayoutRole) SetRack(val OptString) {
+	s.Rack = val
+}
+
+// SetCapacity sets the value of Capacity.
+func (s *LayoutRole) SetCapacity(val uint64) {
+	s.Capacity = val
+}
+
+// Ref: #/components/schemas/LayoutSpread
+type LayoutSpread struct {
+	Width int `json:"width"`
+	// Most slots of one partition's first width slots in a single zone.
+	MaxPerZone int `json:"max_per_zone"`
+	// Most slots of one partition's first width slots in a single rack.
+	MaxPerRack int `json:"max_per_rack"`
+}
+
+// GetWidth returns the value of Width.
+func (s *LayoutSpread) GetWidth() int {
+	return s.Width
+}
+
+// GetMaxPerZone returns the value of MaxPerZone.
+func (s *LayoutSpread) GetMaxPerZone() int {
+	return s.MaxPerZone
+}
+
+// GetMaxPerRack returns the value of MaxPerRack.
+func (s *LayoutSpread) GetMaxPerRack() int {
+	return s.MaxPerRack
+}
+
+// SetWidth sets the value of Width.
+func (s *LayoutSpread) SetWidth(val int) {
+	s.Width = val
+}
+
+// SetMaxPerZone sets the value of MaxPerZone.
+func (s *LayoutSpread) SetMaxPerZone(val int) {
+	s.MaxPerZone = val
+}
+
+// SetMaxPerRack sets the value of MaxPerRack.
+func (s *LayoutSpread) SetMaxPerRack(val int) {
+	s.MaxPerRack = val
+}
+
+// NewOptBool returns new OptBool with value set to v.
+func NewOptBool(v bool) OptBool {
+	return OptBool{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBool is optional bool.
+type OptBool struct {
+	Value bool
+	Set   bool
+}
+
+// IsSet returns true if OptBool was set.
+func (o OptBool) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBool) Reset() {
+	var v bool
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBool) SetTo(v bool) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBool) Get() (v bool, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptDateTime returns new OptDateTime with value set to v.
 func NewOptDateTime(v time.Time) OptDateTime {
 	return OptDateTime{
@@ -390,6 +820,52 @@ func (o OptDateTime) Or(d time.Time) time.Time {
 	return d
 }
 
+// NewOptInt returns new OptInt with value set to v.
+func NewOptInt(v int) OptInt {
+	return OptInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt is optional int.
+type OptInt struct {
+	Value int
+	Set   bool
+}
+
+// IsSet returns true if OptInt was set.
+func (o OptInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt) SetTo(v int) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt) Get() (v int, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -430,6 +906,52 @@ func (o OptString) Get() (v string, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptUint64 returns new OptUint64 with value set to v.
+func NewOptUint64(v uint64) OptUint64 {
+	return OptUint64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUint64 is optional uint64.
+type OptUint64 struct {
+	Value uint64
+	Set   bool
+}
+
+// IsSet returns true if OptUint64 was set.
+func (o OptUint64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUint64) Reset() {
+	var v uint64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUint64) SetTo(v uint64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUint64) Get() (v uint64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUint64) Or(d uint64) uint64 {
 	if v, ok := o.Get(); ok {
 		return v
 	}

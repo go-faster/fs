@@ -16,8 +16,8 @@ import (
 	"github.com/go-faster/fs/internal/adminhandler"
 )
 
-// newTestAdminServer builds the same handler chain runAdminServer serves (UI
-// middleware + bearer guard + ogen server) around an httptest server.
+// newTestAdminServer builds the same handler chain runAdminServer serves
+// (bearer guard + ogen server) around an httptest server.
 func newTestAdminServer(t *testing.T, token string) (*httptest.Server, *auth.Manager) {
 	t.Helper()
 
@@ -156,14 +156,3 @@ func TestAdminServer_ReloadViaClient(t *testing.T) {
 }
 
 // bearerTransport injects a bearer token on every request.
-type bearerTransport struct {
-	token string
-	base  http.RoundTripper
-}
-
-func (t bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	r = r.Clone(r.Context())
-	r.Header.Set("Authorization", "Bearer "+t.token)
-
-	return t.base.RoundTrip(r)
-}

@@ -276,9 +276,14 @@ Command-line flags override YAML configuration values.`,
 
 				lg.Info("Starting server", zap.String("addr", cfg.Server.Addr))
 
-				// Run the S3 server and, when enabled, the admin API + dashboard
-				// on its own listener. A failure in either cancels the group.
+				// Run the S3 server and, when enabled, the peer and admin
+				// listeners. A failure in any cancels the group.
 				grp, grpCtx := errgroup.WithContext(t.ShutdownContext())
+
+				member, err := startCluster(grpCtx, lg, cfg, absRoot, t.MeterProvider(), grp.Go)
+				if err != nil {
+					return err
+				}
 
 				grp.Go(func() error {
 					// NB: Using the group context (from ShutdownContext) is important
@@ -302,6 +307,7 @@ Command-line flags override YAML configuration values.`,
 						AuthEnabled: authStore != nil,
 						StartTime:   startTime,
 						Reloader:    rel,
+						Cluster:     member,
 					}
 
 					grp.Go(func() error {
