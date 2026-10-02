@@ -8,17 +8,17 @@ tool (
 )
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.43.3
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.33
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.4
-	github.com/aws/smithy-go v1.27.6
+	github.com/aws/aws-sdk-go-v2 v1.47.1
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.4
+	github.com/aws/smithy-go v1.28.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-faster/errors v0.8.0
 	github.com/go-faster/jx v1.2.0
 	github.com/go-faster/sdk v0.38.0
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
-	github.com/ogen-go/ogen v1.23.0
+	github.com/ogen-go/ogen v1.24.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	go.etcd.io/bbolt v1.5.0
@@ -33,14 +33,14 @@ require (
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.34 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.34 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.35 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.15 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.27 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.34 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.35 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.4 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.4 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.11.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.4 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -63,7 +63,7 @@ require (
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/matryer/moq v0.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
