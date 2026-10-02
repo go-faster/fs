@@ -74,6 +74,10 @@ type Engine struct {
 
 	gcMu sync.Mutex
 	gc   gcStats
+
+	// bufs recycles block buffers between reads, so a GET does not allocate
+	// (and the kernel zero) a fresh block for every block it serves.
+	bufs sync.Pool
 }
 
 var (

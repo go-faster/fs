@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"hash/crc32"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -237,6 +238,50 @@ func (s *Store) Get(h Hash) ([]byte, error) {
 	}
 
 	return data[:n:n], nil
+}
+
+// GetInto is Get reading into buf when it is large enough, so a caller that
+// reads block after block can reuse one buffer instead of allocating each.
+// The result aliases buf.
+func (s *Store) GetInto(h Hash, buf []byte) ([]byte, error) {
+	p := s.path(h)
+
+	f, err := os.Open(p) // #nosec G304 -- named by hash under the store root
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+
+	if err != nil {
+		return nil, errors.Wrap(err, "open block")
+	}
+
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, errors.Wrap(err, "stat block")
+	}
+
+	size := int(info.Size())
+	if cap(buf) < size {
+		buf = make([]byte, size)
+	}
+
+	data := buf[:size]
+	if _, err := io.ReadFull(f, data); err != nil {
+		return nil, errors.Wrap(err, "read block")
+	}
+
+	n := size - crc32.Size
+	if n < 0 || crc32.Checksum(data[:n], castagnoli) != binary.BigEndian.Uint32(data[n:]) {
+		_ = os.Remove(p)
+
+		return nil, ErrCorrupt
+	}
+
+	// The trailer stays in the buffer's capacity, so the whole buffer comes
+	// back when the caller reuses it.
+	return data[:n], nil
 }
 
 // Has reports whether the block is present, without verifying it.

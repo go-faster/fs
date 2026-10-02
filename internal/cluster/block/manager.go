@@ -215,6 +215,26 @@ func (m *Manager) Get(ctx context.Context, h Hash) ([]byte, error) {
 	return nil, errors.Wrapf(errors.Join(errs...), "block %s", h)
 }
 
+// GetInto is Get reading into buf when this node holds a good copy, so a
+// reader of many blocks can reuse its buffers; otherwise it is Get. The
+// result may alias buf.
+func (m *Manager) GetInto(ctx context.Context, h Hash, buf []byte) ([]byte, error) {
+	nodes, err := m.replicas(h)
+	if err != nil {
+		return nil, err
+	}
+
+	if slices.Contains(nodes, m.member.ID()) {
+		if data, err := m.store.GetInto(h, buf); err == nil {
+			return data, nil
+		} else if errors.Is(err, ErrCorrupt) {
+			m.corrupt.Add(1)
+		}
+	}
+
+	return m.Get(ctx, h)
+}
+
 // GC removes this node's blocks that live reports unreferenced and that have
 // not been written or touched within grace, and temporary files a crash left
 // behind. It returns how many blocks it removed.

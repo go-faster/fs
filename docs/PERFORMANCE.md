@@ -46,9 +46,9 @@ Reference machine (AMD Ryzen 9 5950X, NVMe, Linux), single-node engine with
 BenchmarkPutObject/4KiB     10 MB/s    1.1 MB/op   318 allocs/op   (~0.4 ms per PUT)
 BenchmarkPutObject/1MiB    320 MB/s    2.1 MB/op   301 allocs/op
 BenchmarkPutObject/64MiB   775 MB/s     69 MB/op  6044 allocs/op   (MD5-bound)
-BenchmarkGetObject/4KiB     62 MB/s     15 KB/op   128 allocs/op
-BenchmarkGetObject/1MiB   3000 MB/s    1.1 MB/op   133 allocs/op
-BenchmarkGetObject/64MiB  8700 MB/s     68 MB/op  1166 allocs/op
+BenchmarkGetObject/4KiB     65 MB/s     10 KB/op   128 allocs/op
+BenchmarkGetObject/1MiB   6000 MB/s     15 KB/op   128 allocs/op
+BenchmarkGetObject/64MiB 15000 MB/s    185 KB/op  1150 allocs/op   (read-ahead over cores)
 
 NFR-3 gates:
   PUT 64MiB   : at or above 80% of the stream+MD5+write ceiling
@@ -62,7 +62,9 @@ Large objects run at least as fast as the filesystem backend did; small ones do 
 A 4 KiB PUT is two metadata commits, a block write and a quorum's worth of
 bookkeeping — about 0.4 ms against the old backend's 60 µs. Reads check a
 CRC-32C stored with each block (hardware-accelerated) rather than re-hashing
-it with SHA-256, which is what keeps GET near raw read on a 4-core runner. Merging a PUT's
+it with SHA-256, and reuses block buffers from a pool instead of allocating one
+per block; together that keeps GET above raw single-stream read on a 4-core
+runner. Merging a PUT's
 metadata writes into one commit is the obvious next step if small-object rates
 matter.
 

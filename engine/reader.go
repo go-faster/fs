@@ -100,6 +100,7 @@ func (r *blockReader) load() error {
 				return errors.Errorf("block %d is %d bytes, the version says %d", i, len(res.data), b.Size)
 			}
 
+			r.recycle()
 			r.cur, r.curOff, r.curIdx = res.data, start, i
 
 			// Drop fetches the reader has moved past or away from; start the
@@ -146,7 +147,12 @@ func (r *blockReader) start(i int) chan fetched {
 	ch := make(chan fetched, 1)
 
 	go func() {
-		data, err := r.e.blocks.Get(r.ctx, r.blocks[i].Hash)
+		buf, _ := r.e.bufs.Get().(*[]byte)
+		if buf == nil {
+			buf = new([]byte)
+		}
+
+		data, err := r.e.blocks.GetInto(r.ctx, r.blocks[i].Hash, *buf)
 		ch <- fetched{data, err}
 	}()
 
@@ -206,8 +212,23 @@ func (r *blockReader) Seek(offset int64, whence int) (int64, error) {
 	return abs, nil
 }
 
+// recycle returns the current block's buffer for the next fetch to reuse.
+// Every reader copies out of a block, so nothing still points into it once
+// the reader has moved on. Fetches dropped ahead are left to the collector:
+// their goroutine may still be filling the buffer.
+func (r *blockReader) recycle() {
+	if r.cur == nil {
+		return
+	}
+
+	buf := r.cur[:0]
+	r.e.bufs.Put(&buf)
+	r.cur = nil
+}
+
 func (r *blockReader) Close() error {
-	r.cur, r.ahead = nil, nil
+	r.recycle()
+	r.ahead = nil
 
 	return nil
 }
