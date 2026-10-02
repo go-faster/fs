@@ -256,7 +256,7 @@ func (e *Engine) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.
 func (e *Engine) CompleteMultipartUpload(
 	ctx context.Context, req *fs.CompleteMultipartUploadRequest,
 ) (*fs.CompleteMultipartUploadResponse, error) {
-	_, inc, err := e.bucket(ctx, req.Bucket)
+	b, inc, err := e.bucket(ctx, req.Bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +362,7 @@ func (e *Engine) CompleteMultipartUpload(
 
 	done := v
 	done.TS = e.nextTS(before)
-	done.Null = true
+	done.Null = versioning(b) != fs.VersioningEnabled
 	done.State = meta.Complete
 	done.Payload = mustJSON(p)
 

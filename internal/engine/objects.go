@@ -103,11 +103,12 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		return nil, err
 	}
 
-	_, inc, err := e.bucket(ctx, req.Bucket)
+	b, inc, err := e.bucket(ctx, req.Bucket)
 	if err != nil {
 		return nil, err
 	}
 
+	versioned := versioning(b) == fs.VersioningEnabled
 	cond := req.Conditions()
 
 	// A condition that already fails is refused before the body is stored.
@@ -149,19 +150,25 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		Blocks: w.blocks,
 	}
 
-	if err := e.commit(ctx, inc.ID, req.Key, id, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}); err != nil {
+	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}); err != nil {
 		e.release(ctx, id, w.blocks)
 
 		return nil, err
 	}
 
-	return &fs.PutObjectResponse{ETag: w.etag}, nil
+	resp := &fs.PutObjectResponse{ETag: w.etag}
+	if versioned {
+		resp.VersionID = id
+	}
+
+	return resp, nil
 }
 
 // commit makes the version current: under the key's lock, it checks cond
-// against the row as a quorum has it and writes the completed version.
+// against the row as a quorum has it and writes the completed version — a null
+// one, replacing the key's older null versions, unless versioning is enabled.
 func (e *Engine) commit(
-	ctx context.Context, bucketID, key, id string, cond fs.Conditions, p payload, a attrs,
+	ctx context.Context, bucketID, key, id string, null bool, cond fs.Conditions, p payload, a attrs,
 ) error {
 	defer e.lock(bucketID, key)()
 
@@ -185,7 +192,7 @@ func (e *Engine) commit(
 	v := meta.Version{
 		ID:      id,
 		TS:      ts,
-		Null:    true,
+		Null:    null,
 		State:   meta.Complete,
 		Payload: mustJSON(p),
 		Attrs:   meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(a)},
@@ -224,30 +231,31 @@ func (e *Engine) current(ctx context.Context, bucket, key string) (meta.Version,
 }
 
 func (e *Engine) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
-	v, p, err := e.current(ctx, bucket, key)
+	v, _, err := e.current(ctx, bucket, key)
 	if err != nil {
 		return nil, err
 	}
 
-	return &fs.GetObjectResponse{
-		Reader:       e.reader(ctx, p),
-		Size:         p.Size,
-		LastModified: p.LastModified,
-		ETag:         p.ETag,
-		Metadata:     p.Meta,
-		TagCount:     len(decodeAttrs(v).Tags),
-	}, nil
+	return e.response(ctx, v)
 }
 
 func (e *Engine) DeleteObject(ctx context.Context, bucket, key string) error {
 	return e.DeleteObjectIf(ctx, bucket, key, fs.Conditions{})
 }
 
-// DeleteObjectIf implements fs.ConditionalDeleter: a null delete marker
-// replaces the key's null versions, and their blocks are released.
+// DeleteObjectIf implements fs.ConditionalDeleter. On a bucket that was never
+// versioned it removes the key's null version outright; once versioning has
+// been configured it is DeleteObjectVersionIf without a version ID, which
+// writes a delete marker.
 func (e *Engine) DeleteObjectIf(ctx context.Context, bucket, key string, cond fs.Conditions) error {
-	_, inc, err := e.bucket(ctx, bucket)
+	b, inc, err := e.bucket(ctx, bucket)
 	if err != nil {
+		return err
+	}
+
+	if versioning(b) != fs.VersioningUnset {
+		_, err := e.DeleteObjectVersionIf(ctx, bucket, key, "", cond)
+
 		return err
 	}
 
@@ -267,25 +275,14 @@ func (e *Engine) DeleteObjectIf(ctx context.Context, bucket, key string, cond fs
 		return err
 	}
 
-	if !st.Exists {
+	cur, ok := before.Current()
+	if !ok {
 		return fs.ErrObjectNotFound
 	}
 
-	row := meta.Object{Versions: []meta.Version{{
-		ID:           newID(),
-		TS:           e.nextTS(before),
-		Null:         true,
-		State:        meta.Complete,
-		DeleteMarker: true,
-	}}}
+	_, err = e.removeVersion(ctx, inc.ID, key, before, s3ID(cur))
 
-	if err := e.objects.Insert(ctx, inc.ID, key, row); err != nil {
-		return err
-	}
-
-	e.releaseReplaced(ctx, before, meta.MergeObject(before, row))
-
-	return nil
+	return err
 }
 
 // ListObjects streams the bucket's rows in key order, folding by delimiter as

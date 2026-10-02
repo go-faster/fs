@@ -313,3 +313,62 @@ func keys(r *fs.ListObjectsResponse) []string {
 
 	return append(out, r.CommonPrefixes...)
 }
+
+func TestVersionedBlockReferences(t *testing.T) {
+	e := newEngine(t, 1)
+	ctx := context.Background()
+
+	require.NoError(t, e.SetBucketVersioning(ctx, "b", fs.VersioningEnabled))
+
+	put(t, e, "k", pattern(300))
+	first := blocksOf(t, e, "k")
+
+	versions, err := e.ListObjectVersions(ctx, &fs.ListObjectVersionsRequest{Bucket: "b"})
+	require.NoError(t, err)
+	require.Len(t, versions.Versions, 1)
+
+	firstID := versions.Versions[0].VersionID
+
+	// An overwrite keeps the old version, and so its blocks.
+	put(t, e, "k", bytes.Repeat([]byte{3}, 300))
+	assert.Equal(t, allTrue(len(first)), live(t, e, first))
+
+	// So does a delete marker: nothing is removed.
+	_, err = e.DeleteObjectVersion(ctx, "b", "k", "")
+	require.NoError(t, err)
+	assert.Equal(t, allTrue(len(first)), live(t, e, first))
+
+	// Only deleting the version itself releases them.
+	_, err = e.DeleteObjectVersion(ctx, "b", "k", firstID)
+	require.NoError(t, err)
+	assert.NotContains(t, live(t, e, first), true)
+}
+
+func TestVersionedMultipart(t *testing.T) {
+	e := newEngine(t, 1)
+	ctx := context.Background()
+
+	require.NoError(t, e.SetBucketVersioning(ctx, "b", fs.VersioningEnabled))
+	put(t, e, "mp", []byte("before"))
+
+	upload, err := e.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "b", Key: "mp"})
+	require.NoError(t, err)
+
+	p, err := e.UploadPart(ctx, &fs.UploadPartRequest{
+		Bucket: "b", Key: "mp", UploadID: upload.UploadID, PartNumber: 1,
+		Reader: bytes.NewReader([]byte("assembled")), Size: 9,
+	})
+	require.NoError(t, err)
+
+	_, err = e.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket: "b", Key: "mp", UploadID: upload.UploadID,
+		Parts: []fs.CompletedPart{{PartNumber: 1, ETag: p.ETag}},
+	})
+	require.NoError(t, err)
+
+	versions, err := e.ListObjectVersions(ctx, &fs.ListObjectVersionsRequest{Bucket: "b"})
+	require.NoError(t, err)
+	require.Len(t, versions.Versions, 2, "the completed upload is a version; the PUT before it is kept")
+	assert.Equal(t, upload.UploadID, versions.Versions[0].VersionID)
+	assert.True(t, versions.Versions[0].IsLatest)
+}

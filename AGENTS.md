@@ -69,8 +69,9 @@ automated resumable migration and the public API becomes additive-only.
   wired via `server.WithAuth` / `server.WithCORS`. `auth.Manager` is the local
   (file) credential store.
 - `storagefs`, `storagemem` — filesystem and in-memory `fs.Storage` backends.
-- `storagetest` — exported conformance suite; both backends and any
-  third-party backend run `storagetest.Run(t, factory)`.
+- `storagetest` — exported conformance suite; every backend (and any
+  third-party one) runs `storagetest.Run(t, factory)`. `RunExcept` skips named
+  cases with a reason, for a known gap — never to get CI green on a new one.
 - `server` — embeddable server: `NewHandler` (bare handler) and `New`
   (turnkey server with health, timeouts, graceful shutdown). No observability
   deps — callers inject via `Config.WrapHandler`.
@@ -100,8 +101,9 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/engine` — the storage engine (#277): `fs.Storage` over the
   replicated tables and blocks. Buckets are incarnations keyed by ID, objects
   are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are
-  serialized on their coordinating node. Passes `storagetest` on one node and
-  on three; not wired into the server yet.
+  serialized on their coordinating node. Versioning is a view over the
+  version list (null versions while unset/suspended). Passes `storagetest` on
+  one node and on three; not wired into the server yet.
 - Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
   compare per-(partition, slot) digests with the other replicas, pull what
   differs, and hand over data of partitions the layout moved away.
