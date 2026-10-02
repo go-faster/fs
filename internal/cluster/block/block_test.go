@@ -296,7 +296,17 @@ func TestResyncRepairsMissingAndCorrupt(t *testing.T) {
 	h, err := nodes[0].blocks.Put(ctx, data)
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return nodes[2].store.Has(h) }, 5*time.Second, 10*time.Millisecond)
+	// Put returns at quorum; let every replica land, the coordinator's own
+	// included, before breaking two of them.
+	require.Eventually(t, func() bool {
+		for _, n := range nodes {
+			if !n.store.Has(h) {
+				return false
+			}
+		}
+
+		return true
+	}, 5*time.Second, 10*time.Millisecond)
 
 	// n1 lost its copy; n2's rotted.
 	require.NoError(t, nodes[1].store.Delete(h))
