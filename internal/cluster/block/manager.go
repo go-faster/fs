@@ -58,6 +58,8 @@ type Manager struct {
 	mu     sync.Mutex
 	resync map[resyncKey]resyncItem
 
+	sync syncState
+
 	done, failed, corrupt, collected atomic.Int64
 }
 
@@ -85,6 +87,7 @@ func NewManager(store *Store, member *peer.Member) *Manager {
 
 	member.Handle("PUT /v1/block/{hash}", http.HandlerFunc(m.servePut))
 	member.Handle("GET /v1/block/{hash}", http.HandlerFunc(m.serveGet))
+	m.registerSync()
 
 	return m
 }

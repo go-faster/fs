@@ -125,12 +125,27 @@ type node struct {
 func cluster(t *testing.T, n int) []*node {
 	t.Helper()
 
-	var roles []layout.Node
+	return clusterOf(t, n, n)
+}
+
+// roles are the layout roles of n nodes, each in its own zone.
+func roles(n int) []layout.Node {
+	var out []layout.Node
 	for i := range n {
-		roles = append(roles, layout.Node{ID: layout.NodeID(fmt.Sprint("n", i)), Zone: fmt.Sprint("z", i), Capacity: 1})
+		out = append(out, layout.Node{ID: layout.NodeID(fmt.Sprint("n", i)), Zone: fmt.Sprint("z", i), Capacity: 1})
 	}
 
-	l, err := layout.Compute(nil, roles, layout.Options{Partitions: 8})
+	return out
+}
+
+// clusterOf starts n nodes, of which the first members hold data in the
+// initial layout.
+func clusterOf(t *testing.T, n, members int) []*node {
+	t.Helper()
+
+	roles := roles(n)
+
+	l, err := layout.Compute(nil, roles[:members], layout.Options{Partitions: 8})
 	require.NoError(t, err)
 
 	nodes := make([]*node, n)
