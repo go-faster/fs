@@ -13,6 +13,28 @@ import (
 	"github.com/go-faster/fs/storagefs"
 )
 
+// runScrubLoop runs the scrub loop with an hour between passes until the test
+// ends, and waits for it to stop before the test's directories are removed: a
+// pass still writing its record would otherwise race the cleanup, which
+// Windows refuses outright.
+func runScrubLoop(t *testing.T, lg *zap.Logger, storage *storagefs.Storage, state lastrun.Store) {
+	t.Helper()
+
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		scrubLoop(ctx, lg, storage, IntegrityConfig{ScrubInterval: time.Hour}, state, time.Millisecond)
+	}()
+
+	t.Cleanup(func() {
+		stop()
+		<-done
+	})
+}
+
 // scrubFixture returns an empty store and a log to watch passes on.
 func scrubFixture(t *testing.T) (*storagefs.Storage, *zap.Logger, *observer.ObservedLogs) {
 	t.Helper()
@@ -40,12 +62,8 @@ func TestScrubLoopScrubsWhenOverdue(t *testing.T) {
 
 	storage, lg, logs := scrubFixture(t)
 
-	ctx, stop := context.WithCancel(t.Context())
-	defer stop()
-
 	// An hour between passes, nothing recorded: the first has to land now.
-	go scrubLoop(ctx, lg, storage, IntegrityConfig{ScrubInterval: time.Hour},
-		lastrun.NewFile(t.TempDir()), time.Millisecond)
+	runScrubLoop(t, lg, storage, lastrun.NewFile(t.TempDir()))
 
 	require.Eventually(t, func() bool {
 		return scrubbed(logs) > 0
@@ -65,10 +83,7 @@ func TestScrubLoopHonorsARecentScrub(t *testing.T) {
 	state := lastrun.NewFile(t.TempDir())
 	require.NoError(t, state.SetLastRun(ctx, scrubTask, time.Now()))
 
-	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
-
-	go scrubLoop(runCtx, lg, storage, IntegrityConfig{ScrubInterval: time.Hour}, state, time.Millisecond)
+	runScrubLoop(t, lg, storage, state)
 
 	require.Never(t, func() bool {
 		return scrubbed(logs) > 0
@@ -84,10 +99,7 @@ func TestScrubLoopRecordsItsPass(t *testing.T) {
 	storage, lg, logs := scrubFixture(t)
 	state := lastrun.NewFile(t.TempDir())
 
-	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
-
-	go scrubLoop(runCtx, lg, storage, IntegrityConfig{ScrubInterval: time.Hour}, state, time.Millisecond)
+	runScrubLoop(t, lg, storage, state)
 
 	require.Eventually(t, func() bool {
 		return scrubbed(logs) > 0
