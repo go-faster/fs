@@ -27,6 +27,8 @@ type uploadPayload struct {
 	Initiated time.Time         `json:"initiated"`
 	Meta      fs.ObjectMetadata `json:"meta,omitzero"`
 	Owner     fs.Owner          `json:"owner,omitzero"`
+	// Enc seals every part as it arrives, so no part sits in the clear.
+	Enc *encInfo `json:"enc,omitempty"`
 }
 
 // partRecord is one uploaded part.
@@ -46,7 +48,8 @@ func partSK(n int) string { return fmt.Sprintf("%05d", n) }
 func partOwner(uploadID, partID string) string { return uploadID + "/" + partID }
 
 func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
-	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+	enc, err := e.beginEncryption(req.ServerSideEncryption)
+	if err != nil {
 		return nil, err
 	}
 
@@ -70,7 +73,7 @@ func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultip
 		ID:      id,
 		TS:      ts,
 		State:   meta.Uploading,
-		Payload: mustJSON(uploadPayload{Initiated: initiated, Meta: req.Metadata, Owner: req.Owner}),
+		Payload: mustJSON(uploadPayload{Initiated: initiated, Meta: req.Metadata, Owner: req.Owner, Enc: enc}),
 		Attrs:   meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(attrs{Tags: req.Tags, ACL: req.ACL})},
 	}
 
@@ -102,13 +105,24 @@ func (e *Engine) upload(ctx context.Context, bucket, key, id string) (string, me
 }
 
 func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
-	if _, _, err := e.upload(ctx, req.Bucket, req.Key, req.UploadID); err != nil {
+	_, v, err := e.upload(ctx, req.Bucket, req.Key, req.UploadID)
+	if err != nil {
+		return nil, err
+	}
+
+	var up uploadPayload
+	if err := json.Unmarshal(v.Payload, &up); err != nil {
+		return nil, errors.Wrap(err, "decode upload")
+	}
+
+	c, err := e.cipher(up.Enc, req.PartNumber)
+	if err != nil {
 		return nil, err
 	}
 
 	owner := partOwner(req.UploadID, newID())
 
-	w, err := e.write(ctx, req.Reader, owner)
+	w, err := e.write(ctx, req.Reader, owner, c)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +292,7 @@ func (e *Engine) CompleteMultipartUpload(
 			return nil, err
 		}
 
-		return completed(req, p.ETag), nil
+		return completed(req, p), nil
 	case !ok || v.State != meta.Uploading:
 		return nil, fs.ErrUploadNotFound
 	}
@@ -308,7 +322,7 @@ func (e *Engine) CompleteMultipartUpload(
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	var (
-		p    = payload{Meta: up.Meta, Owner: up.Owner, UploadID: req.UploadID}
+		p    = payload{Meta: up.Meta, Owner: up.Owner, UploadID: req.UploadID, Enc: up.Enc}
 		used = map[string]bool{}
 	)
 
@@ -377,15 +391,16 @@ func (e *Engine) CompleteMultipartUpload(
 		e.release(ctx, part.Owner, part.Blocks)
 	}
 
-	return completed(req, p.ETag), nil
+	return completed(req, p), nil
 }
 
-func completed(req *fs.CompleteMultipartUploadRequest, etag string) *fs.CompleteMultipartUploadResponse {
+func completed(req *fs.CompleteMultipartUploadRequest, p payload) *fs.CompleteMultipartUploadResponse {
 	return &fs.CompleteMultipartUploadResponse{
-		Location: "/" + req.Bucket + "/" + req.Key,
-		Bucket:   req.Bucket,
-		Key:      req.Key,
-		ETag:     etag,
+		Location:             "/" + req.Bucket + "/" + req.Key,
+		Bucket:               req.Bucket,
+		Key:                  req.Key,
+		ETag:                 p.ETag,
+		ServerSideEncryption: algorithm(p.Enc),
 	}
 }
 

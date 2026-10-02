@@ -10,12 +10,31 @@ import (
 
 // reader returns the version's content as an io.ReadSeekCloser, so the
 // handler serves ranges by seeking rather than reading what it skips.
-func (e *Engine) reader(ctx context.Context, p payload) io.ReadSeekCloser {
+func (e *Engine) reader(ctx context.Context, p payload) (io.ReadSeekCloser, error) {
 	if p.Blocks == nil {
-		return nopCloser{bytes.NewReader(p.Inline)}
+		inline := bytes.NewReader(p.Inline)
+		if p.Enc == nil {
+			return nopCloser{inline}, nil
+		}
+
+		return e.decrypting(inline, nopCloser{inline}, p)
 	}
 
-	return &blockReader{ctx: ctx, e: e, blocks: p.Blocks, size: p.Size}
+	stored := &blockReader{ctx: ctx, e: e, blocks: p.Blocks, size: storedSize(p.Blocks)}
+	if p.Enc == nil {
+		return stored, nil
+	}
+
+	return e.decrypting(stored, stored, p)
+}
+
+func storedSize(blocks []blockLoc) int64 {
+	var n int64
+	for _, b := range blocks {
+		n += b.Size
+	}
+
+	return n
 }
 
 type nopCloser struct{ *bytes.Reader }
@@ -78,6 +97,36 @@ func (r *blockReader) load() error {
 	}
 
 	return io.EOF
+}
+
+// ReadAt reads the stored bytes at off, crossing blocks as it goes. It shares
+// the one-block cache with Read, so a sequential pass fetches each block once.
+func (r *blockReader) ReadAt(p []byte, off int64) (int, error) {
+	n := 0
+
+	for n < len(p) {
+		if off >= r.size {
+			return n, io.EOF
+		}
+
+		if r.cur == nil || off < r.curOff || off >= r.curOff+int64(len(r.cur)) {
+			saved := r.off
+			r.off = off
+
+			err := r.load()
+			r.off = saved
+
+			if err != nil {
+				return n, err
+			}
+		}
+
+		c := copy(p[n:], r.cur[off-r.curOff:])
+		n += c
+		off += int64(c)
+	}
+
+	return n, nil
 }
 
 func (r *blockReader) Seek(offset int64, whence int) (int64, error) {

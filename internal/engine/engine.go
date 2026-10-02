@@ -28,6 +28,7 @@ import (
 	"github.com/go-faster/fs/internal/cluster/meta"
 	"github.com/go-faster/fs/internal/cluster/peer"
 	"github.com/go-faster/fs/internal/cluster/table"
+	"github.com/go-faster/fs/internal/sse"
 )
 
 // DefaultBlockSize is the size objects are cut into. Larger blocks mean
@@ -50,6 +51,9 @@ type Config struct {
 	// DefaultInlineLimit.
 	BlockSize   int
 	InlineLimit int
+	// Keyring seals the data keys of encrypted objects. Without one, a
+	// request to encrypt is refused rather than stored in the clear.
+	Keyring *sse.Keyring
 }
 
 // Engine implements fs.Storage.
@@ -62,6 +66,7 @@ type Engine struct {
 
 	blockSize   int
 	inlineLimit int
+	keyring     *sse.Keyring
 
 	locks [256]sync.Mutex
 	now   func() time.Time
@@ -81,6 +86,7 @@ func New(cfg Config) (*Engine, error) {
 		blocks:      cfg.Blocks,
 		blockSize:   cmp.Or(cfg.BlockSize, DefaultBlockSize),
 		inlineLimit: cmp.Or(cfg.InlineLimit, DefaultInlineLimit),
+		keyring:     cfg.Keyring,
 		now:         time.Now,
 	}
 
@@ -141,6 +147,8 @@ type payload struct {
 	// Parts and UploadID describe a completed multipart object.
 	Parts    []fs.ObjectPart `json:"parts,omitempty"`
 	UploadID string          `json:"upload_id,omitempty"`
+	// Enc is set for an encrypted version; Size is then the plaintext's.
+	Enc *encInfo `json:"enc,omitempty"`
 }
 
 type blockLoc struct {

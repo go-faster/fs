@@ -14,31 +14,39 @@ import (
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/block"
 	"github.com/go-faster/fs/internal/cluster/meta"
+	"github.com/go-faster/fs/internal/sse"
 )
 
 // written is content stored for a version: inline, or as blocks.
 type written struct {
+	// size and etag describe the plaintext; inline and blocks hold what is
+	// stored, which is ciphertext when the content was sealed.
 	size   int64
 	etag   string
 	inline []byte
 	blocks []blockLoc
 }
 
-// write stores r's content: inline when it fits, else as blocks referenced by
-// the version owner. References are written before the blocks are, so a block
-// is never stored unreferenced past its write; a failure leaves references to
-// blocks that may not exist, which GC treats as live until released.
-func (e *Engine) write(ctx context.Context, r io.Reader, owner string) (written, error) {
+// write stores r's content, sealed under c when it is not nil: inline when it
+// fits, else as blocks referenced by the version owner. References are
+// written before the blocks are, so a block is never stored unreferenced past
+// its write; a failure leaves references to blocks that may not exist, which
+// GC treats as live until released.
+func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Cipher) (written, error) {
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
+	plain := &counter{r: io.TeeReader(r, h)}
+
+	stored := sealed(plain, c)
+	defer func() { _ = stored.Close() }()
+
 	buf := make([]byte, e.blockSize)
 
 	var w written
 
 	for {
-		n, err := io.ReadFull(io.TeeReader(r, h), buf)
+		n, err := io.ReadFull(stored, buf)
 		if n > 0 {
 			chunk := bytes.Clone(buf[:n])
-			w.size += int64(n)
 
 			// Only a first chunk that already reached the end can be inline:
 			// the whole object is in it.
@@ -61,13 +69,27 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string) (written,
 		}
 	}
 
-	if w.size == 0 {
+	if len(w.blocks) == 0 && len(w.inline) == 0 {
 		w.inline = nil
 	}
 
+	w.size = plain.n
 	w.etag = hex.EncodeToString(h.Sum(nil))
 
 	return w, nil
+}
+
+// counter counts the bytes read through it.
+type counter struct {
+	r io.Reader
+	n int64
+}
+
+func (c *counter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+
+	return n, err
 }
 
 func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *written) error {
@@ -90,16 +112,14 @@ func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *wri
 	return nil
 }
 
-func refuseEncryption(algorithm string) error {
-	if algorithm == "" {
-		return nil
+func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
+	enc, err := e.beginEncryption(req.ServerSideEncryption)
+	if err != nil {
+		return nil, err
 	}
 
-	return errors.Wrapf(fs.ErrUnsupportedOperation, "server-side encryption (%s) is not supported yet by this engine", algorithm)
-}
-
-func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
-	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+	c, err := e.cipher(enc, 0)
+	if err != nil {
 		return nil, err
 	}
 
@@ -130,7 +150,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 
 	id := newID()
 
-	w, err := e.write(ctx, req.Reader, id)
+	w, err := e.write(ctx, req.Reader, id, c)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +168,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		Owner:  req.Owner,
 		Inline: w.inline,
 		Blocks: w.blocks,
+		Enc:    enc,
 	}
 
 	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}); err != nil {
@@ -156,7 +177,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		return nil, err
 	}
 
-	resp := &fs.PutObjectResponse{ETag: w.etag}
+	resp := &fs.PutObjectResponse{ETag: w.etag, ServerSideEncryption: algorithm(enc)}
 	if versioned {
 		resp.VersionID = id
 	}
