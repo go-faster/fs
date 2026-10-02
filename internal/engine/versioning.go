@@ -130,6 +130,9 @@ func (e *Engine) response(ctx context.Context, v meta.Version) (*fs.GetObjectRes
 		ETag:                 p.ETag,
 		Metadata:             p.Meta,
 		TagCount:             len(decodeAttrs(v).Tags),
+		ChecksumAlgorithm:    p.ChecksumAlgorithm,
+		Checksum:             p.Checksum,
+		ChecksumType:         p.ChecksumType,
 	}
 
 	if !v.Null {
