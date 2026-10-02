@@ -32,6 +32,11 @@ type Version struct {
 	// Null marks the version written while versioning is off or suspended,
 	// which S3 reports with version ID "null". A newer complete null version
 	// replaces every older null version.
+	//
+	// An upload in flight is never null: S3 keeps it valid however many PUTs
+	// complete meanwhile, and a null version would be replaced by the first.
+	// Its TS and Null are provisional; the copy that completes it carries
+	// the final ones, and a further state wins whole in the merge.
 	Null  bool  `json:"null,omitempty"`
 	State State `json:"state"`
 	// Completed records that the version reached Complete, and stays set once
@@ -44,6 +49,9 @@ type Version struct {
 	// Payload is the engine's description of the version: headers, size,
 	// ETag, where its bytes live. Set once, when the version completes.
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Attrs are what can change after the version is written — its tags,
+	// its ACL — as one register, merged apart from the rest of the version.
+	Attrs LWW[json.RawMessage] `json:"attrs,omitzero"`
 }
 
 func (v Version) before(w Version) bool {
@@ -63,13 +71,22 @@ func mergeVersion(a, b Version) Version {
 	switch {
 	case b.State > a.State:
 		out = b
-	case b.State == a.State && bytes.Compare(encode(b), encode(a)) > 0:
+	case b.State == a.State && bytes.Compare(encode(withoutAttrs(b)), encode(withoutAttrs(a))) > 0:
 		out = b
 	}
 
 	out.Completed = a.Completed || b.Completed || out.State == Complete
+	out.Attrs = a.Attrs.Merge(b.Attrs)
 
 	return out
+}
+
+// withoutAttrs is v as the choice between two copies sees it: their Attrs
+// are merged on their own, so they must not decide which copy is kept.
+func withoutAttrs(v Version) Version {
+	v.Attrs = LWW[json.RawMessage]{}
+
+	return v
 }
 
 // Object is one key's versions, oldest first.
@@ -98,7 +115,7 @@ func MergeObject(a, b Object) Object {
 		}
 
 		if v.State == Gone {
-			v.Payload, v.DeleteMarker = nil, false
+			v.Payload, v.DeleteMarker, v.Attrs = nil, false, LWW[json.RawMessage]{}
 		}
 
 		byID[v.ID] = v

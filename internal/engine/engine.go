@@ -1,0 +1,256 @@
+// Package engine is the storage engine: fs.Storage over the cluster's
+// replicated metadata tables and content-addressed blocks.
+//
+// A bucket is a row of the buckets table; its objects are rows of the objects
+// table under the bucket's ID, each holding the key's version list. Object
+// data is cut into blocks stored by hash, or kept inline in the version when
+// it is small. A single node is the same engine over a one-node layout.
+//
+// Writes to one key are serialized on the node that coordinates them, so a
+// condition checked before a write holds when it lands — put-if-absent and
+// compare-and-swap are atomic through one node. Across coordinators they are
+// not: see internal/cluster/meta.
+package engine
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"hash/fnv"
+	"sync"
+	"time"
+
+	"github.com/go-faster/errors"
+	"github.com/google/uuid"
+	"go.etcd.io/bbolt"
+
+	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/cluster/block"
+	"github.com/go-faster/fs/internal/cluster/meta"
+	"github.com/go-faster/fs/internal/cluster/peer"
+	"github.com/go-faster/fs/internal/cluster/table"
+)
+
+// DefaultBlockSize is the size objects are cut into. Larger blocks mean
+// fewer files and less metadata per byte on large drives.
+const DefaultBlockSize = 1 << 20
+
+// DefaultInlineLimit is the size below which an object is kept in its version
+// instead of in blocks: a block costs a file on three nodes and a reference
+// row, which a few hundred bytes do not justify.
+const DefaultInlineLimit = 3 << 10
+
+// Config configures an Engine.
+type Config struct {
+	Member *peer.Member
+	// DB holds this node's replicas of the metadata tables.
+	DB *bbolt.DB
+	// Blocks stores object data.
+	Blocks *block.Manager
+	// BlockSize and InlineLimit default to DefaultBlockSize and
+	// DefaultInlineLimit.
+	BlockSize   int
+	InlineLimit int
+}
+
+// Engine implements fs.Storage.
+type Engine struct {
+	buckets *table.Table[meta.Bucket]
+	objects *table.Table[meta.Object]
+	refs    *table.Table[meta.BlockRef]
+	parts   *table.Table[meta.LWW[json.RawMessage]]
+	blocks  *block.Manager
+
+	blockSize   int
+	inlineLimit int
+
+	locks [256]sync.Mutex
+	now   func() time.Time
+}
+
+var (
+	_ fs.Storage            = (*Engine)(nil)
+	_ fs.ConditionalDeleter = (*Engine)(nil)
+	_ fs.BucketOwnership    = (*Engine)(nil)
+	_ fs.ObjectAttributer   = (*Engine)(nil)
+)
+
+// New returns an engine over cfg, creating its tables in cfg.DB and
+// registering their peer endpoints; call it before serving.
+func New(cfg Config) (*Engine, error) {
+	e := &Engine{
+		blocks:      cfg.Blocks,
+		blockSize:   cmp.Or(cfg.BlockSize, DefaultBlockSize),
+		inlineLimit: cmp.Or(cfg.InlineLimit, DefaultInlineLimit),
+		now:         time.Now,
+	}
+
+	if e.blockSize > block.MaxSize {
+		return nil, errors.Errorf("block size %d exceeds %d", e.blockSize, block.MaxSize)
+	}
+
+	var err error
+
+	if e.buckets, err = table.New(meta.Buckets, cfg.DB, cfg.Member, meta.MergeBucket); err != nil {
+		return nil, err
+	}
+
+	if e.objects, err = table.New(meta.Objects, cfg.DB, cfg.Member, meta.MergeObject); err != nil {
+		return nil, err
+	}
+
+	if e.refs, err = table.New(meta.BlockRefs, cfg.DB, cfg.Member, meta.MergeBlockRef); err != nil {
+		return nil, err
+	}
+
+	if e.parts, err = table.New(meta.Parts, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage]); err != nil {
+		return nil, err
+	}
+
+	return e, nil
+}
+
+// lock serializes writes to one key on this node.
+func (e *Engine) lock(bucketID, key string) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(bucketID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(key))
+
+	mu := &e.locks[h.Sum32()%uint32(len(e.locks))]
+	mu.Lock()
+
+	return mu.Unlock
+}
+
+func (e *Engine) ts() int64 { return e.now().UnixNano() }
+
+func newID() string { return uuid.New().String() }
+
+// payload is what an engine version holds beyond what merging needs.
+type payload struct {
+	Size         int64             `json:"size"`
+	ETag         string            `json:"etag,omitempty"`
+	LastModified time.Time         `json:"mtime"`
+	Meta         fs.ObjectMetadata `json:"meta,omitzero"`
+	Owner        fs.Owner          `json:"owner,omitzero"`
+	// Inline holds a small object's content; Blocks a larger one's, in order.
+	Inline []byte     `json:"inline,omitempty"`
+	Blocks []blockLoc `json:"blocks,omitempty"`
+	// Parts and UploadID describe a completed multipart object.
+	Parts    []fs.ObjectPart `json:"parts,omitempty"`
+	UploadID string          `json:"upload_id,omitempty"`
+}
+
+type blockLoc struct {
+	Hash block.Hash `json:"h"`
+	Size int64      `json:"n"`
+}
+
+// attrs are a version's mutable attributes.
+type attrs struct {
+	Tags []fs.Tag `json:"tags,omitempty"`
+	ACL  fs.ACL   `json:"acl,omitempty"`
+}
+
+func decodePayload(v meta.Version) (payload, error) {
+	var p payload
+	if len(v.Payload) == 0 {
+		return p, nil
+	}
+
+	if err := json.Unmarshal(v.Payload, &p); err != nil {
+		return p, errors.Wrapf(err, "decode version %s", v.ID)
+	}
+
+	return p, nil
+}
+
+func decodeAttrs(v meta.Version) attrs {
+	var a attrs
+
+	_ = json.Unmarshal(v.Attrs.V, &a)
+
+	return a
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err) // Engine types always encode.
+	}
+
+	return b
+}
+
+// state is what conditional requests are evaluated against.
+func state(o meta.Object) (fs.ObjectState, error) {
+	v, ok := o.Current()
+	if !ok {
+		return fs.ObjectState{}, nil
+	}
+
+	p, err := decodePayload(v)
+	if err != nil {
+		return fs.ObjectState{}, err
+	}
+
+	return fs.ObjectState{Exists: true, ETag: p.ETag, Size: p.Size, LastModified: p.LastModified}, nil
+}
+
+// object reads a key's row; a missing row is an empty one.
+func (e *Engine) object(ctx context.Context, bucketID, key string) (meta.Object, error) {
+	o, _, err := e.objects.Get(ctx, bucketID, key)
+
+	return o, err
+}
+
+// nextTS orders a write after everything o holds.
+func (e *Engine) nextTS(o meta.Object) int64 {
+	var prev int64
+	if v, ok := o.Latest(); ok {
+		prev = v.TS
+	}
+
+	return meta.NextTS(e.ts(), prev)
+}
+
+// release marks every block a version references as no longer referenced by
+// it. A failure leaks the blocks until reference repair; it never loses data.
+func (e *Engine) release(ctx context.Context, owner string, blocks []blockLoc) {
+	for _, b := range blocks {
+		// ponytail: one write per block; batch per partition if deletes of
+		// large objects show up in latency.
+		_ = e.refs.Insert(ctx, b.Hash.String(), owner, meta.BlockRef{Deleted: true})
+	}
+}
+
+// releaseReplaced releases the blocks of the versions the merge of next drops
+// from before: older null versions a new null version replaces.
+func (e *Engine) releaseReplaced(ctx context.Context, before, after meta.Object) {
+	for _, v := range before.Versions {
+		if _, kept := after.Find(v.ID); kept {
+			continue
+		}
+
+		if p, err := decodePayload(v); err == nil {
+			e.release(ctx, v.ID, p.Blocks)
+		}
+	}
+}
+
+// BlockLive reports whether any version still references h, for block GC.
+func (e *Engine) BlockLive(ctx context.Context, h block.Hash) (bool, error) {
+	refs, err := e.refs.Range(ctx, h.String(), "", 1<<20)
+	if err != nil {
+		return false, err
+	}
+
+	for _, r := range refs {
+		if !r.Row.Deleted {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}

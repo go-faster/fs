@@ -32,6 +32,21 @@ func Sum(data []byte) Hash { return sha256.Sum256(data) }
 
 func (h Hash) String() string { return hex.EncodeToString(h[:]) }
 
+// MarshalText encodes the hash as hex, in JSON and as a map key alike.
+func (h Hash) MarshalText() ([]byte, error) { return []byte(h.String()), nil }
+
+// UnmarshalText decodes the hex form.
+func (h *Hash) UnmarshalText(b []byte) error {
+	v, err := ParseHash(string(b))
+	if err != nil {
+		return err
+	}
+
+	*h = v
+
+	return nil
+}
+
 // ParseHash parses a hash's hex form.
 func ParseHash(s string) (Hash, error) {
 	var h Hash

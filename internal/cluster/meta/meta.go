@@ -36,6 +36,10 @@ const (
 	Buckets   = "buckets"
 	Objects   = "objects"
 	BlockRefs = "block_refs"
+	// Parts holds multipart upload parts: partition key the upload's version
+	// ID, sort key the zero-padded part number, an LWW register per part so a
+	// re-uploaded part replaces the earlier one.
+	Parts = "parts"
 )
 
 // LWW is a last-writer-wins register.
@@ -62,6 +66,9 @@ func (a LWW[T]) Merge(b LWW[T]) LWW[T] {
 
 	return a
 }
+
+// MergeLWW is the merge of a table whose rows are single registers.
+func MergeLWW[T any](a, b LWW[T]) LWW[T] { return a.Merge(b) }
 
 // NextTS is the timestamp for a write to a row last written at prev: the
 // coordinator's clock, but never at or before prev. A coordinator whose clock
