@@ -97,6 +97,9 @@ automated resumable migration and the public API becomes additive-only.
   (SHA-256 names, verified on every read, corrupt copies dropped), replicated
   put/get over the hash's partition at quorum, an in-memory resync queue, and
   GC of unreferenced blocks after a grace period. Not used by storage yet.
+- Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
+  compare per-(partition, slot) digests with the other replicas, pull what
+  differs, and hand over data of partitions the layout moved away.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

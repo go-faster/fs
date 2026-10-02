@@ -56,14 +56,27 @@ type node struct {
 func cluster(t *testing.T) []*node {
 	t.Helper()
 
-	const n = Replicas
+	return clusterOf(t, Replicas, Replicas)
+}
 
-	var roles []layout.Node
+// roles are the layout roles of n nodes, each in its own zone.
+func roles(n int) []layout.Node {
+	var out []layout.Node
 	for i := range n {
-		roles = append(roles, layout.Node{ID: layout.NodeID(fmt.Sprint("n", i)), Zone: fmt.Sprint("z", i), Capacity: 1})
+		out = append(out, layout.Node{ID: layout.NodeID(fmt.Sprint("n", i)), Zone: fmt.Sprint("z", i), Capacity: 1})
 	}
 
-	l, err := layout.Compute(nil, roles, layout.Options{Partitions: 8, Widths: []int{n}})
+	return out
+}
+
+// clusterOf starts n nodes, of which the first members hold data in the
+// initial layout, and gossips until every node knows every peer by ID.
+func clusterOf(t *testing.T, n, members int) []*node {
+	t.Helper()
+
+	all := roles(n)
+
+	l, err := layout.Compute(nil, all[:members], layout.Options{Partitions: 8, Widths: []int{Replicas}})
 	require.NoError(t, err)
 
 	nodes := make([]*node, n)
@@ -71,7 +84,7 @@ func cluster(t *testing.T) []*node {
 		srv := httptest.NewUnstartedServer(nil)
 
 		cfg := peer.Config{
-			ID:     roles[i].ID,
+			ID:     all[i].ID,
 			Addr:   srv.Listener.Addr().String(),
 			Secret: peer.Secret("cluster-secret-0123456789"),
 			Dir:    t.TempDir(),
@@ -100,11 +113,21 @@ func cluster(t *testing.T) []*node {
 		nodes[i] = &node{member: m, srv: srv, table: tbl}
 	}
 
-	for range 2 {
+	require.Eventually(t, func() bool {
 		for _, nd := range nodes {
 			nd.member.Round(context.Background())
 		}
-	}
+
+		for _, nd := range nodes {
+			for _, other := range nodes {
+				if _, ok := nd.member.Addr(other.member.ID()); !ok {
+					return false
+				}
+			}
+		}
+
+		return true
+	}, 5*time.Second, time.Millisecond)
 
 	return nodes
 }

@@ -57,6 +57,7 @@ type Table[R any] struct {
 	merge  func(a, b R) R
 	db     *bbolt.DB
 	member *peer.Member
+	sync   syncState
 }
 
 // New returns the table name stored in db and replicated through member.
@@ -77,6 +78,7 @@ func New[R any](name string, db *bbolt.DB, member *peer.Member, merge func(a, b 
 	member.Handle("POST /v1/table/"+name+"/insert", handle(t.serveInsert))
 	member.Handle("POST /v1/table/"+name+"/get", handle(t.serveGet))
 	member.Handle("POST /v1/table/"+name+"/range", handle(t.serveRange))
+	t.registerSync()
 
 	return t, nil
 }

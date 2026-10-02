@@ -18,8 +18,8 @@ const (
 	// Gone: aborted, or permanently deleted. A tombstone, kept so that a
 	// replica that has not seen the delete cannot bring the version back.
 	//
-	// ponytail: tombstones are never collected; add GC after every replica
-	// has seen them (#275) if rows grow.
+	// ponytail: tombstones are never collected; collect them once every
+	// replica has merged them (#301).
 	Gone
 )
 
