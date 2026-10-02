@@ -93,6 +93,10 @@ automated resumable migration and the public API becomes additive-only.
   versions, delete markers, null versions; Uploading → Complete → Gone),
   block refs. Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
+- `internal/cluster/block` — content-addressed blocks: a local disk store
+  (SHA-256 names, verified on every read, corrupt copies dropped), replicated
+  put/get over the hash's partition at quorum, an in-memory resync queue, and
+  GC of unreferenced blocks after a grace period. Not used by storage yet.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 
