@@ -189,6 +189,13 @@ func (s *Store) Put(h Hash, data []byte) error {
 	}
 
 	if err := os.Rename(f.Name(), p); err != nil {
+		// Another writer placed the same block meanwhile — the same bytes,
+		// since the name is their hash. Windows refuses a rename onto a file
+		// another rename is placing, where POSIX replaces it.
+		if _, statErr := os.Stat(p); statErr == nil {
+			return nil
+		}
+
 		return errors.Wrap(err, "place block")
 	}
 

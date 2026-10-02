@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,35 @@ func TestStore(t *testing.T) {
 	require.NoError(t, s.Delete(h))
 	require.NoError(t, s.Delete(h), "deleting an absent block is not an error")
 	assert.False(t, s.Has(h))
+}
+
+func TestStoreConcurrentSameBlock(t *testing.T) {
+	// Identical content written at once: dedup by name means every writer
+	// targets one file, and all of them must succeed.
+	s, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	data := bytes.Repeat([]byte("same"), 1<<16)
+	h := Sum(data)
+
+	var wg sync.WaitGroup
+
+	errs := make(chan error, 16)
+
+	for range 16 {
+		wg.Go(func() { errs <- s.Put(h, data) })
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	got, err := s.Get(h)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
 }
 
 func TestStoreFormat(t *testing.T) {
