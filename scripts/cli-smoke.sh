@@ -309,6 +309,10 @@ ssec_fixtures() {
 
 ssec_key_b64() { base64 < "${SSEC_KEY_FILE}" | tr -d '\n'; }
 
+# mc splits "alias/prefix=key" at the last "=", so base64 padding would cut
+# the key off; it also takes the key as 64 hex digits.
+ssec_key_hex() { od -An -v -tx1 < "${SSEC_KEY_FILE}" | tr -d ' \n'; }
+
 smoke_ssec_awscli() {
   command -v aws >/dev/null || return 0
   local aws=(aws --endpoint-url "${TLS_ENDPOINT}" --no-verify-ssl)
@@ -332,7 +336,7 @@ smoke_ssec_mc() {
   bin="$(mc_bin)" || return 0
   local mc=("${bin}" --config-dir "${WORK}/mc-tls" --quiet --insecure)
   local bucket="ssec-mc" enc
-  enc="tls/${bucket}/=$(ssec_key_b64)"
+  enc="tls/${bucket}/=$(ssec_key_hex)"
 
   "${mc[@]}" alias set tls "${TLS_ENDPOINT}" "${ACCESS_KEY}" "${SECRET_KEY}" --api S3v4 >/dev/null
   "${mc[@]}" mb "tls/${bucket}" >/dev/null
@@ -370,7 +374,13 @@ smoke_ssec_rclone() {
   "${rclone[@]}" copyto "ssec:${bucket}/obj" "${OUT}/ssec-rclone" >/dev/null
   cmp -s "${SSEC_PAYLOAD}" "${OUT}/ssec-rclone" || { fail "rclone: SSE-C round trip mismatch"; return; }
 
-  ok "rclone SSE-C round trip"
+  # A round trip alone would pass if rclone dropped the key both ways.
+  if curl -kfsS -o /dev/null "${TLS_ENDPOINT}/${bucket}/obj" 2>/dev/null; then
+    fail "rclone: SSE-C object read without its key"
+    return
+  fi
+
+  ok "rclone SSE-C round trip; refused without the key"
 }
 
 # ---- main -------------------------------------------------------------------
