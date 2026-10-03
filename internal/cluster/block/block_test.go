@@ -444,3 +444,31 @@ func TestMaxSize(t *testing.T) {
 	_, err := nodes[0].blocks.Put(context.Background(), bytes.Repeat([]byte{1}, MaxSize+1))
 	require.Error(t, err)
 }
+
+// TestGCSparesBlockTouchedDuringCheck: a writer that re-references an old
+// block touches it after GC read its age but before GC deletes it. GC must
+// see the touch and keep the block, or the new reference points at nothing.
+func TestGCSparesBlockTouchedDuringCheck(t *testing.T) {
+	ctx := context.Background()
+	n := clusterOf(t, 1, 1, 1)[0]
+	data := []byte("re-referenced while being collected")
+
+	h, err := n.blocks.Put(ctx, data)
+	require.NoError(t, err)
+
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(n.store.path(h), old, old))
+
+	// The check runs, a writer stores the same block meanwhile, and the
+	// check's answer — taken before that writer's reference — is "dead".
+	live := func(context.Context, Hash) (bool, error) {
+		require.NoError(t, n.store.Put(h, data))
+
+		return false, nil
+	}
+
+	removed, err := n.blocks.GC(ctx, time.Minute, live)
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	assert.True(t, n.store.Has(h), "a block touched during the check is kept")
+}

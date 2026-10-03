@@ -109,6 +109,7 @@ func New[R any](
 		return nil, errors.Wrapf(err, "create table %q", name)
 	}
 
+	register(member, t)
 	member.Handle("POST /v1/table/"+name+"/insert", handle(t.serveInsert))
 	member.Handle("POST /v1/table/"+name+"/replace", handle(t.serveReplace))
 	member.Handle("POST /v1/table/"+name+"/get", handle(t.serveGet))
@@ -412,53 +413,56 @@ func key(pk, sk string) []byte {
 func (t *Table[R]) localInsert(entries []wireEntry) error {
 	// Batch coalesces concurrent inserts into one transaction, and may run fn
 	// more than once — harmless, merging is idempotent.
-	return t.db.Batch(func(tx *bbolt.Tx) error {
-		b, q := tx.Bucket([]byte(t.name)), tx.Bucket(t.gcBucket())
+	return t.db.Batch(func(tx *bbolt.Tx) error { return t.insertTx(tx, entries) })
+}
 
-		for _, e := range entries {
-			k := key(e.PK, e.SK)
-			v := []byte(e.Row)
-			old := b.Get(k)
+// insertTx merges entries into the table within tx.
+func (t *Table[R]) insertTx(tx *bbolt.Tx, entries []wireEntry) error {
+	b, q := tx.Bucket([]byte(t.name)), tx.Bucket(t.gcBucket())
 
-			// A row is decoded only to merge it or to see whether it
-			// compacts.
-			var row R
+	for _, e := range entries {
+		k := key(e.PK, e.SK)
+		v := []byte(e.Row)
+		old := b.Get(k)
 
-			if old != nil || q != nil {
-				var err error
-				if row, err = t.decode(e.Row); err != nil {
-					return err
-				}
-			}
+		// A row is decoded only to merge it or to see whether it
+		// compacts.
+		var row R
 
-			if old != nil {
-				prev, err := t.decode(old)
-				if err != nil {
-					return err
-				}
-
-				row = t.merge(prev, row)
-
-				if v, err = json.Marshal(row); err != nil {
-					return errors.Wrap(err, "encode row")
-				}
-
-				if bytes.Equal(v, old) {
-					continue
-				}
-			}
-
-			if err := b.Put(k, v); err != nil {
-				return errors.Wrap(err, "put")
-			}
-
-			if err := t.enqueue(q, k, v, row); err != nil {
+		if old != nil || q != nil {
+			var err error
+			if row, err = t.decode(e.Row); err != nil {
 				return err
 			}
 		}
 
-		return nil
-	})
+		if old != nil {
+			prev, err := t.decode(old)
+			if err != nil {
+				return err
+			}
+
+			row = t.merge(prev, row)
+
+			if v, err = json.Marshal(row); err != nil {
+				return errors.Wrap(err, "encode row")
+			}
+
+			if bytes.Equal(v, old) {
+				continue
+			}
+		}
+
+		if err := b.Put(k, v); err != nil {
+			return errors.Wrap(err, "put")
+		}
+
+		if err := t.enqueue(q, k, v, row); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (t *Table[R]) localGet(pk, sk string) (getResp, error) {

@@ -261,11 +261,31 @@ func (e *Engine) nextTS(o meta.Object) int64 {
 }
 
 // release marks every block a version references as no longer referenced by
-// it. A failure leaks the blocks until reference repair; it never loses data.
+// it, in one write. A failure leaks the blocks; it never loses data.
 func (e *Engine) release(ctx context.Context, owner string, blocks []blockLoc) {
-	for _, b := range blocks {
-		_ = e.refs.Insert(ctx, b.Hash.String(), owner, meta.BlockRef{Deleted: true})
+	rows, err := e.releaseBlocks(owner, blocks)
+	if err != nil {
+		return
 	}
+
+	_ = table.Write(ctx, e.member, rows...)
+}
+
+// releaseBlocks are the block_refs rows releasing owner's references to
+// blocks, for a Write.
+func (e *Engine) releaseBlocks(owner string, blocks []blockLoc) ([]table.Row, error) {
+	rows := make([]table.Row, 0, len(blocks))
+
+	for _, b := range blocks {
+		r, err := e.refs.Row(b.Hash.String(), owner, meta.BlockRef{Deleted: true})
+		if err != nil {
+			return nil, err
+		}
+
+		rows = append(rows, r)
+	}
+
+	return rows, nil
 }
 
 // releaseReplaced releases the blocks of the versions the merge of next drops
@@ -291,6 +311,32 @@ func (e *Engine) finishParts(ctx context.Context, uploadID string, parts map[int
 	}
 
 	_ = e.parts.InsertMany(ctx, uploadID, rows)
+}
+
+// releaseRows are the block_refs rows that release the blocks of the
+// versions merging after drops from before, for a Write with the change.
+func (e *Engine) releaseRows(before, after meta.Object) ([]table.Row, error) {
+	var rows []table.Row
+
+	for _, v := range before.Versions {
+		if _, kept := after.Find(v.ID); kept {
+			continue
+		}
+
+		p, err := decodePayload(v)
+		if err != nil {
+			continue // A payload that does not decode references nothing we can name.
+		}
+
+		released, err := e.releaseBlocks(v.ID, p.Blocks)
+		if err != nil {
+			return nil, err
+		}
+
+		rows = append(rows, released...)
+	}
+
+	return rows, nil
 }
 
 // BlockLive reports whether any version still references h, for block GC.

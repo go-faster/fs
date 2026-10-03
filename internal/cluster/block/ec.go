@@ -281,8 +281,13 @@ func (m *Manager) gcShards(ctx context.Context, cutoff time.Time, live func(cont
 			return nil //nolint:nilerr // A reference we could not check is one we keep.
 		}
 
-		if err := m.store.DeleteShard(sh); err != nil {
+		deleted, err := m.store.deleteIfOlder(sh.String(), cutoff)
+		if err != nil {
 			return err
+		}
+
+		if !deleted {
+			return nil
 		}
 
 		removed++

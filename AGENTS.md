@@ -90,7 +90,9 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/cluster/table` — replicated metadata tables: CRDT rows (merge
   must be commutative, associative, idempotent) keyed by partition key + sort
   key, stored locally in bbolt, written and read at quorum over the layout's
-  first three slots, with read repair. Tombstone collection (`gc.go`) queues
+  first three slots, with read repair. `table.Write` (`write.go`) merges rows
+  of several tables in one transaction per node, each row at its own quorum;
+  the engine writes a PUT's or delete's rows with it. Tombstone collection (`gc.go`) queues
   rows a table's compaction would shrink and, a day later, compacts them on
   every replica only where the row is still exactly the queued one.
 - `internal/cluster/meta` — the metadata rows and their merges: buckets
