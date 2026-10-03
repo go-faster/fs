@@ -17,9 +17,6 @@ import (
 // asking the partition's other slot nodes what shards they hold, rebuilds any
 // of its own that is missing from K of the others, and hands shards of slots
 // it no longer holds to the node that does.
-//
-// ponytail: every sweep lists every shard of every shared partition, on each
-// peer; per-partition digests, as replicated blocks have, if sweeps get slow.
 
 // ShardStats describe the last shard repair sweep and the totals since start.
 type ShardStats struct {

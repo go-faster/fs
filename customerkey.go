@@ -12,9 +12,6 @@ import "context"
 // CustomerKeyFrom on every write, upload part and read of the object.
 // A backend that does not must refuse a write carrying one with
 // ErrUnsupportedOperation, never store the object in the clear.
-//
-// ponytail: context, not a field; a GetObjectRequest if reads grow more
-// per-request options.
 type CustomerKey []byte
 
 type customerKeyCtx struct{}

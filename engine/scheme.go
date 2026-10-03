@@ -16,8 +16,6 @@ import (
 // ("rf3", the default) or erasure coded ("ec:K,M"). Each block records the
 // scheme it was written with, so changing a bucket's applies to new writes
 // and leaves existing blocks as they are.
-//
-// ponytail: no re-encoding of existing blocks; a background job if asked.
 
 const settingScheme = "scheme"
 
@@ -82,10 +80,6 @@ func (e *Engine) getBlock(ctx context.Context, loc blockLoc, buf []byte) ([]byte
 // CheckLayout refuses a layout narrower than a bucket's erasure code: it
 // would leave that bucket's new blocks nowhere to go and its coded blocks
 // unreadable until widened again.
-//
-// ponytail: buckets' current schemes only; a bucket switched back to rf3
-// keeps its coded blocks, which a narrower layout strands the same way.
-// Track the widths in use if that bites.
 //
 // Not being able to tell never blocks a layout change: before the first
 // layout nothing is stored, and with the metadata unreachable a new layout

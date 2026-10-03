@@ -27,10 +27,6 @@ const (
 
 // maxSkew bounds how far a request's timestamp may be from the receiver's
 // clock. It is also the window in which a captured request can be replayed.
-//
-// ponytail: replay within the window is accepted; every operation today is
-// idempotent (a status read, a layout the receiver adopts only if newer). Add a
-// nonce cache before a non-idempotent operation is exposed.
 const maxSkew = 60 * time.Second
 
 // maxBody bounds a request or response body. Both are buffered to be signed.

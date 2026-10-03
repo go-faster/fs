@@ -178,10 +178,6 @@ Command-line flags override YAML configuration values.`,
 
 				// Bucket lifecycle rules: the sweep that makes a stored expiry
 				// rule actually delete something.
-				//
-				// ponytail: in a cluster every node sweeps; deletes are
-				// idempotent, so the cost is duplicated listing. Elect one
-				// sweeper if that shows.
 				go runLifecycle(ctx, lg, storage, cfg.Lifecycle, state)
 
 				lg.Info("Durability", zap.String("fsync", cmp.Or(cfg.Storage.Fsync, fsyncFile)))

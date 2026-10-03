@@ -337,8 +337,6 @@ func (t *Table[R]) repair(ctx context.Context, nodes []layout.NodeID, entries []
 		defer cancel()
 
 		for _, id := range nodes {
-			// ponytail: a failed repair is dropped; anti-entropy (#275) is
-			// what guarantees convergence, this only speeds it up.
 			_ = t.insertOn(ctx, id, insertReq{Entries: entries})
 		}
 	}()

@@ -25,9 +25,6 @@ import (
 // The digest covers which blocks a replica holds, not their bytes: rot is
 // caught when a block is read, which drops the bad copy and so shows here as
 // a missing block.
-//
-// ponytail: every sweep walks the whole store, here and on each peer asked; a
-// deeper hash tree if sweeps get slow.
 
 // Slot is a partition's subdivision that digests are kept for.
 type Slot struct {

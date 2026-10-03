@@ -264,8 +264,6 @@ func (e *Engine) nextTS(o meta.Object) int64 {
 // it. A failure leaks the blocks until reference repair; it never loses data.
 func (e *Engine) release(ctx context.Context, owner string, blocks []blockLoc) {
 	for _, b := range blocks {
-		// ponytail: one write per block; batch per partition if deletes of
-		// large objects show up in latency.
 		_ = e.refs.Insert(ctx, b.Hash.String(), owner, meta.BlockRef{Deleted: true})
 	}
 }
@@ -292,8 +290,6 @@ func (e *Engine) finishParts(ctx context.Context, uploadID string, parts map[int
 		rows = append(rows, table.Entry[meta.LWW[json.RawMessage]]{PK: uploadID, SK: partSK(n), Row: meta.PartDone})
 	}
 
-	// ponytail: a failure leaves the part rows to anti-entropy, never
-	// collected; metadata only, the blocks are released either way.
 	_ = e.parts.InsertMany(ctx, uploadID, rows)
 }
 
