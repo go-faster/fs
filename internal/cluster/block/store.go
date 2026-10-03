@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"io/fs"
@@ -134,9 +135,11 @@ func NewStore(dir string) (*Store, error) {
 
 // path spreads blocks over two levels of directories by hash prefix, so no
 // directory grows past a few thousand entries per million blocks.
-func (s *Store) path(h Hash) string {
-	name := h.String()
+func (s *Store) path(h Hash) string { return s.pathOf(h.String()) }
 
+// pathOf is path for a file name that starts with a block's hash: the block
+// itself, or one of its shards next to it.
+func (s *Store) pathOf(name string) string {
 	return filepath.Join(s.dir, name[:2], name[2:4], name)
 }
 
@@ -145,8 +148,10 @@ func (s *Store) path(h Hash) string {
 // but its time is refreshed: GC spares blocks touched within the grace
 // period, which is what keeps a block being re-referenced by a new upload from
 // being collected between its write and its reference.
-func (s *Store) Put(h Hash, data []byte) error {
-	p := s.path(h)
+func (s *Store) Put(h Hash, data []byte) error { return s.put(h.String(), data) }
+
+func (s *Store) put(name string, data []byte) error {
+	p := s.pathOf(name)
 
 	now := time.Now()
 	if err := os.Chtimes(p, now, now); err == nil {
@@ -216,8 +221,10 @@ func (s *Store) sync(f *os.File) error {
 }
 
 // Get returns the block's content, verified against its hash.
-func (s *Store) Get(h Hash) ([]byte, error) {
-	p := s.path(h)
+func (s *Store) Get(h Hash) ([]byte, error) { return s.get(h.String()) }
+
+func (s *Store) get(name string) ([]byte, error) {
+	p := s.pathOf(name)
 
 	data, err := os.ReadFile(p) // #nosec G304 -- named by hash under the store root
 	if errors.Is(err, fs.ErrNotExist) {
@@ -349,4 +356,81 @@ func syncDir(dir string) error {
 	}
 
 	return nil
+}
+
+// Shard names one shard of an erasure-coded block: index I of the K+M shards
+// of the block named Hash.
+type Shard struct {
+	Hash Hash
+	K, M int
+	I    int
+}
+
+func (sh Shard) String() string { return fmt.Sprintf("%s.%d-%d-%d", sh.Hash, sh.K, sh.M, sh.I) }
+
+// ParseShard parses a shard's name.
+func ParseShard(name string) (Shard, error) {
+	hash, rest, ok := strings.Cut(name, ".")
+
+	h, err := ParseHash(hash)
+	if !ok || err != nil {
+		return Shard{}, errors.Errorf("bad shard name %q", name)
+	}
+
+	sh := Shard{Hash: h}
+	if _, err := fmt.Sscanf(rest, "%d-%d-%d", &sh.K, &sh.M, &sh.I); err != nil ||
+		sh.K < 1 || sh.M < 1 || sh.I < 0 || sh.I >= sh.K+sh.M || sh.String() != name {
+		return Shard{}, errors.Errorf("bad shard name %q", name)
+	}
+
+	return sh, nil
+}
+
+// PutShard stores a shard, as Put does a block. Its integrity at rest is the
+// CRC-32C every file carries; it has no hash of its own to be checked by.
+func (s *Store) PutShard(sh Shard, data []byte) error { return s.put(sh.String(), data) }
+
+// GetShard returns a shard, verified against its CRC.
+func (s *Store) GetShard(sh Shard) ([]byte, error) { return s.get(sh.String()) }
+
+// HasShard reports whether the shard is present, without verifying it.
+func (s *Store) HasShard(sh Shard) bool {
+	_, err := os.Stat(s.pathOf(sh.String()))
+
+	return err == nil
+}
+
+// DeleteShard removes a shard; removing one that is absent is not an error.
+func (s *Store) DeleteShard(sh Shard) error {
+	if err := os.Remove(s.pathOf(sh.String())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return errors.Wrap(err, "delete shard")
+	}
+
+	return nil
+}
+
+// WalkShards calls fn for every shard with its last write or touch time.
+// Walk reports whole blocks and temporary files; this, only shards.
+func (s *Store) WalkShards(fn func(sh Shard, mod time.Time) error) error {
+	return filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.Contains(d.Name(), ".") || strings.HasSuffix(d.Name(), tmpSuffix) {
+			return err
+		}
+
+		sh, err := ParseShard(d.Name())
+		if err != nil {
+			return nil //nolint:nilerr // Not a shard; not ours to report.
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+
+			return err
+		}
+
+		return fn(sh, info.ModTime())
+	})
 }

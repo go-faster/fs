@@ -202,13 +202,13 @@ func roles(n int) []layout.Node {
 }
 
 // clusterOf starts n nodes, of which the first members hold data in the
-// initial layout.
-func clusterOf(t *testing.T, n, members int) []*node {
+// initial layout, spread for widths when given.
+func clusterOf(t *testing.T, n, members int, widths ...int) []*node {
 	t.Helper()
 
 	roles := roles(n)
 
-	l, err := layout.Compute(nil, roles[:members], layout.Options{Partitions: 8})
+	l, err := layout.Compute(nil, roles[:members], layout.Options{Partitions: 8, Widths: widths})
 	require.NoError(t, err)
 
 	nodes := make([]*node, n)
