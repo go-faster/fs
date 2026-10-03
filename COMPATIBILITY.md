@@ -32,6 +32,8 @@ single-region and ignores `LocationConstraint`.
 | **Access control** | Canned ACLs (`private` / `public-read` / `public-read-write`) on buckets and objects, enforced for anonymous requests. Object `?acl` (GetObjectACL / PutObjectACL) reads and writes that level, rendered as the grants it implies. Objects record the owner that wrote them, reported in ACL and listing `<Owner>` elements. |
 | **Versioning** | `?versioning` (Put/GetBucketVersioning: Enabled / Suspended, no way back to unversioned), version IDs on writes, `GET`/`HEAD`/`DELETE ?versionId=`, delete markers, `null` versions while suspended, `ListObjectVersions`, CopyObject from a `versionId`. Conditional deletes (`If-Match` & co.) are evaluated atomically against the targeted version. |
 | **Lifecycle** | `?lifecycle` (Put/Get/DeleteBucketLifecycleConfiguration) over the enforced subset: `Status`, prefix (`Filter.Prefix` or the legacy `Prefix`), `Expiration` by `Days` or `Date`, and `AbortIncompleteMultipartUpload.DaysAfterInitiation`. Rules are **enforced**, not just stored — a background sweep (`lifecycle.interval`, default 12h) deletes expired objects through the ordinary delete path and aborts abandoned uploads. Any element outside the subset (`Transition`, `NoncurrentVersion*`, `ExpiredObjectDeleteMarker`, tag/size filters) is refused **by name** with `NotImplemented`, and the whole configuration with it. |
+| **Bucket settings** | `?cors` (Put/Get/Delete, enforced on OPTIONS preflight and responses), `?publicAccessBlock` and `?ownershipControls` (stored and returned, **not enforced**: anonymous access is governed by canned ACLs and `auth.public_read_buckets`), `?encryption` (the bucket's default server-side encryption, applied to writes that name none). |
+| **Encryption** | SSE-S3 (`x-amz-server-side-encryption: AES256`): each object gets its own data key, wrapped by the server's master key ring; multipart parts are sealed as they arrive. Without a configured master key an encryption request is refused, never ignored. |
 | **Security** | AWS Signature V4 — header auth, presigned URLs (≤7-day expiry), and streaming (`aws-chunked`) uploads with per-chunk signature verification. Native TLS with hot-reloadable certificates. Per-bucket CORS with OPTIONS preflight. |
 
 ## Not implemented
@@ -40,11 +42,10 @@ The following bucket subresources and operations return a proper
 `NotImplemented` (`501`) error, so clients fail fast with a typed exception
 rather than silent misbehavior:
 
-`?accelerate`, `?acl` *(bucket-level)*, `?analytics`, `?cors`,
-`?encryption`, `?inventory`, `?logging`, `?metrics`,
-`?notification`, `?object-lock`, `?ownershipControls`, `?policy`,
-`?policyStatus`, `?publicAccessBlock`, `?replication`, `?requestPayment`,
-`?tagging` (bucket-level), `?website`.
+`?accelerate`, `?acl` *(bucket-level)*, `?analytics`, `?inventory`,
+`?logging`, `?metrics`, `?notification`, `?object-lock`, `?policy`,
+`?policyStatus`, `?replication`, `?requestPayment`, `?tagging`
+(bucket-level), `?website`.
 
 The object `?acl` subresource is implemented over the **canned** levels: a GET
 renders the stored level as the grants S3 reports for it (the owner's
@@ -61,7 +62,6 @@ enforced.
 
 Each requires a design document before commitment:
 
-- **SSE-S3** — a single server-managed key first.
 - **Lifecycle, the rest** — transitions and storage classes; noncurrent-version
   expiration and `ExpiredObjectDeleteMarker`, which are the versioning growth
   valve and follow versioning; tag and size filters. The `Days`/`Date` + prefix
