@@ -3,7 +3,6 @@ package fs
 
 import (
 	"io"
-	"sort"
 	"strings"
 	"time"
 )
@@ -501,84 +500,4 @@ type CompleteMultipartUploadResponse struct {
 	ChecksumAlgorithm string
 	Checksum          string
 	ChecksumType      string
-}
-
-// FoldVersionPage turns a bucket's gathered versions into one page: applies
-// the prefix and delimiter, orders keys ascending with each key's versions
-// newest-first, applies the key/version marker, and cuts at Limit.
-//
-// It lives here for the same reason FoldPage does: the rules are subtle enough
-// to get wrong in three places, and backends outside this repository implement
-// the same interface. The ordering is S3's — a version listing is a flat
-// sequence ordered by key, then by version age within the key.
-func (r *ListObjectVersionsRequest) FoldVersionPage(byKey map[string][]ObjectVersion) *ListObjectVersionsResponse {
-	keys := make([]string, 0, len(byKey))
-	for key := range byKey {
-		if r.Prefix == "" || strings.HasPrefix(key, r.Prefix) {
-			keys = append(keys, key)
-		}
-	}
-
-	sort.Strings(keys)
-
-	out := &ListObjectVersionsResponse{}
-	seenPrefix := make(map[string]struct{})
-
-	limit := r.Limit
-	if limit <= 0 {
-		limit = 1000
-	}
-
-	for _, key := range keys {
-		// Delimiter folding collapses a whole keyspace into one entry, exactly
-		// as it does for an object listing.
-		if r.Delimiter != "" {
-			rest := strings.TrimPrefix(key, r.Prefix)
-			if idx := strings.Index(rest, r.Delimiter); idx >= 0 {
-				folded := r.Prefix + rest[:idx+len(r.Delimiter)]
-				if _, ok := seenPrefix[folded]; ok {
-					continue
-				}
-
-				if folded <= r.KeyMarker {
-					continue
-				}
-
-				if len(out.Versions)+len(out.CommonPrefixes) >= limit {
-					out.IsTruncated = true
-					return out
-				}
-
-				seenPrefix[folded] = struct{}{}
-				out.CommonPrefixes = append(out.CommonPrefixes, folded)
-
-				continue
-			}
-		}
-
-		if key < r.KeyMarker {
-			continue
-		}
-
-		for _, v := range byKey[key] {
-			// Within the marker's own key, resume after the named version.
-			if key == r.KeyMarker && r.VersionIDMarker != "" && v.VersionID <= r.VersionIDMarker {
-				continue
-			}
-
-			if key == r.KeyMarker && r.VersionIDMarker == "" && r.KeyMarker != "" {
-				continue
-			}
-
-			if len(out.Versions)+len(out.CommonPrefixes) >= limit {
-				out.IsTruncated = true
-				return out
-			}
-
-			out.Versions = append(out.Versions, v)
-			out.NextKeyMarker, out.NextVersionIDMarker = v.Key, v.VersionID
-		}
-	}
-
-	return out
 }

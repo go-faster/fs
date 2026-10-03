@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/go-faster/errors"
 
@@ -142,41 +143,129 @@ func (e *Engine) response(ctx context.Context, v meta.Version) (*fs.GetObjectRes
 	return resp, nil
 }
 
-// ListObjectVersions implements fs.Versioner.
+// ListObjectVersions implements fs.Versioner. It reads the bucket's rows in
+// key order from the marker, stops at the end of the prefix, and returns as
+// soon as the page is full, so a page costs what it returns.
 func (e *Engine) ListObjectVersions(ctx context.Context, req *fs.ListObjectVersionsRequest) (*fs.ListObjectVersionsResponse, error) {
 	_, inc, err := e.bucket(ctx, req.Bucket)
 	if err != nil {
 		return nil, err
 	}
 
-	byKey := map[string][]fs.ObjectVersion{}
-	start := req.Prefix
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	// One row past the limit tells whether the listing is truncated; a
+	// small page reads only that much.
+	page := min(1000, limit+1)
+
+	out := &fs.ListObjectVersionsResponse{}
+	full := func() bool { return len(out.Versions)+len(out.CommonPrefixes) >= limit }
+	start := max(req.Prefix, req.KeyMarker)
 
 	for {
-		page, err := e.objects.Range(ctx, inc.ID, start, 1000)
+		rows, err := e.objects.RangePrefix(ctx, inc.ID, start, req.Prefix, page)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, r := range page {
+		next, jumped := "", false
+
+		for _, r := range rows {
+			if !strings.HasPrefix(r.SK, req.Prefix) {
+				return out, nil // Keys sort after the prefix: nothing more matches.
+			}
+
+			if r.SK < req.KeyMarker {
+				continue
+			}
+
 			versions, err := listVersions(r.SK, r.Row)
 			if err != nil {
 				return nil, err
 			}
 
-			if len(versions) > 0 {
-				byKey[r.SK] = versions
+			if len(versions) == 0 {
+				continue
+			}
+
+			if req.Delimiter != "" {
+				if i := strings.Index(r.SK[len(req.Prefix):], req.Delimiter); i >= 0 {
+					entry := r.SK[:len(req.Prefix)+i+len(req.Delimiter)]
+					next, jumped = prefixEnd(entry), true
+
+					// A prefix at or before the marker was returned already.
+					if entry > req.KeyMarker {
+						if full() {
+							out.IsTruncated = true
+
+							return out, nil
+						}
+
+						out.CommonPrefixes = append(out.CommonPrefixes, entry)
+						out.NextKeyMarker, out.NextVersionIDMarker = entry, ""
+					}
+
+					break
+				}
+			}
+
+			if r.SK == req.KeyMarker {
+				versions = afterMarker(versions, req.VersionIDMarker)
+			}
+
+			for _, v := range versions {
+				if full() {
+					out.IsTruncated = true
+
+					return out, nil
+				}
+
+				out.Versions = append(out.Versions, v)
+				out.NextKeyMarker, out.NextVersionIDMarker = v.Key, v.VersionID
 			}
 		}
 
-		if len(page) < 1000 {
-			break
+		switch {
+		case jumped:
+			start = next
+		case len(rows) < page:
+			return out, nil
+		default:
+			start = rows[len(rows)-1].SK + "\x00"
 		}
+	}
+}
 
-		start = page[len(page)-1].SK + "\x00"
+// afterMarker returns the versions of the marker's key that come after the
+// marker version, newest first. They are found by the marker's position: a
+// version ID's sort order says nothing about "null", which sorts after every
+// other ID wherever it sits in the history. With no version marker the key
+// was finished on an earlier page.
+func afterMarker(versions []fs.ObjectVersion, marker string) []fs.ObjectVersion {
+	if marker == "" {
+		return nil
 	}
 
-	return req.FoldVersionPage(byKey), nil
+	for i, v := range versions {
+		if v.VersionID == marker {
+			return versions[i+1:]
+		}
+	}
+
+	// The marker version is gone since: resume after where its ID places it,
+	// which holds for every ID but "null".
+	var out []fs.ObjectVersion
+
+	for _, v := range versions {
+		if v.VersionID != fs.NullVersionID && v.VersionID > marker {
+			out = append(out, v)
+		}
+	}
+
+	return out
 }
 
 // listVersions reports a key's visible versions, newest first.

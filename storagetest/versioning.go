@@ -270,3 +270,71 @@ func testVersioningConditionalDelete(t *testing.T, storage fs.Storage) {
 	_, err = cv.DeleteObjectVersionIf(context.Background(), testBucket, "never", "", fs.Conditions{IfMatch: otherETag})
 	require.NoError(t, err)
 }
+
+// pageVersions lists every version a page at a time, following the markers.
+func pageVersions(t *testing.T, v fs.Versioner, req fs.ListObjectVersionsRequest) (versions []fs.ObjectVersion, prefixes []string) {
+	t.Helper()
+
+	for range 100 {
+		resp, err := v.ListObjectVersions(t.Context(), &req)
+		require.NoError(t, err)
+
+		versions = append(versions, resp.Versions...)
+		prefixes = append(prefixes, resp.CommonPrefixes...)
+
+		if !resp.IsTruncated {
+			return versions, prefixes
+		}
+
+		req.KeyMarker, req.VersionIDMarker = resp.NextKeyMarker, resp.NextVersionIDMarker
+	}
+
+	t.Fatal("listing never ended")
+
+	return nil, nil
+}
+
+// testVersioningPages: paging a listing one entry at a time returns exactly
+// what one page does — including past a null version in the middle of a
+// key's history, and past a common prefix.
+func testVersioningPages(t *testing.T, storage fs.Storage) {
+	v := versioner(t, storage)
+	ctx := t.Context()
+
+	require.NoError(t, v.SetBucketVersioning(ctx, testBucket, fs.VersioningEnabled))
+	putVersion(t, storage, "oldest")
+	require.NoError(t, v.SetBucketVersioning(ctx, testBucket, fs.VersioningSuspended))
+	putVersion(t, storage, "null")
+	require.NoError(t, v.SetBucketVersioning(ctx, testBucket, fs.VersioningEnabled))
+	putVersion(t, storage, "newest")
+
+	for _, k := range []string{"dir/a", "dir/b", "zz"} {
+		_, err := storage.PutObject(ctx, &fs.PutObjectRequest{Bucket: testBucket, Key: k, Reader: bytes.NewReader([]byte(k)), Size: int64(len(k))})
+		require.NoError(t, err)
+	}
+
+	for _, req := range []fs.ListObjectVersionsRequest{
+		{Bucket: testBucket},
+		{Bucket: testBucket, Delimiter: "/"},
+	} {
+		whole, err := v.ListObjectVersions(ctx, &req)
+		require.NoError(t, err)
+		require.False(t, whole.IsTruncated)
+
+		req.Limit = 1
+		versions, prefixes := pageVersions(t, v, req)
+
+		assert.Equal(t, whole.Versions, versions, "delimiter %q", req.Delimiter)
+		assert.Equal(t, whole.CommonPrefixes, prefixes, "delimiter %q", req.Delimiter)
+	}
+
+	keyVersions := 0
+
+	for _, ov := range versionsOf(t, v) {
+		if ov.Key == testKey {
+			keyVersions++
+		}
+	}
+
+	require.Equal(t, 3, keyVersions, "the key's history: newest, null, oldest")
+}
