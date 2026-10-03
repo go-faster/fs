@@ -468,7 +468,12 @@ func (e *Engine) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*
 		return nil, err
 	}
 
-	const page = 1000
+	// One row past the limit tells whether the listing is truncated; a
+	// small page reads only that much.
+	page := 1000
+	if req.Limit > 0 {
+		page = min(page, req.Limit+1)
+	}
 
 	out := &fs.ListObjectsResponse{}
 	full := func() bool { return req.Limit > 0 && len(out.Objects)+len(out.CommonPrefixes) >= req.Limit }
@@ -478,7 +483,7 @@ func (e *Engine) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*
 	start := max(req.Prefix, req.StartAfter)
 
 	for {
-		rows, err := e.objects.Range(ctx, inc.ID, start, page)
+		rows, err := e.objects.RangePrefix(ctx, inc.ID, start, req.Prefix, page)
 		if err != nil {
 			return nil, err
 		}

@@ -277,3 +277,24 @@ func compactReg(r reg) (reg, Compaction) {
 
 	return r, Keep
 }
+
+func TestRangePrefix(t *testing.T) {
+	nodes := cluster(t)
+	ctx := context.Background()
+
+	for _, k := range []string{"a/1", "a/2", "a/3", "ab", "b/1"} {
+		require.NoError(t, nodes[0].table.Insert(ctx, "b", k, reg{V: k, TS: 1}))
+	}
+
+	page, err := nodes[1].table.RangePrefix(ctx, "b", "", "a/", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a/1", "a/2", "a/3"}, sks(page), "stops at the end of the prefix")
+
+	page, err = nodes[2].table.RangePrefix(ctx, "b", "a/2", "a/", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a/2", "a/3"}, sks(page), "from start, within the prefix")
+
+	page, err = nodes[2].table.RangePrefix(ctx, "b", "", "c", 10)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+}

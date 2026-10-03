@@ -236,6 +236,12 @@ func (t *Table[R]) Get(ctx context.Context, pk, sk string) (row R, found bool, e
 // Range returns up to limit rows of partition key pk with a sort key at or
 // after start, in sort-key order, merged across a quorum of replicas.
 func (t *Table[R]) Range(ctx context.Context, pk, start string, limit int) ([]Entry[R], error) {
+	return t.RangePrefix(ctx, pk, start, "", limit)
+}
+
+// RangePrefix is Range over the sort keys that start with prefix: replicas
+// stop reading at the end of the prefix rather than at limit.
+func (t *Table[R]) RangePrefix(ctx context.Context, pk, start, prefix string, limit int) ([]Entry[R], error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -256,8 +262,8 @@ func (t *Table[R]) Range(ctx context.Context, pk, start string, limit int) ([]En
 	answers, err := quorum(nodes, len(nodes)/2+1, func(id layout.NodeID) (answer, error) {
 		var resp rangeResp
 
-		err := t.on(ctx, id, "range", rangeReq{PK: pk, Start: start, Limit: limit}, &resp, func() (any, error) {
-			return t.localRange(pk, start, limit)
+		err := t.on(ctx, id, "range", rangeReq{PK: pk, Start: start, Prefix: prefix, Limit: limit}, &resp, func() (any, error) {
+			return t.localRange(pk, start, prefix, limit)
 		})
 
 		return answer{id, resp.Entries}, err
@@ -469,7 +475,7 @@ func (t *Table[R]) localGet(pk, sk string) (getResp, error) {
 	return resp, err
 }
 
-func (t *Table[R]) localRange(pk, start string, limit int) (rangeResp, error) {
+func (t *Table[R]) localRange(pk, start, skPrefix string, limit int) (rangeResp, error) {
 	var resp rangeResp
 
 	prefix := key(pk, "")
@@ -477,7 +483,11 @@ func (t *Table[R]) localRange(pk, start string, limit int) (rangeResp, error) {
 	err := t.db.View(func(tx *bbolt.Tx) error {
 		c := tx.Bucket([]byte(t.name)).Cursor()
 
-		for k, v := c.Seek(key(pk, start)); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+		for k, v := c.Seek(key(pk, max(start, skPrefix))); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			if !bytes.HasPrefix(k[len(prefix):], []byte(skPrefix)) {
+				break
+			}
+
 			if len(resp.Entries) == limit {
 				break
 			}
@@ -513,7 +523,9 @@ type (
 	rangeReq struct {
 		PK    string `json:"pk"`
 		Start string `json:"start"`
-		Limit int    `json:"limit"`
+		// Prefix bounds the sort keys returned; empty for none.
+		Prefix string `json:"prefix,omitempty"`
+		Limit  int    `json:"limit"`
 	}
 	rangeResp struct {
 		Entries []wireEntry `json:"entries"`
@@ -524,7 +536,7 @@ func (t *Table[R]) serveInsert(req insertReq) (any, error) { return nil, t.local
 func (t *Table[R]) serveGet(req getReq) (any, error)       { return t.localGet(req.PK, req.SK) }
 
 func (t *Table[R]) serveRange(req rangeReq) (any, error) {
-	return t.localRange(req.PK, req.Start, req.Limit)
+	return t.localRange(req.PK, req.Start, req.Prefix, req.Limit)
 }
 
 // handle adapts a JSON request/response function to an http.Handler.
