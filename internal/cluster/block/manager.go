@@ -285,8 +285,13 @@ func (m *Manager) GC(ctx context.Context, grace time.Duration, live func(context
 			return nil
 		}
 
-		if err := m.store.Delete(h); err != nil {
+		deleted, err := m.store.deleteIfOlder(h.String(), cutoff)
+		if err != nil {
 			return err
+		}
+
+		if !deleted {
+			return nil // Written or touched since: wanted again.
 		}
 
 		removed++

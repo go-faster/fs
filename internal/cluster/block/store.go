@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -98,6 +99,17 @@ type Store struct {
 	// NoSync skips fsync: an acknowledged block can be lost in a crash. For
 	// tests and development only.
 	NoSync bool
+
+	// stripes order a block's refresh by a writer against its removal by
+	// GC: whichever comes second sees the first. Striped by the name's first
+	// byte, so unrelated blocks rarely wait on each other.
+	stripes [256]sync.Mutex
+}
+
+func (s *Store) stripe(name string) *sync.Mutex {
+	b, _ := hex.DecodeString(name[:2])
+
+	return &s.stripes[b[0]]
 }
 
 // NewStore returns the store rooted at dir, creating it.
@@ -152,9 +164,14 @@ func (s *Store) Put(h Hash, data []byte) error { return s.put(h.String(), data) 
 
 func (s *Store) put(name string, data []byte) error {
 	p := s.pathOf(name)
+	mu := s.stripe(name)
 
+	mu.Lock()
 	now := time.Now()
-	if err := os.Chtimes(p, now, now); err == nil {
+	err := os.Chtimes(p, now, now)
+	mu.Unlock()
+
+	if err == nil {
 		return nil
 	}
 
@@ -194,7 +211,11 @@ func (s *Store) put(name string, data []byte) error {
 		return errors.Wrap(err, "close block")
 	}
 
-	if err := os.Rename(f.Name(), p); err != nil {
+	mu.Lock()
+	err = os.Rename(f.Name(), p)
+	mu.Unlock()
+
+	if err != nil {
 		// Another writer placed the same block meanwhile — the same bytes,
 		// since the name is their hash. Windows refuses a rename onto a file
 		// another rename is placing, where POSIX replaces it.
@@ -289,6 +310,37 @@ func (s *Store) GetInto(h Hash, buf []byte) ([]byte, error) {
 	// The trailer stays in the buffer's capacity, so the whole buffer comes
 	// back when the caller reuses it.
 	return data[:n], nil
+}
+
+// deleteIfOlder removes the named file if it was last written or touched
+// before cutoff, and reports whether it did. GC decides a block is dead
+// from a reference check that a concurrent writer can overtake; the writer
+// touches the block first, so a fresh time here means it is wanted.
+func (s *Store) deleteIfOlder(name string, cutoff time.Time) (bool, error) {
+	mu := s.stripe(name)
+	mu.Lock()
+	defer mu.Unlock()
+
+	p := s.pathOf(name)
+
+	info, err := os.Stat(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, errors.Wrap(err, "stat block")
+	}
+
+	if info.ModTime().After(cutoff) {
+		return false, nil
+	}
+
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, errors.Wrap(err, "delete block")
+	}
+
+	return true, nil
 }
 
 // Has reports whether the block is present, without verifying it.
