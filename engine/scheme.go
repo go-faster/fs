@@ -86,10 +86,18 @@ func (e *Engine) getBlock(ctx context.Context, loc blockLoc, buf []byte) ([]byte
 // ponytail: buckets' current schemes only; a bucket switched back to rf3
 // keeps its coded blocks, which a narrower layout strands the same way.
 // Track the widths in use if that bites.
+//
+// Not being able to tell never blocks a layout change: before the first
+// layout nothing is stored, and with the metadata unreachable a new layout
+// may be how the cluster gets it back.
 func (e *Engine) CheckLayout(ctx context.Context, l *layout.Layout) error {
+	if e.member.Layout() == nil {
+		return nil
+	}
+
 	buckets, err := e.ListBuckets(ctx)
 	if err != nil {
-		return err
+		return nil //nolint:nilerr // Unknown is not a reason to refuse; see above.
 	}
 
 	wide := 0

@@ -120,3 +120,22 @@ func TestCheckLayout(t *testing.T) {
 	require.ErrorIs(t, e.CheckLayout(ctx, &narrow), fs.ErrUnsupportedOperation)
 	require.ErrorContains(t, e.CheckLayout(ctx, &narrow), `bucket "b" is ec:2,1 and needs 3`)
 }
+
+// TestCheckLayoutNeverBlocksBlind: with no layout yet, or the metadata out of
+// reach, a layout change goes through — it may be what brings it back.
+func TestCheckLayoutNeverBlocksBlind(t *testing.T) {
+	ctx := context.Background()
+	nodes := cluster(t, 3, small)
+	e := nodes[0].engine
+
+	require.NoError(t, e.CreateBucket(ctx, "b"))
+	require.NoError(t, e.SetBucketScheme(ctx, "b", "ec:2,1"))
+
+	narrow := *e.member.Layout()
+	narrow.Widths = []int{2}
+
+	nodes[1].srv.Close()
+	nodes[2].srv.Close()
+
+	require.NoError(t, e.CheckLayout(ctx, &narrow), "buckets unreadable: not a reason to refuse")
+}
