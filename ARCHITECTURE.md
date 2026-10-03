@@ -90,7 +90,9 @@ The shared vocabulary every layer speaks:
   `ErrInvalidBucketName`, `ErrInvalidKey`, `ErrUnsupportedOperation`,
   `ErrPreconditionFailed`,
   `ErrInvalidPart`, `ErrInvalidPartOrder`, `ErrInvalidPartNumber`,
-  `ErrEntityTooSmall`, `ErrInvalidTag`).
+  `ErrEntityTooSmall`, `ErrInvalidTag`, `ErrCustomerKeyMismatch` — an SSE-C
+  key missing for an object encrypted with one, or sent for one that is not,
+  mapped to 400 InvalidRequest; a wrong key is `ErrAccessDenied`, 403).
   These are the contract for cross-layer error signalling: backends return
   them, and `internal/s3err` maps them to S3 error codes and HTTP status.
 
@@ -289,6 +291,16 @@ In cluster mode writes and reads use a quorum of 2 of 3 replicas; anti-entropy
 repairs replicas that missed a write, and a block GC removes blocks nothing
 references. There is no background scrubber: verification happens on every
 read, and repair is anti-entropy's job.
+
+**SSE-C.** A customer key never reaches storage: the handler checks its
+headers (algorithm, base64 key, key MD5; over TLS or a proxy saying
+`X-Forwarded-Proto: https`, unless `encryption.customer_keys_over_http`) and
+puts it on the request context (`fs.WithCustomerKey`), which a copy swaps for
+the copy source's key to read the source. The engine treats it exactly like a
+master key — it seals a fresh per-object data key — and stores only that
+sealed key and the customer key's one-way ID, so a wrong key is told apart
+(403) without decrypting. An SSE-C object's ETag is the plaintext MD5 keyed by
+its data key, so listing reveals nothing about the content.
 
 **Encryption keys.** An encrypted version's data key, sealed by the master
 key ring, is not in the version's write-once payload but in its own register

@@ -14,6 +14,7 @@ package storagetest
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility.
 	"errors"
 	"fmt"
@@ -100,6 +101,8 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"PutObject/EncryptionNeverIgnored":      testEncryptionNeverIgnored,
 	"PutObject/EncryptionUnknownAlgorithm":  testEncryptionUnknownAlgorithmRefused,
 	"Multipart/EncryptionNeverIgnored":      testMultipartEncryptionNeverIgnored,
+	"PutObject/CustomerKey":                 testCustomerKey,
+	"Multipart/CustomerKey":                 testMultipartCustomerKey,
 	"GetObject":                             testGetObject,
 	"GetObject/BucketNotFound":              testGetObjectBucketNotFound,
 	"GetObject/ObjectNotFound":              testGetObjectObjectNotFound,
@@ -2066,4 +2069,109 @@ func testMultipartEncryptionNeverIgnored(t *testing.T, storage fs.Storage) {
 	require.NoError(t, err)
 	require.Equal(t, body, data)
 	require.Equal(t, int64(len(body)), got.Size)
+}
+
+// customerKey returns a deterministic 256-bit SSE-C key.
+// customerObject is the object the SSE-C contract writes.
+const customerObject = "obj"
+
+func customerKey(b byte) fs.CustomerKey { return bytes.Repeat([]byte{b}, 32) }
+
+// testCustomerKey is SSE-C's contract: a write with a customer key is
+// encrypted with it or refused, and the key is then required to read — the
+// right one, and only for an object written with one.
+func testCustomerKey(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	body := []byte("readable only with the customer's key")
+	plain := []byte("not encrypted")
+
+	_, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+		Reader: bytes.NewReader(plain), Bucket: testBucket, Key: "plain", Size: int64(len(plain)),
+	})
+	require.NoError(t, err)
+
+	_, err = storage.GetObject(fs.WithCustomerKey(ctx, customerKey(1)), testBucket, "plain")
+	require.ErrorIs(t, err, fs.ErrCustomerKeyMismatch, "a key for an object written without one")
+
+	_, err = storage.PutObject(fs.WithCustomerKey(ctx, customerKey(1)), &fs.PutObjectRequest{
+		Reader: bytes.NewReader(body), Bucket: testBucket, Key: customerObject, Size: int64(len(body)),
+	})
+	if err != nil {
+		require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
+
+		_, err = storage.GetObject(ctx, testBucket, customerObject)
+		require.ErrorIs(t, err, fs.ErrObjectNotFound, "a refused SSE-C write must not leave an object behind")
+
+		return
+	}
+
+	_, err = storage.GetObject(ctx, testBucket, customerObject)
+	require.ErrorIs(t, err, fs.ErrCustomerKeyMismatch, "no key")
+
+	_, err = storage.GetObject(fs.WithCustomerKey(ctx, customerKey(2)), testBucket, customerObject)
+	require.ErrorIs(t, err, fs.ErrAccessDenied, "the wrong key")
+
+	resp, err := storage.GetObject(fs.WithCustomerKey(ctx, customerKey(1)), testBucket, customerObject)
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Reader.Close() }()
+
+	require.Empty(t, resp.ServerSideEncryption, "SSE-C is not reported as SSE-S3")
+	require.NotEqual(t, fmt.Sprintf("%x", md5.Sum(body)), resp.ETag, "the ETag is not the plaintext's MD5") //nolint:gosec // S3 ETag.
+
+	got, err := io.ReadAll(resp.Reader)
+	require.NoError(t, err)
+	require.Equal(t, body, got)
+}
+
+// testMultipartCustomerKey: every part of an SSE-C upload carries the
+// upload's key, and the completed object reads with it.
+func testMultipartCustomerKey(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+	keyed := fs.WithCustomerKey(ctx, customerKey(1))
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	up, err := storage.CreateMultipartUpload(keyed, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: encryptedMultipartKey})
+	if err != nil {
+		require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
+
+		return
+	}
+
+	body := bytes.Repeat([]byte("customer multipart;"), 500)
+	part := func(ctx context.Context) (*fs.Part, error) {
+		return storage.UploadPart(ctx, &fs.UploadPartRequest{
+			Bucket: testBucket, Key: encryptedMultipartKey, UploadID: up.UploadID,
+			PartNumber: 1, Reader: bytes.NewReader(body), Size: int64(len(body)),
+		})
+	}
+
+	_, err = part(ctx)
+	require.ErrorIs(t, err, fs.ErrCustomerKeyMismatch, "a part without the key")
+
+	_, err = part(fs.WithCustomerKey(ctx, customerKey(2)))
+	require.ErrorIs(t, err, fs.ErrAccessDenied, "a part with another key")
+
+	p, err := part(keyed)
+	require.NoError(t, err)
+
+	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket: testBucket, Key: encryptedMultipartKey, UploadID: up.UploadID,
+		Parts: []fs.CompletedPart{{PartNumber: 1, ETag: p.ETag}},
+	})
+	require.NoError(t, err)
+
+	_, err = storage.GetObject(ctx, testBucket, encryptedMultipartKey)
+	require.ErrorIs(t, err, fs.ErrCustomerKeyMismatch)
+
+	resp, err := storage.GetObject(keyed, testBucket, encryptedMultipartKey)
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Reader.Close() }()
+
+	got, err := io.ReadAll(resp.Reader)
+	require.NoError(t, err)
+	require.Equal(t, body, got)
 }

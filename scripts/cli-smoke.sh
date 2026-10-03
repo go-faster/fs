@@ -2,7 +2,8 @@
 #
 # CLI smoke matrix: drives a live fs server with the real S3 command-line
 # clients (aws-cli, mc, s3cmd, rclone), covering a bucket create / object
-# round-trip / listing / delete cycle with edge-case object key names.
+# round-trip / listing / delete cycle with edge-case object key names, and an
+# SSE-C (customer key) round trip over TLS for the clients that support it.
 #
 # A missing client is skipped (warned, not failed) so the script is usable on a
 # workstation; CI installs all four, so every client is exercised there. Any
@@ -36,12 +37,17 @@ ok()   { printf '\033[1;32m  ok\033[0m   %s\n' "$*"; }
 warn() { printf '\033[1;33m  skip\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m  FAIL\033[0m %s\n' "$*"; FAILED=1; }
 
+TLS_PORT="${FS_SMOKE_TLS_PORT:-18443}"
+TLS_ENDPOINT="https://127.0.0.1:${TLS_PORT}"
+TLS_PID=""
+
 cleanup() {
   if [[ "${KEEP}" == "1" ]]; then
     log "leaving server pid=${SERVER_PID} data=${DATA} running (--keep)"
     return
   fi
   [[ -n "${SERVER_PID}" ]] && kill "${SERVER_PID}" 2>/dev/null || true
+  [[ -n "${TLS_PID}" ]] && kill "${TLS_PID}" 2>/dev/null || true
   rm -rf "${WORK}"
 }
 trap cleanup EXIT
@@ -264,6 +270,109 @@ smoke_rclone() {
   ok "rclone round-trip over ${#KEYS[@]} edge-case keys"
 }
 
+# ---- SSE-C over TLS ---------------------------------------------------------
+
+# S3 takes customer keys only over TLS, and minio-go based clients refuse to
+# send one otherwise, so SSE-C runs against a second server with a
+# self-signed certificate; every client is told not to verify it.
+start_tls_server() {
+  log "starting TLS server on ${TLS_ENDPOINT}"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
+    -addext "subjectAltName=IP:127.0.0.1" \
+    -keyout "${WORK}/tls.key" -out "${WORK}/tls.crt" >/dev/null 2>&1
+  printf 'server:\n  tls:\n    cert_file: %s\n    key_file: %s\n' "${WORK}/tls.crt" "${WORK}/tls.key" > "${WORK}/tls.yaml"
+  "${WORK}/fs" s3 --config "${WORK}/tls.yaml" --addr ":${TLS_PORT}" --root "${WORK}/tls-data" --insecure-no-auth \
+    > "${WORK}/tls-server.log" 2>&1 &
+  TLS_PID=$!
+
+  for _ in $(seq 1 30); do
+    if curl -kfsS -o /dev/null "${TLS_ENDPOINT}/health" 2>/dev/null; then
+      ok "TLS server healthy (pid=${TLS_PID})"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  cat "${WORK}/tls-server.log"
+  echo "TLS server did not become healthy" >&2
+  exit 1
+}
+
+# The customer key: 32 raw bytes, and base64 for the clients that want it.
+SSEC_KEY_FILE="${WORK}/ssec.key"
+SSEC_PAYLOAD="${WORK}/ssec.bin"
+
+ssec_fixtures() {
+  head -c 32 /dev/urandom > "${SSEC_KEY_FILE}"
+  head -c 3000000 /dev/urandom > "${SSEC_PAYLOAD}"
+}
+
+ssec_key_b64() { base64 < "${SSEC_KEY_FILE}" | tr -d '\n'; }
+
+smoke_ssec_awscli() {
+  command -v aws >/dev/null || return 0
+  local aws=(aws --endpoint-url "${TLS_ENDPOINT}" --no-verify-ssl)
+  local bucket="ssec-awscli" sse=(--sse-c AES256 --sse-c-key "fileb://${SSEC_KEY_FILE}")
+
+  "${aws[@]}" s3api create-bucket --bucket "${bucket}" >/dev/null 2>&1
+  "${aws[@]}" s3 cp "${SSEC_PAYLOAD}" "s3://${bucket}/obj" "${sse[@]}" >/dev/null 2>&1
+  "${aws[@]}" s3 cp "s3://${bucket}/obj" "${OUT}/ssec-aws" "${sse[@]}" >/dev/null 2>&1
+  cmp -s "${SSEC_PAYLOAD}" "${OUT}/ssec-aws" || { fail "aws-cli: SSE-C round trip mismatch"; return; }
+
+  if "${aws[@]}" s3 cp "s3://${bucket}/obj" "${OUT}/ssec-aws-nokey" >/dev/null 2>&1; then
+    fail "aws-cli: SSE-C object read without its key"
+    return
+  fi
+
+  ok "aws-cli SSE-C round trip; refused without the key"
+}
+
+smoke_ssec_mc() {
+  local bin
+  bin="$(mc_bin)" || return 0
+  local mc=("${bin}" --config-dir "${WORK}/mc-tls" --quiet --insecure)
+  local bucket="ssec-mc" enc
+  enc="tls/${bucket}/=$(ssec_key_b64)"
+
+  "${mc[@]}" alias set tls "${TLS_ENDPOINT}" "${ACCESS_KEY}" "${SECRET_KEY}" --api S3v4 >/dev/null
+  "${mc[@]}" mb "tls/${bucket}" >/dev/null
+  "${mc[@]}" cp --enc-c "${enc}" "${SSEC_PAYLOAD}" "tls/${bucket}/obj" >/dev/null
+  "${mc[@]}" cp --enc-c "${enc}" "tls/${bucket}/obj" "${OUT}/ssec-mc" >/dev/null
+  cmp -s "${SSEC_PAYLOAD}" "${OUT}/ssec-mc" || { fail "mc: SSE-C round trip mismatch"; return; }
+
+  if "${mc[@]}" cp "tls/${bucket}/obj" "${OUT}/ssec-mc-nokey" >/dev/null 2>&1; then
+    fail "mc: SSE-C object read without its key"
+    return
+  fi
+
+  ok "mc SSE-C round trip; refused without the key"
+}
+
+smoke_ssec_rclone() {
+  command -v rclone >/dev/null || return 0
+  export RCLONE_CONFIG_SSEC_TYPE=s3
+  export RCLONE_CONFIG_SSEC_PROVIDER=Other
+  export RCLONE_CONFIG_SSEC_ENV_AUTH=false
+  export RCLONE_CONFIG_SSEC_ACCESS_KEY_ID="${ACCESS_KEY}"
+  export RCLONE_CONFIG_SSEC_SECRET_ACCESS_KEY="${SECRET_KEY}"
+  export RCLONE_CONFIG_SSEC_ENDPOINT="${TLS_ENDPOINT}"
+  export RCLONE_CONFIG_SSEC_FORCE_PATH_STYLE=true
+  export RCLONE_CONFIG_SSEC_REGION=us-east-1
+  export RCLONE_CONFIG_SSEC_SSE_CUSTOMER_ALGORITHM=AES256
+  RCLONE_CONFIG_SSEC_SSE_CUSTOMER_KEY_BASE64="$(ssec_key_b64)"
+  export RCLONE_CONFIG_SSEC_SSE_CUSTOMER_KEY_BASE64
+  : > "${WORK}/rclone.conf"
+  local rclone=(rclone --config "${WORK}/rclone.conf" --log-level ERROR --low-level-retries 1 --no-check-certificate)
+  local bucket="ssec-rclone"
+
+  "${rclone[@]}" mkdir "ssec:${bucket}" >/dev/null
+  "${rclone[@]}" copyto "${SSEC_PAYLOAD}" "ssec:${bucket}/obj" >/dev/null
+  "${rclone[@]}" copyto "ssec:${bucket}/obj" "${OUT}/ssec-rclone" >/dev/null
+  cmp -s "${SSEC_PAYLOAD}" "${OUT}/ssec-rclone" || { fail "rclone: SSE-C round trip mismatch"; return; }
+
+  ok "rclone SSE-C round trip"
+}
+
 # ---- main -------------------------------------------------------------------
 
 make_fixtures
@@ -273,6 +382,13 @@ smoke_awscli
 smoke_mc
 smoke_s3cmd
 smoke_rclone
+
+# s3cmd has no SSE-C support, so it sits this one out.
+start_tls_server
+ssec_fixtures
+smoke_ssec_awscli
+smoke_ssec_mc
+smoke_ssec_rclone
 
 log "clients exercised: ${RAN[*]:-none}"
 [[ ${#SKIPPED[@]} -gt 0 ]] && log "clients skipped:   ${SKIPPED[*]}"

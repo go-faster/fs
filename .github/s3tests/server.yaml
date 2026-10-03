@@ -59,3 +59,5 @@ auth:
 # zeroes to make that unmistakable. Never use a key from a git history.
 encryption:
   master_key_file: "master.key"
+  # The suite talks plain HTTP; S3 refuses SSE-C keys there. Test only.
+  customer_keys_over_http: true

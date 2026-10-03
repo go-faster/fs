@@ -62,6 +62,14 @@ func WithOwnerIsolation(enabled bool) HandlerOption {
 	}
 }
 
+// WithCustomerKeysOverHTTP accepts SSE-C keys on plain HTTP; see
+// handler.WithCustomerKeysOverHTTP. For development and tests only.
+func WithCustomerKeysOverHTTP(allow bool) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithCustomerKeysOverHTTP(allow))
+	}
+}
+
 // WithDefaultEncryption encrypts every object whose request does not name an
 // algorithm; see handler.WithDefaultEncryption. Off by default.
 func WithDefaultEncryption(algorithm string) HandlerOption {
@@ -117,6 +125,10 @@ type Config struct {
 	// request. The Storage must be able to encrypt, or such writes are
 	// refused rather than stored in the clear.
 	DefaultEncryption string
+
+	// CustomerKeysOverHTTP accepts SSE-C keys on requests that did not
+	// arrive over TLS, which S3 refuses. For development and tests only.
+	CustomerKeysOverHTTP bool
 
 	// HealthPath is the path serving a plaintext "OK" liveness check. Defaults to
 	// DefaultHealthPath ("/health"). Set to "-" to disable the health endpoint.
@@ -300,6 +312,10 @@ func (s *Server) buildHandler() http.Handler {
 
 	if s.cfg.DefaultEncryption != "" {
 		opts = append(opts, WithDefaultEncryption(s.cfg.DefaultEncryption))
+	}
+
+	if s.cfg.CustomerKeysOverHTTP {
+		opts = append(opts, WithCustomerKeysOverHTTP(true))
 	}
 
 	mux := http.NewServeMux()

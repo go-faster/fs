@@ -63,7 +63,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srcObj, err := h.getObjectVersion(ctx, srcBucket, srcKey, src.VersionID)
+	srcObj, err := h.getObjectVersion(copySourceContext(r), srcBucket, srcKey, src.VersionID)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return

@@ -55,7 +55,7 @@ func partSK(n int) string { return fmt.Sprintf("%05d", n) }
 func partOwner(uploadID, partID string) string { return uploadID + "/" + partID }
 
 func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultipartUploadRequest) (*fs.MultipartUpload, error) {
-	enc, err := e.beginEncryption(req.ServerSideEncryption)
+	enc, err := e.beginEncryption(ctx, req.ServerSideEncryption)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		return nil, err
 	}
 
-	c, err := e.cipher(up.Enc, req.PartNumber)
+	c, err := e.cipher(ctx, up.Enc, req.PartNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +158,8 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 
 		return nil, err
 	}
+
+	w.etag = customerETag(w.etag, up.Enc)
 
 	rec := partRecord{
 		ETag: w.etag, Size: w.size, LastModified: e.now().UTC(), Inline: w.inline, Blocks: w.blocks,

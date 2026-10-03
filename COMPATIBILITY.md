@@ -33,7 +33,7 @@ single-region and ignores `LocationConstraint`.
 | **Versioning** | `?versioning` (Put/GetBucketVersioning: Enabled / Suspended, no way back to unversioned), version IDs on writes, `GET`/`HEAD`/`DELETE ?versionId=`, delete markers, `null` versions while suspended, `ListObjectVersions`, CopyObject from a `versionId`. Conditional deletes (`If-Match` & co.) are evaluated atomically against the targeted version. |
 | **Lifecycle** | `?lifecycle` (Put/Get/DeleteBucketLifecycleConfiguration) over the enforced subset: `Status`, prefix (`Filter.Prefix` or the legacy `Prefix`), `Expiration` by `Days` or `Date`, and `AbortIncompleteMultipartUpload.DaysAfterInitiation`. Rules are **enforced**, not just stored — a background sweep (`lifecycle.interval`, default 12h) deletes expired objects through the ordinary delete path and aborts abandoned uploads. Any element outside the subset (`Transition`, `NoncurrentVersion*`, `ExpiredObjectDeleteMarker`, tag/size filters) is refused **by name** with `NotImplemented`, and the whole configuration with it. |
 | **Bucket settings** | `?cors` (Put/Get/Delete, enforced on OPTIONS preflight and responses), `?publicAccessBlock` and `?ownershipControls` (stored and returned, **not enforced**: anonymous access is governed by canned ACLs and `auth.public_read_buckets`), `?encryption` (the bucket's default server-side encryption, applied to writes that name none). |
-| **Encryption** | SSE-S3 (`x-amz-server-side-encryption: AES256`): each object gets its own data key, wrapped by the server's master key ring; multipart parts are sealed as they arrive. Without a configured master key an encryption request is refused, never ignored. |
+| **Encryption** | SSE-S3 (`x-amz-server-side-encryption: AES256`): each object gets its own data key, wrapped by the server's master key ring; multipart parts are sealed as they arrive. Without a configured master key an encryption request is refused, never ignored. SSE-C (`x-amz-server-side-encryption-customer-*` on PUT, GET, HEAD, multipart, and `x-amz-copy-source-…` for a copy's source): the key is never stored, only checked against the object; required over TLS. CopyObject honors the destination's encryption headers and bucket default. |
 | **Security** | AWS Signature V4 — header auth, presigned URLs (≤7-day expiry), and streaming (`aws-chunked`) uploads with per-chunk signature verification. Native TLS with hot-reloadable certificates. Per-bucket CORS with OPTIONS preflight. |
 
 ## Not implemented
@@ -56,9 +56,6 @@ ignored — the full `AccessControlPolicy` grammar with arbitrary grantees is no
 enforced.
 
 ## Planned
-
-- **SSE-C** — customer-provided encryption keys, never stored by the server
-  ([#285](https://github.com/go-faster/fs/issues/285)).
 
 Each requires a design document before commitment:
 

@@ -223,12 +223,12 @@ func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *wri
 }
 
 func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.PutObjectResponse, error) {
-	enc, err := e.beginEncryption(req.ServerSideEncryption)
+	enc, err := e.beginEncryption(ctx, req.ServerSideEncryption)
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := e.cipher(enc, 0)
+	c, err := e.cipher(ctx, enc, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +275,8 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 
 		return nil, fs.ErrBadDigest
 	}
+
+	w.etag = customerETag(w.etag, enc)
 
 	// Checked before the version exists, so a body that is not what the
 	// client says it is never becomes one.

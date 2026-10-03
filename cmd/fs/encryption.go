@@ -38,6 +38,12 @@ type EncryptionConfig struct {
 	// encryption configuration. Empty leaves encryption per request and per
 	// bucket.
 	DefaultAlgorithm string `yaml:"default_algorithm,omitempty"`
+
+	// CustomerKeysOverHTTP accepts SSE-C (customer-provided) keys on requests
+	// that did not arrive over TLS. S3 refuses them, because the key crosses
+	// the network in the clear; leave it off outside development and tests.
+	// TLS terminated at a proxy counts when it sets X-Forwarded-Proto: https.
+	CustomerKeysOverHTTP bool `yaml:"customer_keys_over_http,omitempty"`
 }
 
 // resolvePaths makes relative key paths relative to the config file rather

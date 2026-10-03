@@ -11,13 +11,17 @@ import (
 // reader returns the version's content as an io.ReadSeekCloser, so the
 // handler serves ranges by seeking rather than reading what it skips.
 func (e *Engine) reader(ctx context.Context, p payload) (io.ReadSeekCloser, error) {
+	if err := customerKeyFits(ctx, p.Enc); err != nil {
+		return nil, err
+	}
+
 	if p.Blocks == nil {
 		inline := bytes.NewReader(p.Inline)
 		if p.Enc == nil {
 			return nopCloser{inline}, nil
 		}
 
-		return e.decrypting(inline, nopCloser{inline}, p)
+		return e.decrypting(ctx, inline, nopCloser{inline}, p)
 	}
 
 	stored := &blockReader{ctx: ctx, e: e, blocks: p.Blocks, size: storedSize(p.Blocks)}
@@ -25,7 +29,7 @@ func (e *Engine) reader(ctx context.Context, p payload) (io.ReadSeekCloser, erro
 		return stored, nil
 	}
 
-	return e.decrypting(stored, stored, p)
+	return e.decrypting(ctx, stored, stored, p)
 }
 
 func storedSize(blocks []blockLoc) int64 {

@@ -369,8 +369,6 @@ operations.
 Planned and in progress (see [findings/ROADMAP.md](findings/ROADMAP.md) for the
 authoritative, detailed list):
 
-- **SSE-C** — customer-provided encryption keys
-  ([#285](https://github.com/go-faster/fs/issues/285)).
 - **Lifecycle noncurrent-version cleanup** and the rest of lifecycle.
 - **Cluster mode** — a Garage-style cluster with zone/rack-aware replication
   ([#279](https://github.com/go-faster/fs/issues/279)).
