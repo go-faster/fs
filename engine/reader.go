@@ -153,7 +153,7 @@ func (r *blockReader) start(i int) chan fetched {
 	go func() {
 		buf := r.e.buffer()
 
-		data, err := r.e.blocks.GetInto(r.ctx, r.blocks[i].Hash, *buf)
+		data, err := r.e.getBlock(r.ctx, r.blocks[i], *buf)
 		ch <- fetched{data, err}
 	}()
 

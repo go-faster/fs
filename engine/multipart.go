@@ -148,7 +148,12 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 
 	owner := partOwner(req.UploadID, newID())
 
-	w, err := e.write(ctx, req.Reader, owner, c, cks)
+	b, _, err := e.bucket(ctx, req.Bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	w, err := e.write(ctx, req.Reader, owner, c, cks, bucketScheme(b))
 	if err != nil {
 		return nil, err
 	}

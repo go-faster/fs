@@ -46,6 +46,13 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		"fs.engine.sync.unreachable":      "Replicas that could not be compared in the last sweep, by table.",
 		"fs.engine.sync.age":              "Seconds since the last anti-entropy sweep finished, by table.",
 		"fs.engine.gc.age":                "Seconds since block collection last finished.",
+		"fs.engine.shards.lost":           "Erasure-coded blocks with fewer than K shards: unreadable. Counted by each partition's first node at the last repair sweep.",
+		"fs.engine.shards.critical":       "Erasure-coded blocks down to K shards: one more loss from unreadable.",
+		"fs.engine.shards.degraded":       "Erasure-coded blocks short of a shard, above K.",
+		"fs.engine.shards.unreachable":    "Partitions the last shard repair sweep could not see whole.",
+		"fs.engine.shards.rebuilt":        "Shards rebuilt here from the others since start.",
+		"fs.engine.shards.handed_over":    "Shards moved to the node the layout gives them since start.",
+		"fs.engine.shards.age":            "Seconds since the last shard repair sweep finished.",
 		"fs.engine.tombstones.queued":     "Deleted rows waiting to be collected at the last pass, by table.",
 		"fs.engine.tombstones.collected":  "Deleted rows removed from every replica since start, by table.",
 		"fs.engine.tombstones.deferred":   "Deleted rows left for a later pass, a replica unreachable, since start, by table.",
@@ -80,6 +87,13 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		o.ObserveInt64(obs["fs.engine.blocks.collected"], s.Blocks.Collected)
 		o.ObserveInt64(obs["fs.engine.blocks.degraded"], s.Blocks.Degraded)
 		o.ObserveInt64(obs["fs.engine.gc.age"], age(s.LastGC))
+		o.ObserveInt64(obs["fs.engine.shards.lost"], int64(s.Shards.Lost))
+		o.ObserveInt64(obs["fs.engine.shards.critical"], int64(s.Shards.Critical))
+		o.ObserveInt64(obs["fs.engine.shards.degraded"], int64(s.Shards.Degraded))
+		o.ObserveInt64(obs["fs.engine.shards.unreachable"], int64(s.Shards.Unreachable))
+		o.ObserveInt64(obs["fs.engine.shards.rebuilt"], s.Shards.Rebuilt)
+		o.ObserveInt64(obs["fs.engine.shards.handed_over"], s.Shards.HandedOver)
+		o.ObserveInt64(obs["fs.engine.shards.age"], age(s.Shards.LastSweep))
 
 		sweeps := map[string]struct {
 			last             time.Time

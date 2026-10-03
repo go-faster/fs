@@ -40,6 +40,10 @@ const DefaultBlockSize = 1 << 20
 // row, which a few hundred bytes do not justify.
 const DefaultInlineLimit = 3 << 10
 
+// DefaultCodedMinSize is the smallest block an erasure-coded bucket codes:
+// below it, K+M shard files cost more I/O than three whole copies save.
+const DefaultCodedMinSize = 256 << 10
+
 // Config configures an Engine.
 type Config struct {
 	Member *peer.Member
@@ -51,6 +55,8 @@ type Config struct {
 	// DefaultInlineLimit.
 	BlockSize   int
 	InlineLimit int
+	// CodedMinSize defaults to DefaultCodedMinSize.
+	CodedMinSize int
 	// Keyring seals the data keys of encrypted objects. Without one, a
 	// request to encrypt is refused rather than stored in the clear.
 	Keyring *sse.Keyring
@@ -64,9 +70,11 @@ type Engine struct {
 	refs    *table.Table[meta.BlockRef]
 	parts   *table.Table[meta.LWW[json.RawMessage]]
 	blocks  *block.Manager
+	member  *peer.Member
 
 	blockSize   int
 	inlineLimit int
+	codedMin    int
 	keyring     *sse.Keyring
 
 	locks [256]sync.Mutex
@@ -94,6 +102,8 @@ func New(cfg Config) (*Engine, error) {
 		blocks:      cfg.Blocks,
 		blockSize:   cmp.Or(cfg.BlockSize, DefaultBlockSize),
 		inlineLimit: cmp.Or(cfg.InlineLimit, DefaultInlineLimit),
+		codedMin:    cmp.Or(cfg.CodedMinSize, DefaultCodedMinSize),
+		member:      cfg.Member,
 		keyring:     cfg.Keyring,
 		db:          cfg.DB,
 		now:         time.Now,
@@ -167,6 +177,9 @@ type payload struct {
 type blockLoc struct {
 	Hash block.Hash `json:"h"`
 	Size int64      `json:"n"`
+	// Scheme is how the block is stored, as block.ParseScheme reads it:
+	// empty for replicated.
+	Scheme string `json:"sc,omitempty"`
 }
 
 // attrs are a version's mutable attributes.

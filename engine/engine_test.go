@@ -31,12 +31,19 @@ type node struct {
 func cluster(t testing.TB, n int, cfg Config) []*node {
 	t.Helper()
 
+	return clusterWide(t, n, cfg, min(n, 3))
+}
+
+// clusterWide is cluster with the layout spread for widths.
+func clusterWide(t testing.TB, n int, cfg Config, widths ...int) []*node {
+	t.Helper()
+
 	var roles []layout.Node
 	for i := range n {
 		roles = append(roles, layout.Node{ID: layout.NodeID(fmt.Sprint("n", i)), Zone: fmt.Sprint("z", i), Capacity: 1})
 	}
 
-	l, err := layout.Compute(nil, roles, layout.Options{Partitions: 16, Widths: []int{min(n, 3)}})
+	l, err := layout.Compute(nil, roles, layout.Options{Partitions: 16, Widths: widths})
 	require.NoError(t, err)
 
 	nodes := make([]*node, n)

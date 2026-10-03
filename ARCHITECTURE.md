@@ -310,6 +310,20 @@ lets `Engine.RotateKeys` (admin `POST /api/v1/encryption/rotate`, CLI
 newer write; an upload rotated in flight keeps the rewrapped key when it
 completes, since completion carries the version's registers.
 
+**Erasure coding.** A bucket's `scheme` setting (`rf3`, or `ec:K,M`) decides
+how its new blocks are stored; each `blockLoc` records the one it was written
+with. A coded block is split into K data and M parity shards (Reed-Solomon,
+`internal/cluster/block/ec.go`), shard i on slot i of the block's partition,
+so the layout's spread over zones and racks for width K+M is the shards'
+spread. Writes return at K+1 shards; a healthy read joins the data shards
+with no decode, and rebuilds from parity only when one is missing. Shards are
+files beside blocks with the same CRC trailer, collected with their block's
+references. Repair runs with block anti-entropy: each node lists the shards
+its partitions' other slot nodes hold, rebuilds its own missing ones of live
+blocks from K others, and hands shards of slots the layout moved to their new
+node. Blocks under 256 KiB stay replicated. A layout narrower than any
+bucket's code is refused (`Engine.CheckLayout`).
+
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays
 `Deleted`, a finished upload's parts are overwritten by a final "done"

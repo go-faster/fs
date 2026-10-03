@@ -36,7 +36,7 @@ type written struct {
 // GC treats as live until released.
 //
 // cks, when not nil, is fed the plaintext alongside the ETag's hash.
-func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Cipher, cks io.Writer) (written, error) {
+func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Cipher, cks io.Writer, sch block.Scheme) (written, error) {
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	var sink io.Writer = h
@@ -56,7 +56,7 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 		w      written
 		sizes  []int64
 		mu     sync.Mutex
-		hashes = map[int]block.Hash{}
+		placed = map[int]blockLoc{}
 		failed error
 		wg     sync.WaitGroup
 		sem    = make(chan struct{}, inflight)
@@ -100,11 +100,15 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 				wg.Go(func() {
 					defer func() { <-sem }()
 
-					h := block.Sum(chunk)
-					err := e.storeBlock(ctx, owner, h, chunk, func() { e.bufs.Put(bufp) })
+					loc := blockLoc{Hash: block.Sum(chunk)}
+					if sch.Coded() && len(chunk) >= e.codedMin {
+						loc.Scheme = sch.String()
+					}
+
+					err := e.storeBlock(ctx, owner, loc, chunk, func() { e.bufs.Put(bufp) })
 
 					mu.Lock()
-					hashes[idx] = h
+					placed[idx] = loc
 
 					if err != nil && failed == nil {
 						failed = err
@@ -124,7 +128,7 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 
 		if err != nil {
 			wg.Wait()
-			e.release(ctx, owner, locs(sizes, hashes))
+			e.release(ctx, owner, locs(sizes, placed))
 
 			return w, errors.Wrap(err, "write object")
 		}
@@ -132,7 +136,7 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 
 	wg.Wait()
 
-	w.blocks = locs(sizes, hashes)
+	w.blocks = locs(sizes, placed)
 
 	if err := fail(); err != nil {
 		e.release(ctx, owner, w.blocks)
@@ -154,10 +158,11 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 const inflight = 4
 
 // locs assembles the stored blocks in order.
-func locs(sizes []int64, hashes map[int]block.Hash) []blockLoc {
+func locs(sizes []int64, placed map[int]blockLoc) []blockLoc {
 	out := make([]blockLoc, len(sizes))
 	for i, n := range sizes {
-		out[i] = blockLoc{Hash: hashes[i], Size: n}
+		out[i] = placed[i]
+		out[i].Size = n
 	}
 
 	return out
@@ -176,11 +181,11 @@ func (c *counter) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// storeBlock references a block from owner, then stores it. The reference
-// comes first, so GC never finds the block unreferenced. release, when not
-// nil, is called once nothing reads data any more.
-func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, data []byte, release func()) error {
-	if err := e.refs.Insert(ctx, h.String(), owner, meta.BlockRef{}); err != nil {
+// storeBlock references a block from owner, then stores it as loc says. The
+// reference comes first, so GC never finds the block unreferenced. release,
+// when not nil, is called once nothing reads data any more.
+func (e *Engine) storeBlock(ctx context.Context, owner string, loc blockLoc, data []byte, release func()) error {
+	if err := e.refs.Insert(ctx, loc.Hash.String(), owner, meta.BlockRef{}); err != nil {
 		if release != nil {
 			release()
 		}
@@ -188,11 +193,20 @@ func (e *Engine) storeBlock(ctx context.Context, owner string, h block.Hash, dat
 		return err
 	}
 
-	if err := e.blocks.PutHashed(ctx, h, data, release); err != nil {
-		return err
+	if loc.Scheme != "" {
+		sch, err := block.ParseScheme(loc.Scheme)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+
+			return err
+		}
+
+		return e.blocks.PutCoded(ctx, loc.Hash, data, sch, release)
 	}
 
-	return nil
+	return e.blocks.PutHashed(ctx, loc.Hash, data, release)
 }
 
 // buffer returns a pooled buffer large enough for a block and its trailer.
@@ -211,7 +225,7 @@ func (e *Engine) buffer() *[]byte {
 func (e *Engine) putBlock(ctx context.Context, owner string, data []byte, w *written) error {
 	h := block.Sum(data)
 
-	if err := e.storeBlock(ctx, owner, h, data, nil); err != nil {
+	if err := e.storeBlock(ctx, owner, blockLoc{Hash: h}, data, nil); err != nil {
 		e.release(ctx, owner, append(w.blocks, blockLoc{Hash: h}))
 
 		return err
@@ -265,7 +279,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 
 	id := newID()
 
-	w, err := e.write(ctx, req.Reader, id, c, cks)
+	w, err := e.write(ctx, req.Reader, id, c, cks, bucketScheme(b))
 	if err != nil {
 		return nil, err
 	}

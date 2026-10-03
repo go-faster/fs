@@ -117,6 +117,22 @@ func (s *ApplyLayoutRequest) SetPartitions(val OptInt) {
 	s.Partitions = val
 }
 
+// Ref: #/components/schemas/BucketScheme
+type BucketScheme struct {
+	// "rf3" or "ec:K,M", e.g. "ec:4,2".
+	Scheme string `json:"scheme"`
+}
+
+// GetScheme returns the value of Scheme.
+func (s *BucketScheme) GetScheme() string {
+	return s.Scheme
+}
+
+// SetScheme sets the value of Scheme.
+func (s *BucketScheme) SetScheme(val string) {
+	s.Scheme = val
+}
+
 // Ref: #/components/schemas/ClusterNode
 type ClusterNode struct {
 	ID   OptString `json:"id"`
