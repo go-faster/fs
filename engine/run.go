@@ -75,7 +75,10 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 		wg.Go(func() { e.parts.Run(ctx, cfg.Sync) })
 		wg.Go(func() { e.blocks.Run(ctx, cfg.Resync) })
 		wg.Go(func() {
-			every(ctx, cfg.Sync, func() { _ = e.blocks.Sync(ctx) })
+			every(ctx, cfg.Sync, func() {
+				_ = e.blocks.Sync(ctx)
+				_ = e.blocks.RepairShards(ctx, e.BlockLive)
+			})
 		})
 	}
 
@@ -194,6 +197,9 @@ type Stats struct {
 	// BlockSync and TableSync describe the last anti-entropy sweeps; zero on
 	// a single node.
 	BlockSync block.SyncStats
+	// Shards describe erasure-coded blocks: how many are short of shards,
+	// and the repair that rebuilds them.
+	Shards    block.ShardStats
 	TableSync map[string]table.SyncStats
 	// Tombstones describe deleted rows waiting for, and removed by,
 	// collection, by table.
@@ -212,6 +218,7 @@ func (e *Engine) Stats() Stats {
 	return Stats{
 		Blocks:    e.blocks.Stats(),
 		BlockSync: e.blocks.SyncStats(),
+		Shards:    e.blocks.ShardStats(),
 		TableSync: map[string]table.SyncStats{
 			"buckets":    e.buckets.SyncStats(),
 			"objects":    e.objects.SyncStats(),

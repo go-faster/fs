@@ -148,6 +148,11 @@ in an unknown format stops the node from starting rather than being misread.
   block copies a replica is missing, the number to watch —
   `fs.engine.blocks.corrupt`, `fs.engine.blocks.collected`,
   `fs.engine.blocks.degraded` (erasure-coded reads that rebuilt from parity),
+  `fs.engine.shards.{lost,critical,degraded}` — erasure-coded blocks below K
+  shards (unreadable), at K (one loss from it), short of a shard; sum them
+  over nodes and alert on the first two — with
+  `fs.engine.shards.{unreachable,rebuilt,handed_over,age}` for the repair
+  sweep (cluster only),
   `fs.engine.sync.{out_of_sync,unreachable,age}{table}` (anti-entropy, cluster
   only), `fs.engine.gc.age`, and
   `fs.engine.tombstones.{queued,collected,deferred}{table}` — deleted rows

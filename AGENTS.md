@@ -108,7 +108,9 @@ automated resumable migration and the public API becomes additive-only.
   store a block as K data + M parity shards, shard i on slot i of the block's
   partition (the layout must be spread for width K+M), acknowledged at K+1;
   reads join the data shards and rebuild from parity only when one is
-  missing. Not yet used by the engine; shard repair and handover are to come.
+  missing. `RepairShards` (`repair.go`, run with block anti-entropy) hands
+  misplaced shards to their slot's node and rebuilds this node's missing
+  shards of live blocks from K others. Not yet used by the engine's writes.
 - `engine` — the storage engine (#277): `fs.Storage` over the
   replicated tables and blocks. Buckets are incarnations keyed by ID, objects
   are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are

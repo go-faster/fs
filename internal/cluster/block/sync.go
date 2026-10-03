@@ -53,14 +53,16 @@ type SyncStats struct {
 const syncPage = 10000
 
 type syncState struct {
-	mu    sync.Mutex
-	stats SyncStats
+	mu     sync.Mutex
+	stats  SyncStats
+	shards ShardStats
 }
 
 func (m *Manager) registerSync() {
 	m.member.Handle("POST /v1/block/digests", handle(m.serveDigests))
 	m.member.Handle("POST /v1/block/list", handle(m.serveList))
 	m.member.Handle("HEAD /v1/block/{hash}", http.HandlerFunc(m.serveHead))
+	m.member.Handle("POST /v1/shard/list", handle(m.serveShards))
 }
 
 // SyncStats returns the anti-entropy counters.
