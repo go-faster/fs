@@ -46,8 +46,11 @@ type Stats struct {
 	ResyncFailed  int64
 	// Corrupt counts copies found not matching their hash, here or on a peer.
 	Corrupt int64
-	// Collected counts blocks removed by GC.
+	// Collected counts blocks and shards removed by GC.
 	Collected int64
+	// Degraded counts reads of coded blocks that had to rebuild from parity:
+	// a shard missing or corrupt where it should be.
+	Degraded int64
 }
 
 // Manager stores blocks across the cluster.
@@ -60,7 +63,7 @@ type Manager struct {
 
 	sync syncState
 
-	done, failed, corrupt, collected atomic.Int64
+	done, failed, corrupt, collected, degraded atomic.Int64
 }
 
 type resyncKey struct {
@@ -87,6 +90,8 @@ func NewManager(store *Store, member *peer.Member) *Manager {
 
 	member.Handle("PUT /v1/block/{hash}", http.HandlerFunc(m.servePut))
 	member.Handle("GET /v1/block/{hash}", http.HandlerFunc(m.serveGet))
+	member.Handle("PUT /v1/shard/{shard}", http.HandlerFunc(m.servePutShard))
+	member.Handle("GET /v1/shard/{shard}", http.HandlerFunc(m.serveGetShard))
 	m.registerSync()
 
 	return m
@@ -297,8 +302,13 @@ func (m *Manager) GC(ctx context.Context, grace time.Duration, live func(context
 
 		return nil
 	})
+	if err != nil {
+		return removed, err
+	}
 
-	return removed, err
+	n, err := m.gcShards(ctx, cutoff, live)
+
+	return removed + n, err
 }
 
 // Resync copies every due queued block to the replica missing it, fetching it
@@ -368,6 +378,7 @@ func (m *Manager) Stats() Stats {
 		ResyncFailed:  m.failed.Load(),
 		Corrupt:       m.corrupt.Load(),
 		Collected:     m.collected.Load(),
+		Degraded:      m.degraded.Load(),
 	}
 }
 

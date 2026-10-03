@@ -147,6 +147,7 @@ in an unknown format stops the node from starting rather than being misread.
 - **Engine**: `fs.engine.blocks.resync_pending` —
   block copies a replica is missing, the number to watch —
   `fs.engine.blocks.corrupt`, `fs.engine.blocks.collected`,
+  `fs.engine.blocks.degraded` (erasure-coded reads that rebuilt from parity),
   `fs.engine.sync.{out_of_sync,unreachable,age}{table}` (anti-entropy, cluster
   only), `fs.engine.gc.age`, and
   `fs.engine.tombstones.{queued,collected,deferred}{table}` — deleted rows

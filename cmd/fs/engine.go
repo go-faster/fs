@@ -40,7 +40,8 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 	gauges := map[string]string{
 		"fs.engine.blocks.resync_pending": "Block copies waiting for a replica that is missing them.",
 		"fs.engine.blocks.corrupt":        "Block copies found not matching their hash since start.",
-		"fs.engine.blocks.collected":      "Unreferenced blocks removed since start.",
+		"fs.engine.blocks.collected":      "Unreferenced blocks and shards removed since start.",
+		"fs.engine.blocks.degraded":       "Reads of erasure-coded blocks rebuilt from parity since start: a shard missing where it should be.",
 		"fs.engine.sync.out_of_sync":      "Slots that differed from another replica in the last sweep, by table.",
 		"fs.engine.sync.unreachable":      "Replicas that could not be compared in the last sweep, by table.",
 		"fs.engine.sync.age":              "Seconds since the last anti-entropy sweep finished, by table.",
@@ -77,6 +78,7 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		o.ObserveInt64(obs["fs.engine.blocks.resync_pending"], s.Blocks.ResyncPending)
 		o.ObserveInt64(obs["fs.engine.blocks.corrupt"], s.Blocks.Corrupt)
 		o.ObserveInt64(obs["fs.engine.blocks.collected"], s.Blocks.Collected)
+		o.ObserveInt64(obs["fs.engine.blocks.degraded"], s.Blocks.Degraded)
 		o.ObserveInt64(obs["fs.engine.gc.age"], age(s.LastGC))
 
 		sweeps := map[string]struct {
