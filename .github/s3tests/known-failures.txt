@@ -95,10 +95,10 @@ s3tests/functional/test_s3.py::test_object_lock_put_obj_retention_versionid
 s3tests/functional/test_s3.py::test_object_lock_suspend_versioning
 s3tests/functional/test_s3.py::test_object_lock_uploading_obj
 
-# --- SSE-C and SSE-KMS (14) ---------------------------------------------------
+# --- SSE-KMS (14) ---------------------------------------------------------------
 #
-# Server-side encryption is supported with a server-managed key only. KMS is
-# out of scope; customer-provided keys (SSE-C) are planned in #285.
+# Server-side encryption is supported with a server-managed key (SSE-S3) and
+# with customer-provided keys (SSE-C). KMS is out of scope.
 
 s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1024]
 s3tests/functional/test_s3.py::test_copy_enc[sse-kms-unencrypted-STANDARD-STANDARD-1048576]

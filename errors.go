@@ -50,4 +50,10 @@ var (
 	// ErrIntegrity reports that an object's stored content does not match its
 	// recorded checksum (bit-rot / corruption detected on read).
 	ErrIntegrity = errors.New("object integrity check failed")
+
+	// ErrCustomerKeyMismatch reports a request whose SSE-C key does not fit
+	// the object or upload: none for one encrypted with a customer key, or
+	// one for one that is not. A key that is present but wrong is
+	// ErrAccessDenied.
+	ErrCustomerKeyMismatch = errors.New("customer encryption key mismatch")
 )

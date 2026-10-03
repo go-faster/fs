@@ -63,7 +63,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srcObj, err := h.getObjectVersion(ctx, srcBucket, srcKey, src.VersionID)
+	srcObj, err := h.getObjectVersion(copySourceContext(r), srcBucket, srcKey, src.VersionID)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return
@@ -104,6 +104,8 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		Tags:     tags,
 		ACL:      fs.ParseACL(r.Header.Get("X-Amz-Acl")),
 		Owner:    callerOwner(ctx),
+
+		ServerSideEncryption: h.requestedEncryption(r, destBucket),
 	}
 
 	resp, err := h.service.PutObject(ctx, put)
@@ -119,6 +121,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		_ = dst.Reader.Close()
 	}
 
+	writeSSE(w, resp.ServerSideEncryption)
 	writeXML(ctx, w, r, CopyObjectResult{
 		LastModified: lastModified.UTC(),
 		ETag:         quoteETag(resp.ETag),

@@ -62,7 +62,11 @@ var (
 	InvalidURI              = APIError{"InvalidURI", http.StatusBadRequest, "Couldn't parse the specified URI."}
 	InvalidArgument         = APIError{"InvalidArgument", http.StatusBadRequest, "Invalid Argument."}
 	InvalidRequest          = APIError{codeInvalidRequest, http.StatusBadRequest, "Invalid Request."}
-	MalformedPOSTRequest    = APIError{
+	CustomerKeyMismatch     = APIError{
+		codeInvalidRequest, http.StatusBadRequest,
+		"The object was stored using a form of Server Side Encryption. The correct parameters must be provided to retrieve the object.",
+	}
+	MalformedPOSTRequest = APIError{
 		"MalformedPOSTRequest", http.StatusBadRequest,
 		"The body of your POST request is not well-formed multipart/form-data.",
 	}
@@ -144,6 +148,8 @@ func FromError(err error) APIError {
 		return MethodNotAllowed
 	case errors.Is(err, fs.ErrAccessDenied):
 		return AccessDenied
+	case errors.Is(err, fs.ErrCustomerKeyMismatch):
+		return CustomerKeyMismatch
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
 	case errors.Is(err, fs.ErrInvalidDigest):

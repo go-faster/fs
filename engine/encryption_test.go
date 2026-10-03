@@ -264,3 +264,43 @@ func TestRotateThenRetire(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, large, readAll(t, e, "mp"))
 }
+
+// TestCustomerKeyAtRest: an SSE-C object's stored bytes are ciphertext, and
+// nothing stored holds the customer key.
+func TestCustomerKeyAtRest(t *testing.T) {
+	e := sealedEngine(t, nil)
+	ck := fs.CustomerKey(bytes.Repeat([]byte{7}, 32))
+	body := bytes.Repeat([]byte("customer plaintext "), 1000)
+
+	_, err := e.PutObject(fs.WithCustomerKey(context.Background(), ck), &fs.PutObjectRequest{
+		Bucket: "b", Key: "k", Reader: bytes.NewReader(body), Size: int64(len(body)),
+	})
+	require.NoError(t, err)
+
+	at := stored(t, e, "k")
+	assert.NotContains(t, string(at), "customer plaintext")
+	assert.NotContains(t, string(at), string(ck))
+
+	_, inc, err := e.bucket(context.Background(), "b")
+	require.NoError(t, err)
+
+	o, _, err := e.objects.Get(context.Background(), inc.ID, "k")
+	require.NoError(t, err)
+	assert.NotContains(t, string(mustJSON(o)), string(ck), "the key is never in the metadata")
+}
+
+func TestRotateSkipsCustomerKeys(t *testing.T) {
+	ctx := context.Background()
+	e := sealedEngine(t, keyring(t, masterKey(t)))
+
+	_, err := e.PutObject(fs.WithCustomerKey(ctx, bytes.Repeat([]byte{7}, 32)), &fs.PutObjectRequest{
+		Bucket: "b", Key: "k", Reader: bytes.NewReader([]byte("x")), Size: 1,
+	})
+	require.NoError(t, err)
+
+	e.keyring = keyring(t, masterKey(t))
+
+	res, err := e.RotateKeys(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, RotateResult{}, res, "an SSE-C key is the client's, not the server's to rewrap")
+}

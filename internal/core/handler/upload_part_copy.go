@@ -42,7 +42,7 @@ func (h *handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src, err := h.getObjectVersion(ctx, source.Bucket, source.Key, source.VersionID)
+	src, err := h.getObjectVersion(copySourceContext(r), source.Bucket, source.Key, source.VersionID)
 	if err != nil {
 		renderError(ctx, w, r, err)
 		return

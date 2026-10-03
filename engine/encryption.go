@@ -2,6 +2,10 @@ package engine
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/md5" //nolint:gosec // Only its size: an SSE-C ETag is as long as an MD5.
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 
@@ -32,6 +36,53 @@ const settingEncryption = "encryption"
 type encInfo struct {
 	Key       sse.WrappedKey `json:"-"`
 	NonceBase []byte         `json:"nonce_base"`
+	// Customer marks SSE-C: Key is sealed by the client's key, which the
+	// engine never stores; Key.KeyID, a one-way ID of it, tells a wrong key
+	// from the right one.
+	Customer bool `json:"customer,omitempty"`
+
+	// dek is the data key once known, for customerETag.
+	dek []byte
+}
+
+// customerKeyFits checks the request's customer key against info: required
+// for an SSE-C object or upload, refused for any other.
+func customerKeyFits(ctx context.Context, info *encInfo) error {
+	ck := fs.CustomerKeyFrom(ctx)
+
+	switch {
+	case info != nil && info.Customer && ck == nil:
+		return errors.Wrap(fs.ErrCustomerKeyMismatch, "the object is encrypted with a customer key; the request has none")
+	case (info == nil || !info.Customer) && ck != nil:
+		return errors.Wrap(fs.ErrCustomerKeyMismatch, "the request has a customer key; the object is not encrypted with one")
+	}
+
+	return nil
+}
+
+// customerRing is a keyring of the request's customer key alone.
+func customerRing(ck fs.CustomerKey) (*sse.Keyring, error) {
+	mk, err := sse.NewMasterKey(ck)
+	if err != nil {
+		return nil, errors.Wrap(fs.ErrAccessDenied, "invalid customer key")
+	}
+
+	return sse.NewKeyring(mk)
+}
+
+// customerETag is an SSE-C object's ETag: S3's is not the plaintext's MD5,
+// which would let anyone who can list confirm a guess at the content. Keyed
+// by the data key, it says nothing without it, and stays an MD5-sized hex
+// string as multipart ETags expect.
+func customerETag(etag string, info *encInfo) string {
+	if info == nil || !info.Customer {
+		return etag
+	}
+
+	mac := hmac.New(sha256.New, info.dek)
+	mac.Write([]byte(etag))
+
+	return hex.EncodeToString(mac.Sum(nil)[:md5.Size])
 }
 
 // withKey sets v's Key register from info, written at ts.
@@ -63,8 +114,22 @@ func loadKey(v meta.Version, info *encInfo) error {
 }
 
 // beginEncryption validates algorithm and mints a data key for a new object
-// or upload; nil when algorithm is empty.
-func (e *Engine) beginEncryption(algorithm string) (*encInfo, error) {
+// or upload, sealed by the master key ring or, for SSE-C, the request's
+// customer key; nil when neither is asked for.
+func (e *Engine) beginEncryption(ctx context.Context, algorithm string) (*encInfo, error) {
+	if ck := fs.CustomerKeyFrom(ctx); ck != nil {
+		if algorithm != "" {
+			return nil, errors.Wrap(fs.ErrUnsupportedOperation, "both a customer key and server-side encryption requested")
+		}
+
+		ring, err := customerRing(ck)
+		if err != nil {
+			return nil, err
+		}
+
+		return mint(ring, true)
+	}
+
 	if algorithm == "" {
 		return nil, nil
 	}
@@ -79,6 +144,11 @@ func (e *Engine) beginEncryption(algorithm string) (*encInfo, error) {
 		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "server-side encryption requested but no master key is configured")
 	}
 
+	return mint(e.keyring, false)
+}
+
+// mint makes a fresh data key sealed by ring.
+func mint(ring *sse.Keyring, customer bool) (*encInfo, error) {
 	dek, err := sse.NewKey()
 	if err != nil {
 		return nil, err
@@ -89,18 +159,43 @@ func (e *Engine) beginEncryption(algorithm string) (*encInfo, error) {
 		return nil, err
 	}
 
-	wrapped, err := e.keyring.Wrap(dek)
+	wrapped, err := ring.Wrap(dek)
 	if err != nil {
 		return nil, err
 	}
 
-	return &encInfo{Key: wrapped, NonceBase: base}, nil
+	return &encInfo{Key: wrapped, NonceBase: base, Customer: customer, dek: dek}, nil
 }
 
-// cipher returns the cipher of info for one part; 0 for a single PUT.
-func (e *Engine) cipher(info *encInfo, part int) (*sse.Cipher, error) {
+// cipher returns the cipher of info for one part; 0 for a single PUT. It
+// checks the request's customer key against info first.
+func (e *Engine) cipher(ctx context.Context, info *encInfo, part int) (*sse.Cipher, error) {
+	if err := customerKeyFits(ctx, info); err != nil {
+		return nil, err
+	}
+
 	if info == nil {
 		return nil, nil
+	}
+
+	if info.Customer {
+		ring, err := customerRing(fs.CustomerKeyFrom(ctx))
+		if err != nil {
+			return nil, err
+		}
+
+		if ring.CurrentID() != info.Key.KeyID {
+			return nil, errors.Wrap(fs.ErrAccessDenied, "the customer key is not the one the object is encrypted with")
+		}
+
+		dek, err := ring.Unwrap(info.Key)
+		if err != nil {
+			return nil, errors.Wrap(fs.ErrAccessDenied, "the customer key does not open the object's data key")
+		}
+
+		info.dek = dek
+
+		return sse.New(dek, info.NonceBase, uint32(part)) //nolint:gosec // Part numbers are 1..10000.
 	}
 
 	if e.keyring == nil {
@@ -117,9 +212,10 @@ func (e *Engine) cipher(info *encInfo, part int) (*sse.Cipher, error) {
 	return sse.New(dek, info.NonceBase, uint32(part)) //nolint:gosec // Part numbers are 1..10000.
 }
 
-// algorithm is what S3 reports for info.
+// algorithm is what S3 reports in x-amz-server-side-encryption for info:
+// nothing for SSE-C, whose headers echo the request's.
 func algorithm(info *encInfo) string {
-	if info == nil {
+	if info == nil || info.Customer {
 		return ""
 	}
 
@@ -151,7 +247,7 @@ func sealed(r io.Reader, c *sse.Cipher) io.ReadCloser {
 
 // decrypting returns p's plaintext: one decrypting reader per section of the
 // stored stream, chained.
-func (e *Engine) decrypting(stored io.ReaderAt, closer io.Closer, p payload) (io.ReadSeekCloser, error) {
+func (e *Engine) decrypting(ctx context.Context, stored io.ReaderAt, closer io.Closer, p payload) (io.ReadSeekCloser, error) {
 	sections := []section{{part: 0, plain: p.Size}}
 
 	if len(p.Parts) > 0 {
@@ -167,7 +263,7 @@ func (e *Engine) decrypting(stored io.ReaderAt, closer io.Closer, p payload) (io
 	var off int64
 
 	for i, s := range sections {
-		c, err := e.cipher(p.Enc, s.part)
+		c, err := e.cipher(ctx, p.Enc, s.part)
 		if err != nil {
 			return nil, err
 		}

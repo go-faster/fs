@@ -116,6 +116,11 @@ exporters).
   `fs encrypt rotate` (`POST /api/v1/encryption/rotate`; one run covers a
   cluster) until it reports 0 remaining, then drop the old key. Rotation
   rewrites keys, never object data, and is safe to interrupt and rerun.
+- **SSE-C** (customer-provided keys) needs no server configuration; the key
+  never touches disk, and losing it loses the object. Like S3, keys are refused
+  on plain HTTP — terminate TLS here or at a proxy that sets
+  `X-Forwarded-Proto: https`. `encryption.customer_keys_over_http: true`
+  lifts that, for development and tests only.
 
 ## Cluster mode
 

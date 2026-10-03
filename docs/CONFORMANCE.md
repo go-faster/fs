@@ -17,7 +17,7 @@ What follows is that list, grouped. Everything else in the suite passes.
 |--------------|------------------:|
 | Full ACL grammar and bucket-level ?acl | 32 |
 | Object Lock, retention and legal hold | 36 |
-| SSE-C and SSE-KMS | 14 |
+| SSE-KMS | 14 |
 | AWS Signature V2 | 13 |
 | Bucket policy engine | 6 |
 | Expect header handling | 2 |

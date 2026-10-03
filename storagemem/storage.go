@@ -220,7 +220,7 @@ func (s *Storage) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+	if err := refuseEncryption(ctx, req.ServerSideEncryption); err != nil {
 		return nil, err
 	}
 
@@ -407,6 +407,11 @@ func (s *Storage) GetObject(ctx context.Context, bucketName, key string) (*fs.Ge
 		return nil, fs.ErrObjectNotFound
 	}
 
+	// Nothing here is encrypted with a customer key.
+	if fs.CustomerKeyFrom(ctx) != nil {
+		return nil, fs.ErrCustomerKeyMismatch
+	}
+
 	// Create a copy of the data to avoid races
 	dataCopy := make([]byte, len(obj.data))
 	copy(dataCopy, obj.data)
@@ -465,7 +470,7 @@ func (s *Storage) CreateMultipartUpload(ctx context.Context, req *fs.CreateMulti
 		return nil, fs.ErrBucketNotFound
 	}
 
-	if err := refuseEncryption(req.ServerSideEncryption); err != nil {
+	if err := refuseEncryption(ctx, req.ServerSideEncryption); err != nil {
 		return nil, err
 	}
 
@@ -499,6 +504,11 @@ func (s *Storage) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*f
 	upload, exists := s.uploads[req.UploadID]
 	if !exists {
 		return nil, fs.ErrUploadNotFound
+	}
+
+	// No upload here is encrypted with a customer key.
+	if fs.CustomerKeyFrom(ctx) != nil {
+		return nil, fs.ErrCustomerKeyMismatch
 	}
 
 	data, err := io.ReadAll(req.Reader)
@@ -855,7 +865,11 @@ func (s *Storage) SetBucketObjectOwnership(_ context.Context, bucketName, owners
 // feature exists to prevent — and it would be invisible, since an object
 // stored in the clear reads back perfectly. Refusing is the only honest
 // answer until the backend can encrypt.
-func refuseEncryption(algorithm string) error {
+func refuseEncryption(ctx context.Context, algorithm string) error {
+	if fs.CustomerKeyFrom(ctx) != nil {
+		return errors.Wrap(fs.ErrUnsupportedOperation, "SSE-C is not supported by this storage backend")
+	}
+
 	if algorithm == "" {
 		return nil
 	}

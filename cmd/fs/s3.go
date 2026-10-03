@@ -232,10 +232,11 @@ Command-line flags override YAML configuration values.`,
 					Region:         cfg.Server.Region,
 					OwnerIsolation: cfg.Auth.OwnerIsolation,
 
-					DefaultEncryption: cfg.Encryption.DefaultAlgorithm,
-					Buckets:           cfg.Storage.Buckets,
-					Auth:              authStore,
-					WrapHandler:       wrap,
+					DefaultEncryption:    cfg.Encryption.DefaultAlgorithm,
+					CustomerKeysOverHTTP: cfg.Encryption.CustomerKeysOverHTTP,
+					Buckets:              cfg.Storage.Buckets,
+					Auth:                 authStore,
+					WrapHandler:          wrap,
 					// Readiness probes storage reachability (health is liveness only).
 					Ready: func(ctx context.Context) error {
 						_, err := storage.ListBuckets(ctx)

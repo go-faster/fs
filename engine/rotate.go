@@ -29,8 +29,9 @@ type RotateResult struct {
 // MaxRotateFailures bounds RotateResult.Failed.
 const MaxRotateFailures = 100
 
-// RotateKeys moves the data key of every encrypted version and upload onto
-// the keyring's current master key. Only the keys are rewritten — a few dozen
+// RotateKeys moves the data key of every version and upload encrypted with
+// SSE-S3 onto the keyring's current master key; SSE-C ones are not the
+// server's to move. Only the keys are rewritten — a few dozen
 // bytes per version — never the data. It can be interrupted and run again:
 // keys already current are skipped.
 //
@@ -87,6 +88,16 @@ func (e *Engine) RotateKeys(ctx context.Context) (RotateResult, error) {
 
 func (e *Engine) rotateVersion(ctx context.Context, bucketID, key string, v meta.Version, res *RotateResult) error {
 	if v.State == meta.Gone || len(v.Key.V) == 0 {
+		return nil
+	}
+
+	// An SSE-C key is sealed by the client's key, not the master key: the
+	// server can neither rewrap it nor needs to. Versions and uploads keep
+	// their encInfo under the same name.
+	var p struct {
+		Enc *encInfo `json:"enc"`
+	}
+	if err := json.Unmarshal(v.Payload, &p); err == nil && p.Enc != nil && p.Enc.Customer {
 		return nil
 	}
 

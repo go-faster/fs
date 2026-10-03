@@ -27,6 +27,8 @@ type handler struct {
 	// defaultEncryption is the algorithm applied to a write that does not name
 	// one. Empty leaves objects unencrypted unless the request asks.
 	defaultEncryption string
+	// customerKeysOverHTTP accepts SSE-C keys on plain HTTP.
+	customerKeysOverHTTP bool
 }
 
 // Option configures the handler built by New.
@@ -38,6 +40,15 @@ type options struct {
 	region            string
 	ownerIsolation    bool
 	defaultEncryption string
+
+	customerKeysOverHTTP bool
+}
+
+// WithCustomerKeysOverHTTP accepts SSE-C keys on requests that did not arrive
+// over TLS. S3 refuses them, since the key would cross the network in the
+// clear; this is for development and tests only.
+func WithCustomerKeysOverHTTP(allow bool) Option {
+	return func(o *options) { o.customerKeysOverHTTP = allow }
 }
 
 // WithDefaultEncryption encrypts every object whose request does not say
@@ -90,7 +101,7 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 		opt(&o)
 	}
 
-	h := handler{service: s, region: o.region, defaultEncryption: o.defaultEncryption}
+	h := handler{service: s, region: o.region, defaultEncryption: o.defaultEncryption, customerKeysOverHTTP: o.customerKeysOverHTTP}
 	if o.authenticator != nil {
 		h.postSecret = o.authenticator.Secret
 	}
@@ -337,6 +348,11 @@ func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 
 // routeObject handles requests addressed at an object key.
 func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
+	r, ok := h.withCustomerKey(w, r)
+	if !ok {
+		return
+	}
+
 	q := r.URL.Query()
 
 	switch r.Method {
