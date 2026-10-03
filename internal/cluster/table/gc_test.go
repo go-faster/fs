@@ -24,6 +24,22 @@ func queued(t *testing.T, n *node) int {
 	return c
 }
 
+// everywhere waits for every node to hold n rows: writes return at a quorum
+// of two, and the third replica's copy lands after.
+func everywhere(t *testing.T, nodes []*node, n int) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		for _, nd := range nodes {
+			if len(local(t, nd)) != n {
+				return false
+			}
+		}
+
+		return true
+	}, 5*time.Second, time.Millisecond)
+}
+
 func TestCollect(t *testing.T) {
 	ctx := context.Background()
 	nodes := cluster(t)
@@ -32,8 +48,7 @@ func TestCollect(t *testing.T) {
 	require.NoError(t, nodes[0].table.Insert(ctx, "b", "trimmed", reg{V: "x+tomb", TS: 1}))
 	require.NoError(t, nodes[0].table.Insert(ctx, "b", "live", reg{V: "x", TS: 1}))
 
-	// Quorum is two: let the third replica's write land too.
-	require.Eventually(t, func() bool { return len(local(t, nodes[2])) == 3 }, 5*time.Second, time.Millisecond)
+	everywhere(t, nodes, 3)
 
 	require.NoError(t, nodes[0].table.Collect(ctx, time.Hour))
 	assert.Len(t, local(t, nodes[1]), 3, "nothing is due before the delay")
@@ -60,7 +75,7 @@ func TestCollectDefersWithoutEveryReplica(t *testing.T) {
 	nodes := cluster(t)
 
 	require.NoError(t, nodes[0].table.Insert(ctx, "b", "k", reg{V: "gone", TS: 1}))
-	require.Eventually(t, func() bool { return len(local(t, nodes[2])) == 1 }, 5*time.Second, time.Millisecond)
+	everywhere(t, nodes, 1)
 
 	nodes[2].srv.Close()
 
@@ -76,7 +91,7 @@ func TestCollectKeepsNewerWrite(t *testing.T) {
 	nodes := cluster(t)
 
 	require.NoError(t, nodes[0].table.Insert(ctx, "b", "k", reg{V: "gone", TS: 1}))
-	require.Eventually(t, func() bool { return len(local(t, nodes[2])) == 1 }, 5*time.Second, time.Millisecond)
+	everywhere(t, nodes, 1)
 
 	// A newer write reaches one replica only, after the tombstone was queued.
 	require.NoError(t, nodes[2].table.localInsert([]wireEntry{row("b", "k", reg{V: "back", TS: 2})}))
