@@ -32,8 +32,8 @@ func buildEngine(root string, member *peer.Member, keyring *sse.Keyring, noSync 
 
 // registerEngineMetrics exports what an operator needs to see the engine's
 // background work keeping up — and the numbers that go wrong first: blocks
-// still missing a healthy replica, copies found corrupt, and how long ago
-// anti-entropy last finished.
+// still missing a healthy replica, copies found corrupt, how long ago
+// anti-entropy last finished, and deleted rows piling up uncollected.
 func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 	meter := mp.Meter("github.com/go-faster/fs/engine")
 
@@ -45,6 +45,9 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		"fs.engine.sync.unreachable":      "Replicas that could not be compared in the last sweep, by table.",
 		"fs.engine.sync.age":              "Seconds since the last anti-entropy sweep finished, by table.",
 		"fs.engine.gc.age":                "Seconds since block collection last finished.",
+		"fs.engine.tombstones.queued":     "Deleted rows waiting to be collected at the last pass, by table.",
+		"fs.engine.tombstones.collected":  "Deleted rows removed from every replica since start, by table.",
+		"fs.engine.tombstones.deferred":   "Deleted rows left for a later pass, a replica unreachable, since start, by table.",
 	}
 
 	obs := map[string]metric.Int64ObservableGauge{}
@@ -86,6 +89,13 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 				last             time.Time
 				out, unreachable int
 			}{t.LastSweep, t.OutOfSync, t.Unreachable}
+		}
+
+		for name, gc := range s.Tombstones {
+			attr := metric.WithAttributes(attribute.String("table", name))
+			o.ObserveInt64(obs["fs.engine.tombstones.queued"], int64(gc.Queued), attr)
+			o.ObserveInt64(obs["fs.engine.tombstones.collected"], gc.Collected, attr)
+			o.ObserveInt64(obs["fs.engine.tombstones.deferred"], gc.Deferred, attr)
 		}
 
 		for name, sw := range sweeps {

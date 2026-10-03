@@ -55,29 +55,62 @@ type Entry[R any] struct {
 
 // Table is a replicated table of rows of type R.
 type Table[R any] struct {
-	name   string
-	merge  func(a, b R) R
-	db     *bbolt.DB
-	member *peer.Member
-	sync   syncState
+	name    string
+	merge   func(a, b R) R
+	compact func(R) (R, Compaction)
+	db      *bbolt.DB
+	member  *peer.Member
+	sync    syncState
 }
 
 // New returns the table name stored in db and replicated through member.
 // merge must be commutative, associative and idempotent: replicas apply
 // writes in any order, any number of times. New registers the table's peer
 // endpoints on member, so call it before serving.
-func New[R any](name string, db *bbolt.DB, member *peer.Member, merge func(a, b R) R) (*Table[R], error) {
-	if err := db.Update(func(tx *bbolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(name))
+//
+// compact, when not nil, says what a row reduces to once every replica holds
+// it — deleted, or replaced by a smaller row with its tombstones dropped —
+// and must report Keep for what it returns; see Collect.
+func New[R any](
+	name string, db *bbolt.DB, member *peer.Member, merge func(a, b R) R, compact func(R) (R, Compaction),
+) (*Table[R], error) {
+	t := &Table[R]{name: name, merge: merge, compact: compact, db: db, member: member}
 
-		return err
+	if err := db.Update(func(tx *bbolt.Tx) error {
+		rows, err := tx.CreateBucketIfNotExists([]byte(name))
+		if err != nil {
+			return err
+		}
+
+		if compact == nil || tx.Bucket(t.gcBucket()) != nil {
+			return nil
+		}
+
+		// A store written before tombstones were collected: queue what it
+		// holds.
+		q, err := tx.CreateBucket(t.gcBucket())
+		if err != nil {
+			return err
+		}
+
+		return rows.ForEach(func(k, v []byte) error {
+			if _, _, ok := splitKey(k); !ok {
+				return nil
+			}
+
+			row, err := t.decode(v)
+			if err != nil {
+				return err
+			}
+
+			return t.enqueue(q, k, v, row)
+		})
 	}); err != nil {
 		return nil, errors.Wrapf(err, "create table %q", name)
 	}
 
-	t := &Table[R]{name: name, merge: merge, db: db, member: member}
-
 	member.Handle("POST /v1/table/"+name+"/insert", handle(t.serveInsert))
+	member.Handle("POST /v1/table/"+name+"/replace", handle(t.serveReplace))
 	member.Handle("POST /v1/table/"+name+"/get", handle(t.serveGet))
 	member.Handle("POST /v1/table/"+name+"/range", handle(t.serveRange))
 	t.registerSync()
@@ -88,17 +121,27 @@ func New[R any](name string, db *bbolt.DB, member *peer.Member, merge func(a, b 
 // Insert merges row into the row at (pk, sk) on every replica, and returns
 // once a quorum has it.
 func (t *Table[R]) Insert(ctx context.Context, pk, sk string, row R) error {
-	b, err := json.Marshal(row)
-	if err != nil {
-		return errors.Wrap(err, "encode row")
+	return t.InsertMany(ctx, pk, []Entry[R]{{PK: pk, SK: sk, Row: row}})
+}
+
+// InsertMany is Insert of several rows of one partition key, in one request
+// to each replica. Every entry's PK must be pk.
+func (t *Table[R]) InsertMany(ctx context.Context, pk string, rows []Entry[R]) error {
+	req := insertReq{Entries: make([]wireEntry, len(rows))}
+
+	for i, r := range rows {
+		b, err := json.Marshal(r.Row)
+		if err != nil {
+			return errors.Wrap(err, "encode row")
+		}
+
+		req.Entries[i] = wireEntry{PK: pk, SK: r.SK, Row: b}
 	}
 
 	nodes, err := t.replicas(pk)
 	if err != nil {
 		return err
 	}
-
-	req := insertReq{Entries: []wireEntry{{PK: pk, SK: sk, Row: b}}}
 
 	// Replicas past the quorum still get the write: detach from the caller,
 	// who stops waiting once a quorum has it, and release the context only
@@ -366,24 +409,33 @@ func (t *Table[R]) localInsert(entries []wireEntry) error {
 	// Batch coalesces concurrent inserts into one transaction, and may run fn
 	// more than once — harmless, merging is idempotent.
 	return t.db.Batch(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(t.name))
+		b, q := tx.Bucket([]byte(t.name)), tx.Bucket(t.gcBucket())
 
 		for _, e := range entries {
 			k := key(e.PK, e.SK)
-			v := e.Row
+			v := []byte(e.Row)
+			old := b.Get(k)
 
-			if old := b.Get(k); old != nil {
+			// A row is decoded only to merge it or to see whether it
+			// compacts.
+			var row R
+
+			if old != nil || q != nil {
+				var err error
+				if row, err = t.decode(e.Row); err != nil {
+					return err
+				}
+			}
+
+			if old != nil {
 				prev, err := t.decode(old)
 				if err != nil {
 					return err
 				}
 
-				row, err := t.decode(e.Row)
-				if err != nil {
-					return err
-				}
+				row = t.merge(prev, row)
 
-				if v, err = json.Marshal(t.merge(prev, row)); err != nil {
+				if v, err = json.Marshal(row); err != nil {
 					return errors.Wrap(err, "encode row")
 				}
 
@@ -394,6 +446,10 @@ func (t *Table[R]) localInsert(entries []wireEntry) error {
 
 			if err := b.Put(k, v); err != nil {
 				return errors.Wrap(err, "put")
+			}
+
+			if err := t.enqueue(q, k, v, row); err != nil {
+				return err
 			}
 		}
 

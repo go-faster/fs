@@ -5,6 +5,8 @@ import (
 	"cmp"
 	"encoding/json"
 	"slices"
+
+	"github.com/go-faster/fs/internal/cluster/table"
 )
 
 // State is where a version is in its life. States only move forward.
@@ -16,10 +18,8 @@ const (
 	// Complete: the version's content (or delete marker) is final.
 	Complete
 	// Gone: aborted, or permanently deleted. A tombstone, kept so that a
-	// replica that has not seen the delete cannot bring the version back.
-	//
-	// ponytail: tombstones are never collected; collect them once every
-	// replica has merged them (#301).
+	// replica that has not seen the delete cannot bring the version back,
+	// until every replica holds it; see CompactObject.
 	Gone
 )
 
@@ -148,6 +148,22 @@ func MergeObject(a, b Object) Object {
 	})
 
 	return Object{Versions: out}
+}
+
+// CompactObject is the objects table's compaction: once every replica holds a
+// row, its Gone versions have done their job, and a row of nothing else goes.
+func CompactObject(o Object) (Object, table.Compaction) {
+	gone := func(v Version) bool { return v.State == Gone }
+	if !slices.ContainsFunc(o.Versions, gone) {
+		return o, table.Keep
+	}
+
+	kept := slices.DeleteFunc(slices.Clone(o.Versions), gone)
+	if len(kept) == 0 {
+		return Object{}, table.Delete
+	}
+
+	return Object{Versions: kept}, table.Replace
 }
 
 // Current returns the version reads see: the newest complete one. ok is false

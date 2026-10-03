@@ -29,6 +29,9 @@ package meta
 import (
 	"bytes"
 	"encoding/json"
+	"math"
+
+	"github.com/go-faster/fs/internal/cluster/table"
 )
 
 // Table names.
@@ -38,7 +41,8 @@ const (
 	BlockRefs = "block_refs"
 	// Parts holds multipart upload parts: partition key the upload's version
 	// ID, sort key the zero-padded part number, an LWW register per part so a
-	// re-uploaded part replaces the earlier one.
+	// re-uploaded part replaces the earlier one. Once the upload completes or
+	// aborts, each part is overwritten by PartDone, and collected.
 	Parts = "parts"
 )
 
@@ -69,6 +73,24 @@ func (a LWW[T]) Merge(b LWW[T]) LWW[T] {
 
 // MergeLWW is the merge of a table whose rows are single registers.
 func MergeLWW[T any](a, b LWW[T]) LWW[T] { return a.Merge(b) }
+
+// PartDone is a finished upload's part: a register no write can follow, with
+// no value. CompactPart collects it.
+var PartDone = LWW[json.RawMessage]{TS: math.MaxInt64}
+
+// IsPartDone reports whether a parts row is PartDone.
+func IsPartDone(r LWW[json.RawMessage]) bool {
+	return r.TS == math.MaxInt64 && (len(r.V) == 0 || string(r.V) == "null")
+}
+
+// CompactPart is the parts table's compaction.
+func CompactPart(r LWW[json.RawMessage]) (LWW[json.RawMessage], table.Compaction) {
+	if IsPartDone(r) {
+		return r, table.Delete
+	}
+
+	return r, table.Keep
+}
 
 // NextTS is the timestamp for a write to a row last written at prev: the
 // coordinator's clock, but never at or before prev. A coordinator whose clock

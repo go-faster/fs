@@ -170,6 +170,13 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		return nil, err
 	}
 
+	// The upload completed or aborted while this part was being written.
+	if meta.IsPartDone(prev) {
+		e.release(ctx, owner, w.blocks)
+
+		return nil, fs.ErrUploadNotFound
+	}
+
 	row := meta.LWW[json.RawMessage]{TS: meta.NextTS(e.ts(), prev.TS), V: mustJSON(storedPart{rec, owner})}
 
 	if err := e.parts.Insert(ctx, req.UploadID, partSK(req.PartNumber), row); err != nil {
@@ -196,7 +203,7 @@ type storedPart struct {
 
 func decodePart(r meta.LWW[json.RawMessage]) (storedPart, bool) {
 	var p storedPart
-	if len(r.V) == 0 || json.Unmarshal(r.V, &p) != nil {
+	if meta.IsPartDone(r) || len(r.V) == 0 || json.Unmarshal(r.V, &p) != nil {
 		return p, false
 	}
 
@@ -452,6 +459,8 @@ func (e *Engine) CompleteMultipartUpload(
 		e.release(ctx, part.Owner, part.Blocks)
 	}
 
+	e.finishParts(ctx, req.UploadID, stored)
+
 	return completed(req, p), nil
 }
 
@@ -489,6 +498,8 @@ func (e *Engine) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID
 	for _, p := range parts {
 		e.release(ctx, p.Owner, p.Blocks)
 	}
+
+	e.finishParts(ctx, uploadID, parts)
 
 	return nil
 }

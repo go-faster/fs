@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,7 +103,7 @@ func clusterOf(t *testing.T, n, members int) []*node {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
-		tbl, err := New("reg", db, m, mergeReg)
+		tbl, err := New("reg", db, m, mergeReg, compactReg)
 		require.NoError(t, err)
 
 		srv.Config.Handler = m.Handler()
@@ -247,7 +248,7 @@ func TestNoLayout(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	tbl, err := New("reg", db, m, mergeReg)
+	tbl, err := New("reg", db, m, mergeReg, compactReg)
 	require.NoError(t, err)
 
 	require.ErrorIs(t, tbl.Insert(context.Background(), "b", "k", reg{}), ErrNoLayout)
@@ -260,4 +261,19 @@ func sks(entries []Entry[reg]) []string {
 	}
 
 	return out
+}
+
+// compactReg collects a register holding "gone", and trims a value written
+// as "x+tomb" to "x" — a row that compacts to something smaller.
+func compactReg(r reg) (reg, Compaction) {
+	switch {
+	case r.V == "gone":
+		return r, Delete
+	case strings.HasSuffix(r.V, "+tomb"):
+		r.V = strings.TrimSuffix(r.V, "+tomb")
+
+		return r, Replace
+	}
+
+	return r, Keep
 }
