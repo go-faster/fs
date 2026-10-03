@@ -59,8 +59,12 @@ NFR-3 gates:
 ```
 
 Large objects run at least as fast as the filesystem backend did; small ones do not.
-A 4 KiB PUT is two metadata commits, a block write and a quorum's worth of
-bookkeeping — about 0.2 ms against the old backend's 60 µs. Reads check a
+A 4 KiB PUT is one metadata commit, a block write and a quorum's worth of
+bookkeeping — about 0.2 ms with fsync off against the old backend's 60 µs.
+With fsync on, durability decides: on NVMe ext4 a 4 KiB PUT (new key or
+overwrite) takes about 2 ms and a delete about 2 ms whatever the object's size
+— each one metadata commit per node, where they were two to three commits
+(5.3 ms) and, for a delete, one commit per block (34 ms for 20 MiB). Reads check a
 CRC-32C stored with each block (hardware-accelerated) rather than re-hashing
 it with SHA-256, and reuses block buffers from a pool instead of allocating one
 per block; together that keeps GET above raw single-stream read on a 4-core

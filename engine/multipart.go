@@ -153,7 +153,7 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		return nil, err
 	}
 
-	w, err := e.write(ctx, req.Reader, owner, c, cks, bucketScheme(b))
+	w, err := e.write(ctx, req.Reader, owner, c, cks, bucketScheme(b), false)
 	if err != nil {
 		return nil, err
 	}

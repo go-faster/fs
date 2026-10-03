@@ -16,6 +16,7 @@ import (
 	"github.com/go-faster/fs/internal/checksum"
 	"github.com/go-faster/fs/internal/cluster/block"
 	"github.com/go-faster/fs/internal/cluster/meta"
+	"github.com/go-faster/fs/internal/cluster/table"
 	"github.com/go-faster/fs/internal/sse"
 )
 
@@ -27,6 +28,9 @@ type written struct {
 	etag   string
 	inline []byte
 	blocks []blockLoc
+	// unreferenced: the blocks were stored without their references, which
+	// the caller writes with the version that uses them.
+	unreferenced bool
 }
 
 // write stores r's content, sealed under c when it is not nil: inline when it
@@ -36,7 +40,15 @@ type written struct {
 // GC treats as live until released.
 //
 // cks, when not nil, is fed the plaintext alongside the ETag's hash.
-func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Cipher, cks io.Writer, sch block.Scheme) (written, error) {
+//
+// With deferRef, an object of a single block is stored without its
+// reference, which the caller then writes in one commit with the version:
+// one commit per small write instead of two. A larger object references its
+// blocks as they are written, since a long upload must not outlast GC's grace
+// for its first blocks.
+func (e *Engine) write(
+	ctx context.Context, r io.Reader, owner string, c *sse.Cipher, cks io.Writer, sch block.Scheme, deferRef bool,
+) (written, error) {
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	var sink io.Writer = h
@@ -94,6 +106,8 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 			} else {
 				idx := len(sizes)
 				sizes = append(sizes, int64(n))
+				noRef := deferRef && idx == 0 && last
+				w.unreferenced = noRef
 
 				sem <- struct{}{}
 
@@ -105,7 +119,12 @@ func (e *Engine) write(ctx context.Context, r io.Reader, owner string, c *sse.Ci
 						loc.Scheme = sch.String()
 					}
 
-					err := e.storeBlock(ctx, owner, loc, chunk, func() { e.bufs.Put(bufp) })
+					var err error
+					if noRef {
+						err = e.putBlockData(ctx, loc, chunk, func() { e.bufs.Put(bufp) })
+					} else {
+						err = e.storeBlock(ctx, owner, loc, chunk, func() { e.bufs.Put(bufp) })
+					}
 
 					mu.Lock()
 					placed[idx] = loc
@@ -193,20 +212,25 @@ func (e *Engine) storeBlock(ctx context.Context, owner string, loc blockLoc, dat
 		return err
 	}
 
-	if loc.Scheme != "" {
-		sch, err := block.ParseScheme(loc.Scheme)
-		if err != nil {
-			if release != nil {
-				release()
-			}
+	return e.putBlockData(ctx, loc, data, release)
+}
 
-			return err
-		}
-
-		return e.blocks.PutCoded(ctx, loc.Hash, data, sch, release)
+// putBlockData stores a block as loc says, without referencing it.
+func (e *Engine) putBlockData(ctx context.Context, loc blockLoc, data []byte, release func()) error {
+	if loc.Scheme == "" {
+		return e.blocks.PutHashed(ctx, loc.Hash, data, release)
 	}
 
-	return e.blocks.PutHashed(ctx, loc.Hash, data, release)
+	sch, err := block.ParseScheme(loc.Scheme)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+
+		return err
+	}
+
+	return e.blocks.PutCoded(ctx, loc.Hash, data, sch, release)
 }
 
 // buffer returns a pooled buffer large enough for a block and its trailer.
@@ -279,7 +303,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 
 	id := newID()
 
-	w, err := e.write(ctx, req.Reader, id, c, cks, bucketScheme(b))
+	w, err := e.write(ctx, req.Reader, id, c, cks, bucketScheme(b), true)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +342,12 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		p.ChecksumType = string(checksum.FullObject)
 	}
 
-	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}); err != nil {
+	var refs []blockLoc
+	if w.unreferenced {
+		refs = w.blocks
+	}
+
+	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}, refs); err != nil {
 		e.release(ctx, id, w.blocks)
 
 		return nil, err
@@ -341,7 +370,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 // against the row as a quorum has it and writes the completed version — a null
 // one, replacing the key's older null versions, unless versioning is enabled.
 func (e *Engine) commit(
-	ctx context.Context, bucketID, key, id string, null bool, cond fs.Conditions, p payload, a attrs,
+	ctx context.Context, bucketID, key, id string, null bool, cond fs.Conditions, p payload, a attrs, refs []blockLoc,
 ) error {
 	defer e.lock(bucketID, key)()
 
@@ -373,13 +402,32 @@ func (e *Engine) commit(
 	v = withKey(v, p.Enc, ts)
 
 	row := meta.Object{Versions: []meta.Version{v}}
-	if err := e.objects.Insert(ctx, bucketID, key, row); err != nil {
+
+	// One commit per node for everything this write changes: the version,
+	// the references of blocks stored without them, and the release of the
+	// blocks of the versions it replaces.
+	version, err := e.objects.Row(bucketID, key, row)
+	if err != nil {
 		return err
 	}
 
-	e.releaseReplaced(ctx, before, meta.MergeObject(before, row))
+	rows := []table.Row{version}
 
-	return nil
+	for _, b := range refs {
+		r, err := e.refs.Row(b.Hash.String(), id, meta.BlockRef{})
+		if err != nil {
+			return err
+		}
+
+		rows = append(rows, r)
+	}
+
+	released, err := e.releaseRows(before, meta.MergeObject(before, row))
+	if err != nil {
+		return err
+	}
+
+	return table.Write(ctx, e.member, append(rows, released...)...)
 }
 
 // current returns the key's current version and its payload.

@@ -279,11 +279,21 @@ On disk, single node and cluster alike, the engine lives under
 - `solo/` — a single node's private one-node layout.
 
 An object of at most 3 KiB is stored inline in its metadata row; a larger one
-is split into 1 MiB blocks. A block's reference row is written before the
-block itself, and the block file is written to a temp file, fsynced, renamed
-into place, and its directory fsynced. A version becomes current only when its
-metadata row is written, after all of its blocks, so a crash never exposes a
-torn object. `storage.fsync: file` (the default) fsyncs data and metadata
+is split into 1 MiB blocks. The block file is written to a temp file, fsynced,
+renamed into place, and its directory fsynced. A version becomes current only
+when its metadata row is written, after all of its blocks, so a crash never
+exposes a torn object.
+
+A write's metadata rows go out together (`table.Write`): each node applies
+the rows it holds — of any table — in one bbolt transaction, so they land
+together and cost one commit, one fsync pair. An object of a single block
+writes its block, then the block's reference, the version, and the release of
+the blocks of any version it replaces in that one commit; a delete writes its
+tombstone and the release of every block in one. A larger object references
+each block before writing it, since a long upload must not outlast GC's grace
+for its first blocks. GC removes a block only if it is still untouched,
+re-checked under a per-hash lock that writes also take, so a writer
+re-referencing a block GC is about to remove keeps it. `storage.fsync: file` (the default) fsyncs data and metadata
 before a write is acknowledged; `none` (`engine.Options.NoSync`) skips fsync
 and can lose acknowledged writes in a crash.
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/meta"
+	"github.com/go-faster/fs/internal/cluster/table"
 )
 
 // Versioning is a view over the version list every key already has. A write
@@ -359,11 +360,21 @@ func (e *Engine) DeleteObjectVersionIf(
 	}
 
 	row := meta.Object{Versions: []meta.Version{marker}}
-	if err := e.objects.Insert(ctx, inc.ID, key, row); err != nil {
+
+	// The marker and the release of what it replaces, in one commit.
+	markerRow, err := e.objects.Row(inc.ID, key, row)
+	if err != nil {
 		return fs.DeleteResult{}, err
 	}
 
-	e.releaseReplaced(ctx, before, meta.MergeObject(before, row))
+	released, err := e.releaseRows(before, meta.MergeObject(before, row))
+	if err != nil {
+		return fs.DeleteResult{}, err
+	}
+
+	if err := table.Write(ctx, e.member, append([]table.Row{markerRow}, released...)...); err != nil {
+		return fs.DeleteResult{}, err
+	}
 
 	return fs.DeleteResult{VersionID: s3ID(marker), DeleteMarker: true}, nil
 }
@@ -382,12 +393,25 @@ func (e *Engine) removeVersion(
 	gone.State = meta.Gone
 	gone.Completed = true
 
-	if err := e.objects.Insert(ctx, bucketID, key, meta.Object{Versions: []meta.Version{gone}}); err != nil {
+	// The tombstone and the release of the version's blocks, in one commit.
+	row, err := e.objects.Row(bucketID, key, meta.Object{Versions: []meta.Version{gone}})
+	if err != nil {
 		return fs.DeleteResult{}, err
 	}
 
+	rows := []table.Row{row}
+
 	if p, err := decodePayload(v); err == nil {
-		e.release(ctx, v.ID, p.Blocks)
+		released, err := e.releaseBlocks(v.ID, p.Blocks)
+		if err != nil {
+			return fs.DeleteResult{}, err
+		}
+
+		rows = append(rows, released...)
+	}
+
+	if err := table.Write(ctx, e.member, rows...); err != nil {
+		return fs.DeleteResult{}, err
 	}
 
 	return fs.DeleteResult{VersionID: versionID, DeleteMarker: v.DeleteMarker}, nil
