@@ -77,10 +77,6 @@ type resyncItem struct {
 }
 
 // maxResyncAttempts bounds retries of one copy.
-//
-// ponytail: the queue is in memory and gives up after a few attempts; a
-// restart or a long outage leaves the gap to anti-entropy (#275), which
-// compares replicas instead of remembering what failed.
 const maxResyncAttempts = 8
 
 // NewManager returns a Manager over this node's store and registers the
@@ -260,9 +256,6 @@ func (m *Manager) GetInto(ctx context.Context, h Hash, buf []byte) ([]byte, erro
 // GC removes this node's blocks that live reports unreferenced and that have
 // not been written or touched within grace, and temporary files a crash left
 // behind. It returns how many blocks it removed.
-//
-// ponytail: blocks of partitions the layout moved off this node are kept;
-// handing them over and dropping them belongs to anti-entropy (#275).
 func (m *Manager) GC(ctx context.Context, grace time.Duration, live func(context.Context, Hash) (bool, error)) (int, error) {
 	cutoff := time.Now().Add(-grace)
 	removed := 0

@@ -143,10 +143,6 @@ func (e *Engine) response(ctx context.Context, v meta.Version) (*fs.GetObjectRes
 }
 
 // ListObjectVersions implements fs.Versioner.
-//
-// ponytail: gathers the bucket's versions before folding the page, so a page
-// costs a scan of the bucket; stream it like ListObjects if version listings
-// of large buckets get slow.
 func (e *Engine) ListObjectVersions(ctx context.Context, req *fs.ListObjectVersionsRequest) (*fs.ListObjectVersionsResponse, error) {
 	_, inc, err := e.bucket(ctx, req.Bucket)
 	if err != nil {

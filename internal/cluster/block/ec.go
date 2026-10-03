@@ -238,8 +238,6 @@ func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]b
 	if have < s.K {
 		m.degraded.Add(1)
 
-		// ponytail: every parity shard at once; one at a time if parity
-		// reads show up in the network.
 		parity := make([]int, 0, s.M)
 		for i := s.K; i < len(nodes); i++ {
 			parity = append(parity, i)

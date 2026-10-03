@@ -272,9 +272,6 @@ func (e *Engine) ListParts(ctx context.Context, bucket, key, uploadID string) ([
 }
 
 // ListMultipartUploads lists the bucket's uploads in flight.
-//
-// ponytail: scans every row of the bucket; an index of open uploads if
-// buckets with many keys list uploads often.
 func (e *Engine) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.MultipartUpload, error) {
 	_, inc, err := e.bucket(ctx, bucket)
 	if err != nil {

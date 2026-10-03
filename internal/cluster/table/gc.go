@@ -208,9 +208,6 @@ func (t *Table[R]) collectPass(ctx context.Context, delay time.Duration) (more b
 				continue
 			}
 
-			// ponytail: a replica that misses the replace keeps the
-			// tombstone, which anti-entropy spreads back and the next pass
-			// collects; a retry here would only be faster.
 			t.onAll(ctx, owners, func(id layout.NodeID) error {
 				return t.on(ctx, id, "replace", repl, nil, func() (any, error) {
 					return nil, t.localReplace(repl.Entries)

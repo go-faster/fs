@@ -60,9 +60,6 @@ func (c RunConfig) withDefaults() RunConfig {
 }
 
 // Run does the engine's background work until ctx is canceled.
-//
-// ponytail: a failed sweep or collection is retried next period, and
-// visible in Stats; nothing is logged here — the library stays quiet.
 func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 	cfg = cfg.withDefaults()
 
@@ -159,7 +156,6 @@ func (e *Engine) lastGC() time.Time {
 }
 
 func (e *Engine) setLastGC(t time.Time) {
-	// ponytail: a failed record only makes the next start collect early.
 	_ = e.db.Update(func(tx *bbolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists(runBucket)
 		if err != nil {

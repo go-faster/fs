@@ -25,9 +25,6 @@ import (
 // row's key hash. A replica asks another for its digests of the partitions
 // they share and pulls the rows of every slot whose digest differs, so one
 // missed write costs a 256th of a partition, not all of it.
-//
-// ponytail: every sweep scans the whole table, on this node and on each peer
-// asked; a deeper hash tree if sweeps get slow.
 
 // Slot is a partition's subdivision that digests are kept for.
 type Slot struct {
@@ -162,7 +159,6 @@ func (t *Table[R]) Run(ctx context.Context, interval time.Duration) {
 			last = l.Version
 		}
 
-		// ponytail: a failed sweep is retried next period; the stats say so.
 		_ = t.Sync(ctx)
 	}
 }
