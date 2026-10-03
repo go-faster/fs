@@ -150,9 +150,10 @@ s3tests/functional/test_s3.py::test_get_bucket_policy_status
 
 # --- Expect header handling (2) -----------------------------------------------
 #
-# A request carrying an Expect value we do not recognise is refused 417, where S3
-# ignores it and processes the request. A real gap and a small one — worth fixing
-# rather than keeping, and listed here only so the gate is honest meanwhile.
+# A request carrying an Expect value other than 100-continue is refused 417, where
+# S3 ignores it and processes the request. The refusal is Go's net/http, which
+# answers before any handler runs (#249), so it is not ours to change short of
+# replacing the HTTP server.
 
 s3tests/functional/test_headers.py::test_bucket_create_bad_expect_mismatch
 s3tests/functional/test_headers.py::test_object_create_bad_expect_mismatch
