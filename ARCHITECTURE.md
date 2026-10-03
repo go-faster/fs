@@ -306,7 +306,8 @@ collect the same way, with one replica.
 
 **Periodic-pass scheduling.** The lifecycle sweep records when it last
 completed — `<root>/.lastrun/<task>.json` — and schedules the next pass one interval
-after that rather than one interval after process start. Without the record a
+after that rather than one interval after process start. The engine's hourly
+collection (tombstones, then blocks) does the same, recording in `meta.db`. Without the record a
 periodic loop has to pick between two wrong answers: a ticker never fires on a
 node restarted more often than the interval (redeploy hourly, never sweep), and
 running on start makes a node that restarts often re-walk everything every time.
