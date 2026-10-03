@@ -56,6 +56,7 @@ const syncPage = 1000
 type syncState struct {
 	mu    sync.Mutex
 	stats SyncStats
+	gc    GCStats
 }
 
 func (t *Table[R]) registerSync() {

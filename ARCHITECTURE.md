@@ -290,6 +290,20 @@ repairs replicas that missed a write, and a block GC removes blocks nothing
 references. There is no background scrubber: verification happens on every
 read, and repair is anti-entropy's job.
 
+**Tombstones.** A delete is a merge like any other write: a deleted or aborted
+version stays in its object row as `Gone`, a released block reference stays
+`Deleted`, a finished upload's parts are overwritten by a final "done"
+register — so a replica that missed the delete cannot bring the data back.
+Each table queues the rows that hold one (`<table>.gc` in `meta.db`, with the
+hash of the row's bytes). A day later (`engine.RunConfig.Tombstones`), the
+hourly collection writes each queued row to every replica, then has every
+replica drop the tombstones if its row is still exactly that; a replica that
+merged a newer write meanwhile keeps it, and anti-entropy restores it to the
+rest. With any replica unreachable the row waits for the next pass. The day is
+what covers a write still in flight and a partition handover a layout change
+started: either could carry the row from before its delete. Single nodes
+collect the same way, with one replica.
+
 **Periodic-pass scheduling.** The lifecycle sweep records when it last
 completed — `<root>/.lastrun/<task>.json` — and schedules the next pass one interval
 after that rather than one interval after process start. Without the record a

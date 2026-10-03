@@ -136,7 +136,10 @@ in an unknown format stops the node from starting rather than being misread.
   block copies a replica is missing, the number to watch —
   `fs.engine.blocks.corrupt`, `fs.engine.blocks.collected`,
   `fs.engine.sync.{out_of_sync,unreachable,age}{table}` (anti-entropy, cluster
-  only) and `fs.engine.gc.age`.
+  only), `fs.engine.gc.age`, and
+  `fs.engine.tombstones.{queued,collected,deferred}{table}` — deleted rows
+  wait a day, then go once every replica has them; `queued` climbing with
+  `deferred` means a replica has been unreachable through collections.
 - **Cluster** (when `cluster.node_id` is set): `fs.cluster.layout.version` —
   compare across nodes; one lagging means gossip is not reaching it — and
   `fs.cluster.peers{state=up|down}`. `fs layout nodes` shows the same per

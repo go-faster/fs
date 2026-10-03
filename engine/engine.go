@@ -105,19 +105,19 @@ func New(cfg Config) (*Engine, error) {
 
 	var err error
 
-	if e.buckets, err = table.New(meta.Buckets, cfg.DB, cfg.Member, meta.MergeBucket); err != nil {
+	if e.buckets, err = table.New(meta.Buckets, cfg.DB, cfg.Member, meta.MergeBucket, nil); err != nil {
 		return nil, err
 	}
 
-	if e.objects, err = table.New(meta.Objects, cfg.DB, cfg.Member, meta.MergeObject); err != nil {
+	if e.objects, err = table.New(meta.Objects, cfg.DB, cfg.Member, meta.MergeObject, meta.CompactObject); err != nil {
 		return nil, err
 	}
 
-	if e.refs, err = table.New(meta.BlockRefs, cfg.DB, cfg.Member, meta.MergeBlockRef); err != nil {
+	if e.refs, err = table.New(meta.BlockRefs, cfg.DB, cfg.Member, meta.MergeBlockRef, meta.CompactBlockRef); err != nil {
 		return nil, err
 	}
 
-	if e.parts, err = table.New(meta.Parts, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage]); err != nil {
+	if e.parts, err = table.New(meta.Parts, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], meta.CompactPart); err != nil {
 		return nil, err
 	}
 
@@ -259,6 +259,19 @@ func (e *Engine) releaseReplaced(ctx context.Context, before, after meta.Object)
 			e.release(ctx, v.ID, p.Blocks)
 		}
 	}
+}
+
+// finishParts marks every part of a completed or aborted upload done, so
+// tombstone collection removes them.
+func (e *Engine) finishParts(ctx context.Context, uploadID string, parts map[int]storedPart) {
+	rows := make([]table.Entry[meta.LWW[json.RawMessage]], 0, len(parts))
+	for n := range parts {
+		rows = append(rows, table.Entry[meta.LWW[json.RawMessage]]{PK: uploadID, SK: partSK(n), Row: meta.PartDone})
+	}
+
+	// ponytail: a failure leaves the part rows to anti-entropy, never
+	// collected; metadata only, the blocks are released either way.
+	_ = e.parts.InsertMany(ctx, uploadID, rows)
 }
 
 // BlockLive reports whether any version still references h, for block GC.

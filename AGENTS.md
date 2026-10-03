@@ -90,11 +90,14 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/cluster/table` — replicated metadata tables: CRDT rows (merge
   must be commutative, associative, idempotent) keyed by partition key + sort
   key, stored locally in bbolt, written and read at quorum over the layout's
-  first three slots, with read repair.
+  first three slots, with read repair. Tombstone collection (`gc.go`) queues
+  rows a table's compaction would shrink and, a day later, compacts them on
+  every replica only where the row is still exactly the queued one.
 - `internal/cluster/meta` — the metadata rows and their merges: buckets
   (incarnation + per-setting LWW registers), objects (version list: uploads,
   versions, delete markers, null versions; Uploading → Complete → Gone),
-  block refs. Pure; merge laws are property-tested. Its package doc states
+  block refs, multipart parts (`PartDone` once the upload finishes), and each
+  table's compaction (what a tombstone reduces to). Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
 - `internal/cluster/block` — content-addressed blocks: a local disk store
   (SHA-256 names; a CRC-32C trailer per file checked on every local read,
@@ -109,7 +112,7 @@ automated resumable migration and the public API becomes additive-only.
   `<root>/.engine/` (`meta.db`, `blocks/`, `solo/`), a single node being a
   one-node layout (`cmd/fs/engine.go`: open, legacy-layout refusal,
   `fs.engine.*` metrics);
-  `engine.Run` drives anti-entropy, resync and block GC. Versioning is a view over the
+  `engine.Run` drives anti-entropy, resync, tombstone collection and block GC. Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 seals data
   through `internal/sse`; multipart parts are sealed as they arrive and not
   re-encrypted at completion. Checksums (`x-amz-checksum-*`) are of the
