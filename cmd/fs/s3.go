@@ -312,6 +312,7 @@ Command-line flags override YAML configuration values.`,
 						StartTime:   startTime,
 						Reloader:    rel,
 						Cluster:     member,
+						Engine:      eng,
 					}
 
 					grp.Go(func() error {

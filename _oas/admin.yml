@@ -164,8 +164,52 @@ paths:
                 $ref: "#/components/schemas/ClusterNodeList"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/encryption/rotate:
+    post:
+      operationId: "rotateEncryptionKeys"
+      summary: "Move every data key onto the current master key"
+      description: >
+        Rewrap the data key of every encrypted object version and in-flight
+        upload under the current master key (encryption.master_key_file).
+        Only the keys are rewritten, never object data. Safe to interrupt and
+        run again: keys already current are skipped. A previous master key
+        can be removed from encryption.previous_key_files once a run reports
+        remaining 0. In a cluster, every node must already have the new key
+        as current and the old one as previous; one run covers the cluster.
+        Returns 501 when no master key is configured.
+      responses:
+        200:
+          description: What the rotation did.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RotateResult"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   schemas:
+    RotateResult:
+      type: object
+      required:
+        - rewrapped
+        - current
+        - remaining
+        - failed
+      properties:
+        rewrapped:
+          type: integer
+          description: "Data keys moved onto the current master key by this run."
+        current:
+          type: integer
+          description: "Data keys already under the current master key."
+        remaining:
+          type: integer
+          description: "Data keys that could not be moved; the old master key must stay while this is not 0."
+        failed:
+          type: array
+          description: "Up to 100 of the versions not moved, as bucket/key@version: reason."
+          items:
+            type: string
     InstanceInfo:
       type: object
       required:

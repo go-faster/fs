@@ -91,6 +91,7 @@ func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultip
 		}),
 		Attrs: meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(attrs{Tags: req.Tags, ACL: req.ACL})},
 	}
+	v = withKey(v, enc, ts)
 
 	if err := e.objects.Insert(ctx, inc.ID, req.Key, meta.Object{Versions: []meta.Version{v}}); err != nil {
 		return nil, err
@@ -128,9 +129,9 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 		return nil, err
 	}
 
-	var up uploadPayload
-	if err := json.Unmarshal(v.Payload, &up); err != nil {
-		return nil, errors.Wrap(err, "decode upload")
+	up, err := decodeUpload(v)
+	if err != nil {
+		return nil, err
 	}
 
 	c, err := e.cipher(up.Enc, req.PartNumber)
@@ -347,9 +348,9 @@ func (e *Engine) CompleteMultipartUpload(
 		return nil, fs.ErrUploadNotFound
 	}
 
-	var up uploadPayload
-	if err := json.Unmarshal(v.Payload, &up); err != nil {
-		return nil, errors.Wrap(err, "decode upload")
+	up, err := decodeUpload(v)
+	if err != nil {
+		return nil, err
 	}
 
 	stored, err := e.uploadParts(ctx, req.UploadID)

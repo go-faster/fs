@@ -112,7 +112,9 @@ automated resumable migration and the public API becomes additive-only.
   `<root>/.engine/` (`meta.db`, `blocks/`, `solo/`), a single node being a
   one-node layout (`cmd/fs/engine.go`: open, legacy-layout refusal,
   `fs.engine.*` metrics);
-  `engine.Run` drives anti-entropy, resync, tombstone collection and block GC. Versioning is a view over the
+  `engine.Run` drives anti-entropy, resync, tombstone collection and block GC;
+  `Engine.RotateKeys` rewraps data keys (kept in `meta.Version.Key`) onto
+  the current master key, for `fs encrypt rotate`. Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 seals data
   through `internal/sse`; multipart parts are sealed as they arrive and not
   re-encrypted at completion. Checksums (`x-amz-checksum-*`) are of the

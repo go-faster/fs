@@ -290,6 +290,14 @@ repairs replicas that missed a write, and a block GC removes blocks nothing
 references. There is no background scrubber: verification happens on every
 read, and repair is anti-entropy's job.
 
+**Encryption keys.** An encrypted version's data key, sealed by the master
+key ring, is not in the version's write-once payload but in its own register
+(`meta.Version.Key`), merged apart from the rest like `Attrs`. That is what
+lets `Engine.RotateKeys` (admin `POST /api/v1/encryption/rotate`, CLI
+`fs encrypt rotate`) rewrap every key under the current master key with a
+newer write; an upload rotated in flight keeps the rewrapped key when it
+completes, since completion carries the version's registers.
+
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays
 `Deleted`, a finished upload's parts are overwritten by a final "done"

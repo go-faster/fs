@@ -88,6 +88,17 @@ type Invoker interface {
 	//
 	// POST /api/v1/reload
 	ReloadConfig(ctx context.Context) (*ReloadResult, error)
+	// RotateEncryptionKeys invokes rotateEncryptionKeys operation.
+	//
+	// Rewrap the data key of every encrypted object version and in-flight upload under the current master
+	// key (encryption.master_key_file). Only the keys are rewritten, never object data. Safe to interrupt
+	// and run again: keys already current are skipped. A previous master key can be removed from
+	// encryption.previous_key_files once a run reports remaining 0. In a cluster, every node must already
+	// have the new key as current and the old one as previous; one run covers the cluster. Returns 501
+	// when no master key is configured.
+	//
+	// POST /api/v1/encryption/rotate
+	RotateEncryptionKeys(ctx context.Context) (*RotateResult, error)
 }
 
 // Client implements OAS client.
@@ -819,6 +830,91 @@ func (c *Client) sendReloadConfig(ctx context.Context) (res *ReloadResult, err e
 
 	stage = "DecodeResponse"
 	result, err := decodeReloadConfigResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RotateEncryptionKeys invokes rotateEncryptionKeys operation.
+//
+// Rewrap the data key of every encrypted object version and in-flight upload under the current master
+// key (encryption.master_key_file). Only the keys are rewritten, never object data. Safe to interrupt
+// and run again: keys already current are skipped. A previous master key can be removed from
+// encryption.previous_key_files once a run reports remaining 0. In a cluster, every node must already
+// have the new key as current and the old one as previous; one run covers the cluster. Returns 501
+// when no master key is configured.
+//
+// POST /api/v1/encryption/rotate
+func (c *Client) RotateEncryptionKeys(ctx context.Context) (*RotateResult, error) {
+	res, err := c.sendRotateEncryptionKeys(ctx)
+	return res, err
+}
+
+func (c *Client) sendRotateEncryptionKeys(ctx context.Context) (res *RotateResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("rotateEncryptionKeys"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/api/v1/encryption/rotate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RotateEncryptionKeysOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/encryption/rotate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRotateEncryptionKeysResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -200,6 +200,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 				}
 
+			case 'e': // Prefix: "encryption/rotate"
+
+				if l := len("encryption/rotate"); len(elem) >= l && elem[0:l] == "encryption/rotate" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch r.Method {
+					case "POST":
+						s.handleRotateEncryptionKeysRequest([0]string{}, elemIsEscaped, w, r)
+					default:
+						s.notAllowed(w, r, notAllowedParams{
+							allowedMethods: "POST",
+							allowedHeaders: nil,
+							acceptPost:     "",
+							acceptPatch:    "",
+						})
+					}
+
+					return
+				}
+
 			case 'i': // Prefix: "info"
 
 				if l := len("info"); len(elem) >= l && elem[0:l] == "info" {
@@ -490,6 +515,31 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						}
 					}
 
+				}
+
+			case 'e': // Prefix: "encryption/rotate"
+
+				if l := len("encryption/rotate"); len(elem) >= l && elem[0:l] == "encryption/rotate" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					// Leaf node.
+					switch method {
+					case "POST":
+						r.name = RotateEncryptionKeysOperation
+						r.summary = "Move every data key onto the current master key"
+						r.operationID = "rotateEncryptionKeys"
+						r.operationGroup = ""
+						r.pathPattern = "/api/v1/encryption/rotate"
+						r.args = args
+						r.count = 0
+						return r, true
+					default:
+						return
+					}
 				}
 
 			case 'i': // Prefix: "info"

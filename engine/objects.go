@@ -354,6 +354,7 @@ func (e *Engine) commit(
 		Payload: mustJSON(p),
 		Attrs:   meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(a)},
 	}
+	v = withKey(v, p.Enc, ts)
 
 	row := meta.Object{Versions: []meta.Version{v}}
 	if err := e.objects.Insert(ctx, bucketID, key, row); err != nil {

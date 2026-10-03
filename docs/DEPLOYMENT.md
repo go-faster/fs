@@ -109,6 +109,13 @@ exporters).
   `revision:` marker at the top of the config and read it back from
   `GET /api/v1/info` (`config_revision`) or the reload response to confirm a
   node has loaded a specific config, e.g. after an orchestrator rewrites it.
+- **Encryption at rest (SSE-S3)**: `encryption.master_key_file` (or
+  `FS_MASTER_KEY`) seals each object's own data key. To rotate: make the new
+  key `master_key_file` and list the old one in
+  `encryption.previous_key_files` on every node, restart, run
+  `fs encrypt rotate` (`POST /api/v1/encryption/rotate`; one run covers a
+  cluster) until it reports 0 remaining, then drop the old key. Rotation
+  rewrites keys, never object data, and is safe to interrupt and rerun.
 
 ## Cluster mode
 
