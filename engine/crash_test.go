@@ -116,6 +116,7 @@ func TestCrashConsistency(t *testing.T) {
 			dir := t.TempDir()
 
 			cmd := exec.Command(os.Args[0], "-test.run=^TestCrashWorker$", "-test.v") //nolint:gosec // Re-exec of the test binary.
+
 			cmd.Env = append(os.Environ(), "FS_CRASH_DIR="+dir)
 			require.NoError(t, cmd.Start())
 
