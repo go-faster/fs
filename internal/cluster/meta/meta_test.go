@@ -51,6 +51,10 @@ func randomWrite(r *rand.Rand) Version {
 		v.Attrs = LWW[json.RawMessage]{TS: r.Int64N(3), V: json.RawMessage(fmt.Sprintf(`{"tags":%d}`, r.IntN(3)))}
 	}
 
+	if v.State != Gone && r.IntN(2) == 0 {
+		v.Key = LWW[json.RawMessage]{TS: r.Int64N(3), V: json.RawMessage(fmt.Sprintf(`{"k":%d}`, r.IntN(3)))}
+	}
+
 	return v
 }
 
@@ -271,6 +275,24 @@ func TestLWW(t *testing.T) {
 
 	assert.Equal(t, int64(10), NextTS(10, 3))
 	assert.Equal(t, int64(4), NextTS(2, 3), "a clock behind the row still orders after it")
+}
+
+func TestKeyRewrapSurvivesCompletion(t *testing.T) {
+	// A rotation rewraps an upload's key while another node completes it
+	// with the key it read: the completed version keeps the rewrapped key.
+	upload := Version{ID: "u", TS: 1, State: Uploading, Payload: json.RawMessage(`{"up":1}`)}
+	upload.Key = LWW[json.RawMessage]{TS: 1, V: json.RawMessage(`"old"`)}
+
+	rotated := upload
+	rotated.Key = LWW[json.RawMessage]{TS: 2, V: json.RawMessage(`"new"`)}
+
+	done := upload
+	done.TS, done.State, done.Payload = 3, Complete, json.RawMessage(`{"etag":"x"}`)
+
+	o := MergeObject(row(rotated), row(done))
+	require.Len(t, o.Versions, 1)
+	assert.Equal(t, Complete, o.Versions[0].State)
+	assert.JSONEq(t, `"new"`, string(o.Versions[0].Key.V))
 }
 
 func TestAttrsMergeApart(t *testing.T) {

@@ -68,6 +68,17 @@ type Handler interface {
 	//
 	// POST /api/v1/reload
 	ReloadConfig(ctx context.Context) (*ReloadResult, error)
+	// RotateEncryptionKeys implements rotateEncryptionKeys operation.
+	//
+	// Rewrap the data key of every encrypted object version and in-flight upload under the current master
+	// key (encryption.master_key_file). Only the keys are rewritten, never object data. Safe to interrupt
+	// and run again: keys already current are skipped. A previous master key can be removed from
+	// encryption.previous_key_files once a run reports remaining 0. In a cluster, every node must already
+	// have the new key as current and the old one as previous; one run covers the cluster. Returns 501
+	// when no master key is configured.
+	//
+	// POST /api/v1/encryption/rotate
+	RotateEncryptionKeys(ctx context.Context) (*RotateResult, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.

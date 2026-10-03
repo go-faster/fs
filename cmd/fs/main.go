@@ -20,6 +20,7 @@ func Root() *cobra.Command {
 	cmd.AddCommand(S3())
 	cmd.AddCommand(Systemd())
 	cmd.AddCommand(Layout())
+	cmd.AddCommand(Encrypt())
 
 	return cmd
 }

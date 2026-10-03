@@ -369,10 +369,9 @@ operations.
 Planned and in progress (see [findings/ROADMAP.md](findings/ROADMAP.md) for the
 authoritative, detailed list):
 
-- **Object versioning** — per-object version chains, delete markers, per-version
-  tags/ACLs (the largest upcoming item).
-- **Server-side encryption (SSE-S3)** — envelope AES-256-GCM at rest.
-- **Lifecycle expiration** and, after versioning, noncurrent-version cleanup.
+- **SSE-C** — customer-provided encryption keys
+  ([#285](https://github.com/go-faster/fs/issues/285)).
+- **Lifecycle noncurrent-version cleanup** and the rest of lifecycle.
 - **Cluster mode** — a Garage-style cluster with zone/rack-aware replication
   ([#279](https://github.com/go-faster/fs/issues/279)).
 - **Virtual-host–style addressing**, **ACME / automatic TLS**, and **static

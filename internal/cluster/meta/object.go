@@ -52,6 +52,10 @@ type Version struct {
 	// Attrs are what can change after the version is written — its tags,
 	// its ACL — as one register, merged apart from the rest of the version.
 	Attrs LWW[json.RawMessage] `json:"attrs,omitzero"`
+	// Key is the engine's sealed data key of an encrypted version or upload,
+	// a register of its own so rotating the master key can rewrap it: the
+	// payload is written once.
+	Key LWW[json.RawMessage] `json:"key,omitzero"`
 }
 
 func (v Version) before(w Version) bool {
@@ -71,20 +75,21 @@ func mergeVersion(a, b Version) Version {
 	switch {
 	case b.State > a.State:
 		out = b
-	case b.State == a.State && bytes.Compare(encode(withoutAttrs(b)), encode(withoutAttrs(a))) > 0:
+	case b.State == a.State && bytes.Compare(encode(withoutRegisters(b)), encode(withoutRegisters(a))) > 0:
 		out = b
 	}
 
 	out.Completed = a.Completed || b.Completed || out.State == Complete
 	out.Attrs = a.Attrs.Merge(b.Attrs)
+	out.Key = a.Key.Merge(b.Key)
 
 	return out
 }
 
-// withoutAttrs is v as the choice between two copies sees it: their Attrs
-// are merged on their own, so they must not decide which copy is kept.
-func withoutAttrs(v Version) Version {
-	v.Attrs = LWW[json.RawMessage]{}
+// withoutRegisters is v as the choice between two copies sees it: Attrs and
+// Key are merged on their own, so they must not decide which copy is kept.
+func withoutRegisters(v Version) Version {
+	v.Attrs, v.Key = LWW[json.RawMessage]{}, LWW[json.RawMessage]{}
 
 	return v
 }
@@ -115,7 +120,7 @@ func MergeObject(a, b Object) Object {
 		}
 
 		if v.State == Gone {
-			v.Payload, v.DeleteMarker, v.Attrs = nil, false, LWW[json.RawMessage]{}
+			v.Payload, v.DeleteMarker, v.Attrs, v.Key = nil, false, LWW[json.RawMessage]{}, LWW[json.RawMessage]{}
 		}
 
 		byID[v.ID] = v

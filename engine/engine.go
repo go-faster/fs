@@ -185,7 +185,17 @@ func decodePayload(v meta.Version) (payload, error) {
 		return p, errors.Wrapf(err, "decode version %s", v.ID)
 	}
 
-	return p, nil
+	return p, loadKey(v, p.Enc)
+}
+
+// decodeUpload returns an in-flight upload's payload.
+func decodeUpload(v meta.Version) (uploadPayload, error) {
+	var up uploadPayload
+	if err := json.Unmarshal(v.Payload, &up); err != nil {
+		return up, errors.Wrapf(err, "decode upload %s", v.ID)
+	}
+
+	return up, loadKey(v, up.Enc)
 }
 
 func decodeAttrs(v meta.Version) attrs {

@@ -10,8 +10,10 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/adminapi"
 	"github.com/go-faster/fs/auth"
+	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/internal/cluster/peer"
 )
 
@@ -40,6 +42,8 @@ type Options struct {
 	// Cluster is this node's cluster membership; nil when cluster mode is
 	// off, where the cluster endpoints return 501.
 	Cluster *peer.Member
+	// Engine is the storage, for key rotation; nil returns 501.
+	Engine *engine.Engine
 	// now overrides the clock in tests.
 	now func() time.Time
 }
@@ -216,4 +220,24 @@ func sourceToAPI(s auth.Source) adminapi.Source {
 	}
 
 	return adminapi.SourceConfig
+}
+
+// RotateEncryptionKeys moves every data key onto the current master key.
+func (a *AdminAPI) RotateEncryptionKeys(ctx context.Context) (*adminapi.RotateResult, error) {
+	if a.opts.Engine == nil {
+		return nil, apiErr(http.StatusNotImplemented, errors.New("no storage engine"))
+	}
+
+	res, err := a.opts.Engine.RotateKeys(ctx)
+	if errors.Is(err, fs.ErrUnsupportedOperation) {
+		return nil, apiErr(http.StatusNotImplemented, err)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &adminapi.RotateResult{
+		Rewrapped: res.Rewrapped, Current: res.Current, Remaining: res.Remaining, Failed: append([]string{}, res.Failed...),
+	}, nil
 }

@@ -1036,6 +1036,58 @@ func (s *ReloadResult) SetConfigRevision(val OptString) {
 	s.ConfigRevision = val
 }
 
+// Ref: #/components/schemas/RotateResult
+type RotateResult struct {
+	// Data keys moved onto the current master key by this run.
+	Rewrapped int `json:"rewrapped"`
+	// Data keys already under the current master key.
+	Current int `json:"current"`
+	// Data keys that could not be moved; the old master key must stay while this is not 0.
+	Remaining int `json:"remaining"`
+	// Up to 100 of the versions not moved, as bucket/key@version: reason.
+	Failed []string `json:"failed"`
+}
+
+// GetRewrapped returns the value of Rewrapped.
+func (s *RotateResult) GetRewrapped() int {
+	return s.Rewrapped
+}
+
+// GetCurrent returns the value of Current.
+func (s *RotateResult) GetCurrent() int {
+	return s.Current
+}
+
+// GetRemaining returns the value of Remaining.
+func (s *RotateResult) GetRemaining() int {
+	return s.Remaining
+}
+
+// GetFailed returns the value of Failed.
+func (s *RotateResult) GetFailed() []string {
+	return s.Failed
+}
+
+// SetRewrapped sets the value of Rewrapped.
+func (s *RotateResult) SetRewrapped(val int) {
+	s.Rewrapped = val
+}
+
+// SetCurrent sets the value of Current.
+func (s *RotateResult) SetCurrent(val int) {
+	s.Current = val
+}
+
+// SetRemaining sets the value of Remaining.
+func (s *RotateResult) SetRemaining(val int) {
+	s.Remaining = val
+}
+
+// SetFailed sets the value of Failed.
+func (s *RotateResult) SetFailed(val []string) {
+	s.Failed = val
+}
+
 // Where the credential is defined.
 // Ref: #/components/schemas/Source
 type Source string

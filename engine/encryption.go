@@ -2,11 +2,13 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
 	"github.com/go-faster/errors"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/cluster/meta"
 	"github.com/go-faster/fs/internal/sse"
 )
 
@@ -24,10 +26,40 @@ var _ fs.BucketEncrypter = (*Engine)(nil)
 
 const settingEncryption = "encryption"
 
-// encInfo is how a version or an upload is encrypted.
+// encInfo is how a version or an upload is encrypted. Its data key is not in
+// the payload, which is written once, but in the version's Key register, so
+// a master key rotation can rewrap it; withKey and loadKey move it.
 type encInfo struct {
-	Key       sse.WrappedKey `json:"key"`
+	Key       sse.WrappedKey `json:"-"`
 	NonceBase []byte         `json:"nonce_base"`
+}
+
+// withKey sets v's Key register from info, written at ts.
+func withKey(v meta.Version, info *encInfo, ts int64) meta.Version {
+	if info != nil {
+		v.Key = meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(info.Key)}
+	}
+
+	return v
+}
+
+// loadKey fills info's data key from v's Key register.
+func loadKey(v meta.Version, info *encInfo) error {
+	if info == nil {
+		return nil
+	}
+
+	// Stores from before keys were registers carry none: refuse rather than
+	// answer as if the object were unreadable for another reason.
+	if len(v.Key.V) == 0 {
+		return errors.Errorf("encrypted version %s has no data key register; the store predates key rotation and must be rebuilt", v.ID)
+	}
+
+	if err := json.Unmarshal(v.Key.V, &info.Key); err != nil {
+		return errors.Wrapf(err, "decode data key of %s", v.ID)
+	}
+
+	return nil
 }
 
 // beginEncryption validates algorithm and mints a data key for a new object

@@ -35,17 +35,7 @@ gossip.`,
 	cmd.PersistentFlags().StringVar(&addr, "admin-addr", envOr("FS_ADMIN_ADDR", "http://"+DefaultAdminAddr), "Admin API base URL")
 	cmd.PersistentFlags().StringVar(&token, "token", "", "Admin API token (default $FS_ADMIN_TOKEN)")
 
-	client := func() (*adminapi.Client, error) {
-		t := cmp.Or(token, os.Getenv(envAdminToken))
-
-		if t == "" {
-			return nil, errors.Errorf("no admin token: set --token or %s", envAdminToken)
-		}
-
-		return adminapi.NewClient(addr, adminapi.WithClient(&http.Client{
-			Transport: bearerTransport{token: t, base: http.DefaultTransport},
-		}))
-	}
+	client := func() (*adminapi.Client, error) { return adminClient(addr, token) }
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "show",
@@ -269,4 +259,18 @@ func (t bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("Authorization", "Bearer "+t.token)
 
 	return t.base.RoundTrip(r)
+}
+
+// adminClient returns an admin API client for addr, authenticating with token
+// or, when empty, $FS_ADMIN_TOKEN.
+func adminClient(addr, token string) (*adminapi.Client, error) {
+	t := cmp.Or(token, os.Getenv(envAdminToken))
+
+	if t == "" {
+		return nil, errors.Errorf("no admin token: set --token or %s", envAdminToken)
+	}
+
+	return adminapi.NewClient(addr, adminapi.WithClient(&http.Client{
+		Transport: bearerTransport{token: t, base: http.DefaultTransport},
+	}))
 }

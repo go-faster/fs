@@ -197,3 +197,70 @@ func TestKeyRotation(t *testing.T) {
 	_, err = e.GetObject(context.Background(), "b", "k")
 	require.ErrorIs(t, err, fs.ErrUnsupportedOperation)
 }
+
+func readAll(t *testing.T, e *Engine, key string) string {
+	t.Helper()
+
+	resp, err := e.GetObject(context.Background(), "b", key)
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Reader.Close() }()
+
+	got, err := io.ReadAll(resp.Reader)
+	require.NoError(t, err)
+
+	return string(got)
+}
+
+// TestRotateThenRetire is the point of rotation: once it reports nothing
+// remaining, the old master key can go and everything still reads — objects,
+// and an upload in flight that completes after the rotation.
+func TestRotateThenRetire(t *testing.T) {
+	ctx := context.Background()
+	old, current := masterKey(t), masterKey(t)
+
+	e := sealedEngine(t, keyring(t, old))
+
+	small, large := "inline under the old key", string(bytes.Repeat([]byte("blocks "), 3000))
+	putSealed(t, e, "small", []byte(small))
+	putSealed(t, e, "large", []byte(large))
+
+	up, err := e.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: "b", Key: "mp", ServerSideEncryption: sse.Algorithm})
+	require.NoError(t, err)
+
+	part, err := e.UploadPart(ctx, &fs.UploadPartRequest{
+		Bucket: "b", Key: "mp", UploadID: up.UploadID, PartNumber: 1, Reader: bytes.NewReader([]byte(large)), Size: int64(len(large)),
+	})
+	require.NoError(t, err)
+
+	// Without the old key in the ring, nothing can move.
+	e.keyring = keyring(t, current)
+
+	res, err := e.RotateKeys(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, res.Remaining)
+	assert.Len(t, res.Failed, 3)
+	assert.Contains(t, res.Failed[0], "no master key")
+
+	e.keyring = keyring(t, current, old)
+
+	res, err = e.RotateKeys(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, RotateResult{Rewrapped: 3}, res)
+
+	res, err = e.RotateKeys(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, RotateResult{Current: 3}, res, "a second run has nothing to do")
+
+	// Retire the old key.
+	e.keyring = keyring(t, current)
+
+	assert.Equal(t, small, readAll(t, e, "small"))
+	assert.Equal(t, large, readAll(t, e, "large"))
+
+	_, err = e.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket: "b", Key: "mp", UploadID: up.UploadID, Parts: []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, large, readAll(t, e, "mp"))
+}
