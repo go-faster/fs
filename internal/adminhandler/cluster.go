@@ -33,7 +33,7 @@ func (a *AdminAPI) GetLayout(_ context.Context) (*adminapi.Layout, error) {
 // ApplyLayout computes the next layout from the requested roles and, unless
 // it is a dry run, adopts it.
 func (a *AdminAPI) ApplyLayout(
-	_ context.Context, req *adminapi.ApplyLayoutRequest, params adminapi.ApplyLayoutParams,
+	ctx context.Context, req *adminapi.ApplyLayoutRequest, params adminapi.ApplyLayoutParams,
 ) (*adminapi.LayoutChange, error) {
 	if a.opts.Cluster == nil {
 		return nil, a.errNoCluster()
@@ -50,11 +50,22 @@ func (a *AdminAPI) ApplyLayout(
 	}
 
 	dryRun := params.DryRun.Or(false)
+	opts := layout.Options{Partitions: req.Partitions.Or(0), Widths: req.Widths}
 
-	next, moved, err := a.opts.Cluster.Apply(nodes, layout.Options{
-		Partitions: req.Partitions.Or(0),
-		Widths:     req.Widths,
-	}, dryRun)
+	// A layout narrower than a bucket's erasure code would strand its
+	// shards: refuse it before anything is adopted.
+	if a.opts.Engine != nil {
+		next, _, err := a.opts.Cluster.Apply(nodes, opts, true)
+		if err != nil {
+			return nil, apiErr(http.StatusBadRequest, err)
+		}
+
+		if err := a.opts.Engine.CheckLayout(ctx, next); err != nil {
+			return nil, apiErr(http.StatusBadRequest, err)
+		}
+	}
+
+	next, moved, err := a.opts.Cluster.Apply(nodes, opts, dryRun)
 	if err != nil {
 		return nil, apiErr(http.StatusBadRequest, err)
 	}

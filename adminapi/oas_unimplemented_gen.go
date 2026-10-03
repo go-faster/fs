@@ -45,6 +45,16 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 	return ht.ErrNotImplemented
 }
 
+// GetBucketScheme implements getBucketScheme operation.
+//
+// "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
+// Returns 404 for a missing bucket.
+//
+// GET /api/v1/buckets/{bucket}/scheme
+func (UnimplementedHandler) GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (r *BucketScheme, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetInfo implements getInfo operation.
 //
 // Build information, uptime and whether authentication is enabled.
@@ -108,6 +118,18 @@ func (UnimplementedHandler) ReloadConfig(ctx context.Context) (r *ReloadResult, 
 //
 // POST /api/v1/encryption/rotate
 func (UnimplementedHandler) RotateEncryptionKeys(ctx context.Context) (r *RotateResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetBucketScheme implements setBucketScheme operation.
+//
+// Applies to blocks written from now on; existing ones keep the scheme they were written with. Blocks
+// below 256 KiB and small inline objects stay replicated. A coded scheme needs a cluster layout spread
+// for width K+M (fs layout apply with that width), so that every shard lands on its own node; it is
+// refused with 400 otherwise, and on a single node.
+//
+// PUT /api/v1/buckets/{bucket}/scheme
+func (UnimplementedHandler) SetBucketScheme(ctx context.Context, req *BucketScheme, params SetBucketSchemeParams) (r *BucketScheme, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

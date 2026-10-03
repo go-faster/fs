@@ -103,3 +103,20 @@ func TestCodedBucket(t *testing.T) {
 	assert.Equal(t, objects["big"], got)
 	assert.Positive(t, reader.blocks.Stats().Degraded, "some block lost a shard holder and was rebuilt from parity")
 }
+
+// TestCheckLayout: a layout narrower than a bucket's code is refused.
+func TestCheckLayout(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine(t, 3)
+
+	l := e.member.Layout()
+	require.NoError(t, e.CheckLayout(ctx, l), "nothing coded yet")
+
+	require.NoError(t, e.SetBucketScheme(ctx, "b", "ec:2,1"))
+	require.NoError(t, e.CheckLayout(ctx, l), "three wide holds ec:2,1")
+
+	narrow := *l
+	narrow.Widths = []int{2}
+	require.ErrorIs(t, e.CheckLayout(ctx, &narrow), fs.ErrUnsupportedOperation)
+	require.ErrorContains(t, e.CheckLayout(ctx, &narrow), `bucket "b" is ec:2,1 and needs 3`)
+}

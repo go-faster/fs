@@ -134,6 +134,17 @@ encrypted** — keep it on a private network and never expose it publicly. Each
 node keeps its adopted layout in `<storage.root>/.cluster/layout.json`; a file
 in an unknown format stops the node from starting rather than being misread.
 
+**Erasure coding**, per bucket, instead of three copies: `ec:4,2` stores a
+block as 4 data + 2 parity shards on six nodes — 1.5× the data, any two lost —
+and `ec:2,1` fits three nodes at 1.5×, any one lost. Spread the layout for
+the width first (`fs layout apply` with `widths: [3, 6]` for `ec:4,2`; with
+three zones that also puts at most two shards in a zone, so losing a zone
+loses no data), then `PUT /api/v1/buckets/{bucket}/scheme`
+`{"scheme": "ec:4,2"}`. Only new blocks of 256 KiB and up are coded: small
+objects and short tail blocks stay replicated, and existing blocks keep the
+scheme they were written with. A write needs K+1 shard holders up, a read
+any K. A layout narrower than a bucket's code is refused.
+
 ## Observability
 
 - **Health**: `/health` (liveness, always 200 once serving) and `/ready`

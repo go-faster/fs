@@ -9,10 +9,12 @@ const (
 	ApplyLayoutOperation          OperationName = "ApplyLayout"
 	CreateAccessKeyOperation      OperationName = "CreateAccessKey"
 	DeleteAccessKeyOperation      OperationName = "DeleteAccessKey"
+	GetBucketSchemeOperation      OperationName = "GetBucketScheme"
 	GetInfoOperation              OperationName = "GetInfo"
 	GetLayoutOperation            OperationName = "GetLayout"
 	ListAccessKeysOperation       OperationName = "ListAccessKeys"
 	ListClusterNodesOperation     OperationName = "ListClusterNodes"
 	ReloadConfigOperation         OperationName = "ReloadConfig"
 	RotateEncryptionKeysOperation OperationName = "RotateEncryptionKeys"
+	SetBucketSchemeOperation      OperationName = "SetBucketScheme"
 )

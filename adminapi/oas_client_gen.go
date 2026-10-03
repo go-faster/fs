@@ -51,6 +51,13 @@ type Invoker interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// GetBucketScheme invokes getBucketScheme operation.
+	//
+	// "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
+	// Returns 404 for a missing bucket.
+	//
+	// GET /api/v1/buckets/{bucket}/scheme
+	GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (*BucketScheme, error)
 	// GetInfo invokes getInfo operation.
 	//
 	// Build information, uptime and whether authentication is enabled.
@@ -99,6 +106,15 @@ type Invoker interface {
 	//
 	// POST /api/v1/encryption/rotate
 	RotateEncryptionKeys(ctx context.Context) (*RotateResult, error)
+	// SetBucketScheme invokes setBucketScheme operation.
+	//
+	// Applies to blocks written from now on; existing ones keep the scheme they were written with. Blocks
+	// below 256 KiB and small inline objects stay replicated. A coded scheme needs a cluster layout spread
+	// for width K+M (fs layout apply with that width), so that every shard lands on its own node; it is
+	// refused with 400 otherwise, and on a single node.
+	//
+	// PUT /api/v1/buckets/{bucket}/scheme
+	SetBucketScheme(ctx context.Context, request *BucketScheme, params SetBucketSchemeParams) (*BucketScheme, error)
 }
 
 // Client implements OAS client.
@@ -423,6 +439,106 @@ func (c *Client) sendDeleteAccessKey(ctx context.Context, params DeleteAccessKey
 
 	stage = "DecodeResponse"
 	result, err := decodeDeleteAccessKeyResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetBucketScheme invokes getBucketScheme operation.
+//
+// "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
+// Returns 404 for a missing bucket.
+//
+// GET /api/v1/buckets/{bucket}/scheme
+func (c *Client) GetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (*BucketScheme, error) {
+	res, err := c.sendGetBucketScheme(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetBucketScheme(ctx context.Context, params GetBucketSchemeParams) (res *BucketScheme, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getBucketScheme"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/scheme"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetBucketSchemeOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/scheme"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetBucketSchemeResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -915,6 +1031,111 @@ func (c *Client) sendRotateEncryptionKeys(ctx context.Context) (res *RotateResul
 
 	stage = "DecodeResponse"
 	result, err := decodeRotateEncryptionKeysResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetBucketScheme invokes setBucketScheme operation.
+//
+// Applies to blocks written from now on; existing ones keep the scheme they were written with. Blocks
+// below 256 KiB and small inline objects stay replicated. A coded scheme needs a cluster layout spread
+// for width K+M (fs layout apply with that width), so that every shard lands on its own node; it is
+// refused with 400 otherwise, and on a single node.
+//
+// PUT /api/v1/buckets/{bucket}/scheme
+func (c *Client) SetBucketScheme(ctx context.Context, request *BucketScheme, params SetBucketSchemeParams) (*BucketScheme, error) {
+	res, err := c.sendSetBucketScheme(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetBucketScheme(ctx context.Context, request *BucketScheme, params SetBucketSchemeParams) (res *BucketScheme, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setBucketScheme"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/scheme"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetBucketSchemeOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/scheme"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetBucketSchemeRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetBucketSchemeResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

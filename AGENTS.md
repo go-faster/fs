@@ -110,7 +110,10 @@ automated resumable migration and the public API becomes additive-only.
   reads join the data shards and rebuild from parity only when one is
   missing. `RepairShards` (`repair.go`, run with block anti-entropy) hands
   misplaced shards to their slot's node and rebuilds this node's missing
-  shards of live blocks from K others. Not yet used by the engine's writes.
+  shards of live blocks from K others. The engine codes a bucket's blocks of
+  256 KiB and up when its `scheme` setting is `ec:K,M` (admin API
+  `/api/v1/buckets/{bucket}/scheme`; `Engine.CheckLayout` refuses a layout
+  narrower than any bucket's code).
 - `engine` — the storage engine (#277): `fs.Storage` over the
   replicated tables and blocks. Buckets are incarnations keyed by ID, objects
   are version lists, data is inline (≤3 KiB) or in blocks, writes to a key are

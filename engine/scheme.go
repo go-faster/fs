@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/block"
+	"github.com/go-faster/fs/internal/cluster/layout"
 	"github.com/go-faster/fs/internal/cluster/meta"
 )
 
@@ -76,4 +77,37 @@ func (e *Engine) getBlock(ctx context.Context, loc blockLoc, buf []byte) ([]byte
 	}
 
 	return e.blocks.GetCoded(ctx, loc.Hash, int(loc.Size), sch)
+}
+
+// CheckLayout refuses a layout narrower than a bucket's erasure code: it
+// would leave that bucket's new blocks nowhere to go and its coded blocks
+// unreadable until widened again.
+//
+// ponytail: buckets' current schemes only; a bucket switched back to rf3
+// keeps its coded blocks, which a narrower layout strands the same way.
+// Track the widths in use if that bites.
+func (e *Engine) CheckLayout(ctx context.Context, l *layout.Layout) error {
+	buckets, err := e.ListBuckets(ctx)
+	if err != nil {
+		return err
+	}
+
+	wide := 0
+	if len(l.Widths) > 0 {
+		wide = l.Widths[len(l.Widths)-1]
+	}
+
+	for _, b := range buckets {
+		row, _, err := e.bucket(ctx, b.Name)
+		if err != nil {
+			continue // Deleted meanwhile.
+		}
+
+		if s := bucketScheme(row); s.Coded() && s.K+s.M > wide {
+			return errors.Wrapf(fs.ErrUnsupportedOperation,
+				"the layout spreads for width %d; bucket %q is %s and needs %d — add it to widths", wide, b.Name, s, s.K+s.M)
+		}
+	}
+
+	return nil
 }
