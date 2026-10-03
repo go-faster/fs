@@ -157,6 +157,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Versioning/Suspended":                  testVersioningSuspended,
 	"Versioning/UnsetDeleteLeavesNoMarker":  testVersioningUnsetDeleteLeavesNoMarker,
 	"Versioning/ConditionalDelete":          testVersioningConditionalDelete,
+	"Versioning/Pages":                      testVersioningPages,
 	"Settings/PublicAccessAndOwnership":     testBucketSettings,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
