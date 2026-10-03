@@ -104,6 +104,8 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		Tags:     tags,
 		ACL:      fs.ParseACL(r.Header.Get("X-Amz-Acl")),
 		Owner:    callerOwner(ctx),
+
+		ServerSideEncryption: h.requestedEncryption(r, destBucket),
 	}
 
 	resp, err := h.service.PutObject(ctx, put)
@@ -119,6 +121,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		_ = dst.Reader.Close()
 	}
 
+	writeSSE(w, resp.ServerSideEncryption)
 	writeXML(ctx, w, r, CopyObjectResult{
 		LastModified: lastModified.UTC(),
 		ETag:         quoteETag(resp.ETag),

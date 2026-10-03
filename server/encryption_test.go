@@ -363,3 +363,31 @@ func TestBucketEncryptionUnsupportedBackend(t *testing.T) {
 	require.Equal(t, http.StatusOK, obj.StatusCode)
 	require.Empty(t, obj.Header.Get(sseHeader))
 }
+
+// TestCopyHonorsEncryption: a copy's destination is encrypted as its own
+// request and bucket say. It used to drop both and store the copy in the
+// clear, reporting nothing.
+func TestCopyHonorsEncryption(t *testing.T) {
+	base := encryptingServer(t, "")
+
+	resp := put(t, base+"/test-bucket", nil, nil)
+	_ = resp.Body.Close()
+
+	resp = put(t, base+"/test-bucket/src", []byte("plain source"), nil)
+	_ = resp.Body.Close()
+
+	resp = put(t, base+"/test-bucket/dst", nil, map[string]string{
+		"X-Amz-Copy-Source": "/test-bucket/src",
+		sseHeader:           sse.Algorithm,
+	})
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, sse.Algorithm, resp.Header.Get(sseHeader))
+
+	head, err := http.Head(base + "/test-bucket/dst") //nolint:noctx // Test client.
+	require.NoError(t, err)
+
+	_ = head.Body.Close()
+
+	require.Equal(t, sse.Algorithm, head.Header.Get(sseHeader))
+}
