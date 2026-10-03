@@ -2,13 +2,16 @@ package engine
 
 import (
 	"context"
+	"encoding/binary"
 	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
+	"go.etcd.io/bbolt"
 
 	"github.com/go-faster/fs/internal/cluster/block"
 	"github.com/go-faster/fs/internal/cluster/table"
+	"github.com/go-faster/fs/internal/lastrun"
 )
 
 // RunConfig sets how often the engine's background work runs. Zero values
@@ -77,7 +80,7 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 	}
 
 	wg.Go(func() {
-		every(ctx, cfg.GC, func() {
+		e.gcLoop(ctx, cfg.GC, func() error {
 			n, err := e.blocks.GC(ctx, cfg.Grace, e.BlockLive)
 
 			// Rows first: a block's last reference collected this pass leaves
@@ -93,10 +96,75 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 			e.gcMu.Lock()
 			e.gc = gcStats{last: time.Now(), collected: e.gc.collected + int64(n), failed: err != nil}
 			e.gcMu.Unlock()
+
+			return err
 		})
 	})
 
 	wg.Wait()
+}
+
+// gcFloor is the shortest wait before a collection after start, so a node
+// crashlooping mid-pass does not start another pass on every restart.
+var gcFloor = time.Minute
+
+// gcLoop runs pass every period until ctx is canceled. The first pass is
+// timed from the last one that completed, recorded in the metadata database:
+// a ticker started with the process would never fire on a node restarted more
+// often than the period.
+func (e *Engine) gcLoop(ctx context.Context, period time.Duration, pass func() error) {
+	t := time.NewTimer(lastrun.Due(e.lastGC(), time.Now(), period, gcFloor))
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+
+		t.Reset(period)
+
+		// A failed pass is not recorded, so it is due again after a restart.
+		if pass() == nil {
+			e.setLastGC(time.Now())
+		}
+	}
+}
+
+var (
+	runBucket = []byte("engine")
+	lastGCKey = []byte("gc.last")
+)
+
+// lastGC returns when collection last completed; zero if never or unreadable,
+// which makes it due.
+func (e *Engine) lastGC() time.Time {
+	var last time.Time
+
+	_ = e.db.View(func(tx *bbolt.Tx) error {
+		if b := tx.Bucket(runBucket); b != nil {
+			if v := b.Get(lastGCKey); len(v) == 8 {
+				last = time.Unix(0, int64(binary.BigEndian.Uint64(v))) //nolint:gosec // Written from a positive int64.
+			}
+		}
+
+		return nil
+	})
+
+	return last
+}
+
+func (e *Engine) setLastGC(t time.Time) {
+	// ponytail: a failed record only makes the next start collect early.
+	_ = e.db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(runBucket)
+		if err != nil {
+			return err
+		}
+
+		return b.Put(lastGCKey, binary.BigEndian.AppendUint64(nil, uint64(t.UnixNano()))) //nolint:gosec // Wall clock, positive.
+	})
 }
 
 // every calls fn every period until ctx is canceled.
