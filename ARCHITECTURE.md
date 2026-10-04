@@ -359,6 +359,12 @@ A pass is recorded only once it finishes, so an interrupted one is still due,
 and a short floor keeps a crashlooping node from repeating an overdue pass on
 every restart.
 
+In a cluster every node runs the lifecycle sweep, but each bucket is swept by
+one node: the first node of the partition the bucket's name maps to that
+gossip last reached (`sweepsBucket` in `cmd/fs`). Buckets spread over the
+nodes, a node that is down hands its buckets to the next, and no two nodes
+list a bucket and race each other's deletes.
+
 ## Testing architecture
 
 - **Conformance** (`storagetest`) — one suite, run by every backend.
