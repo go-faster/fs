@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,32 @@ func TestTombstonesCollected(t *testing.T) {
 		uploads = append(uploads, up.UploadID)
 	}
 
-	collect(t, e)
+	// A write returns at a quorum of two; this node's own copy, and so its
+	// queue entry, may land after. Collect until everything has gone, as a
+	// later pass would.
+	require.Eventually(t, func() bool {
+		collect(t, e)
+
+		if _, found, err := e.objects.Get(ctx, inc.ID, "deleted"); err != nil || found {
+			return false
+		}
+
+		for _, h := range hashes {
+			if refs, err := e.refs.Range(ctx, h.String(), "", 10); err != nil || len(refs) > 0 {
+				return false
+			}
+		}
+
+		for _, id := range uploads {
+			if parts, err := e.parts.Range(ctx, id, "", 10); err != nil || len(parts) > 0 {
+				return false
+			}
+		}
+
+		o, _, err := e.objects.Get(ctx, inc.ID, "mp")
+
+		return err == nil && len(o.Versions) == 1
+	}, 10*time.Second, 10*time.Millisecond)
 
 	_, found, err := e.objects.Get(ctx, inc.ID, "deleted")
 	require.NoError(t, err)

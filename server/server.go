@@ -318,21 +318,23 @@ func (s *Server) buildHandler() http.Handler {
 		opts = append(opts, WithCustomerKeysOverHTTP(true))
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/", NewHandler(s.cfg.Storage, opts...))
+	s3 := NewHandler(s.cfg.Storage, opts...)
+	health := s.cfg.HealthPath != "" && s.cfg.HealthPath != "-"
+	ready := s.cfg.ReadyPath != "" && s.cfg.ReadyPath != "-" && s.cfg.ReadyPath != s.cfg.HealthPath
 
-	if s.cfg.HealthPath != "" && s.cfg.HealthPath != "-" {
-		mux.HandleFunc(s.cfg.HealthPath, func(w http.ResponseWriter, _ *http.Request) {
+	// Exact paths, not an http.ServeMux: a mux cleans paths, and would answer
+	// an object key such as "a//b" or "x/../y" with a redirect.
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case health && r.URL.Path == s.cfg.HealthPath:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("OK"))
-		})
-	}
-
-	if s.cfg.ReadyPath != "" && s.cfg.ReadyPath != "-" && s.cfg.ReadyPath != s.cfg.HealthPath {
-		mux.HandleFunc(s.cfg.ReadyPath, s.readyHandler)
-	}
-
-	var h http.Handler = mux
+		case ready && r.URL.Path == s.cfg.ReadyPath:
+			s.readyHandler(w, r)
+		default:
+			s3.ServeHTTP(w, r)
+		}
+	})
 	if s.cfg.WrapHandler != nil {
 		h = s.cfg.WrapHandler(h)
 	}
