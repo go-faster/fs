@@ -79,8 +79,15 @@ func TestPrefixRejects(t *testing.T) {
 // TestPrefixMoreLenientThanKey documents the deliberate asymmetry: every
 // traversal-shaped string that Key rejects is fine as a prefix.
 func TestPrefixMoreLenientThanKey(t *testing.T) {
-	for _, p := range []string{"../", "a/./b", "folder\\sub", "c:/folder", "folder\x00/", "\n"} {
-		require.Error(t, Key(p), "Key must still reject %q", p)
-		require.NoError(t, Prefix(p), "Prefix must accept %q", p)
+	// A prefix is only matched against keys, so it may hold what a key
+	// cannot carry; path-looking prefixes are as valid as such keys are.
+	for _, p := range []string{"folder\x00/", "\n", "."} {
+		require.Error(t, Key(p), "Key rejects %q", p)
+		require.NoError(t, Prefix(p), "Prefix accepts %q", p)
+	}
+
+	for _, p := range []string{"../", "a/./b", "folder\\sub", "c:/folder"} {
+		require.NoError(t, Key(p), "Key accepts %q", p)
+		require.NoError(t, Prefix(p), "Prefix accepts %q", p)
 	}
 }

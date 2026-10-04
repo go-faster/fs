@@ -106,10 +106,9 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 		h.postSecret = o.authenticator.Secret
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", h.route)
-
-	var inner http.Handler = mux
+	// Not an http.ServeMux: it cleans paths, answering a key such as "a//b"
+	// or "x/../y" with a redirect to another key.
+	var inner http.Handler = http.HandlerFunc(h.route)
 	if o.authenticator != nil {
 		inner = authMiddleware(o.authenticator, s, o.ownerIsolation, inner)
 	}

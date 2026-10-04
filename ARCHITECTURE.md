@@ -196,7 +196,11 @@ This is the single place that owns the error wire format.
 
 `service.New(store)` wraps a backend and implements `fs.Storage`. Each method
 validates its inputs with `internal/validate` (bucket names, object keys,
-listing prefixes — including path-traversal protection) before delegating.
+listing prefixes) before delegating. A key is a name, never a path — "..",
+"//" and backslashes are ordinary characters, as on S3 — so key validation
+refuses only what the protocol cannot carry (control characters, and the keys
+".", ".." and "/"). Neither the server nor the handler routes through an
+`http.ServeMux`, which would clean such paths into a redirect.
 Validation failures surface as wrapped errors; the backend is only reached with
 already-sanitised inputs.
 
