@@ -363,3 +363,36 @@ func (r *rewriteOnList) ListObjects(ctx context.Context, req *fs.ListObjectsRequ
 
 	return page, nil
 }
+
+// TestSweepOwnsOnlyItsBuckets: a sweeper given an owner check leaves other
+// nodes' buckets to them.
+func TestSweepOwnsOnlyItsBuckets(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	storage := storagemem.New()
+
+	for _, b := range []string{"mine", "theirs"} {
+		require.NoError(t, storage.CreateBucket(ctx, b))
+		require.NoError(t, storage.SetBucketLifecycle(ctx, b, []fs.LifecycleRule{
+			{ID: "all", Status: fs.LifecycleEnabled, ExpirationDays: 1},
+		}))
+
+		_, err := storage.PutObject(ctx, &fs.PutObjectRequest{Bucket: b, Key: "k", Reader: strings.NewReader("x"), Size: 1})
+		require.NoError(t, err)
+	}
+
+	sweeper := &lifecycle.Sweeper{
+		Storage: storage,
+		Now:     func() time.Time { return time.Now().Add(2 * fs.LifecycleDay) },
+		Owns:    func(bucket string) bool { return bucket == "mine" },
+	}
+
+	report, err := sweeper.Sweep(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Buckets)
+	require.Equal(t, 1, report.Expired)
+
+	_, err = storage.GetObject(ctx, "theirs", "k")
+	require.NoError(t, err, "another node's bucket is left to it")
+}

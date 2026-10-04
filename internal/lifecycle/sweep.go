@@ -62,6 +62,10 @@ type Sweeper struct {
 	// Floor is the shortest wait before an already-due sweep; zero means
 	// defaultFloor.
 	Floor time.Duration
+	// Owns reports whether this sweeper enforces a bucket's rules; nil means
+	// every bucket. In a cluster each bucket is given to one node, so the
+	// nodes do not list the same bucket and race each other's deletes.
+	Owns func(bucket string) bool
 }
 
 // Report is what one pass did.
@@ -221,6 +225,10 @@ func (s *Sweeper) Sweep(ctx context.Context) (Report, error) {
 	for _, b := range buckets {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
+		}
+
+		if s.Owns != nil && !s.Owns(b.Name) {
+			continue
 		}
 
 		rules, err := store.BucketLifecycle(ctx, b.Name)
