@@ -69,6 +69,7 @@ type Engine struct {
 	objects *table.Table[meta.Object]
 	refs    *table.Table[meta.BlockRef]
 	parts   *table.Table[meta.LWW[json.RawMessage]]
+	uploads *table.Table[meta.LWW[json.RawMessage]]
 	blocks  *block.Manager
 	member  *peer.Member
 
@@ -127,7 +128,11 @@ func New(cfg Config) (*Engine, error) {
 		return nil, err
 	}
 
-	if e.parts, err = table.New(meta.Parts, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], meta.CompactPart); err != nil {
+	if e.parts, err = table.New(meta.Parts, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], meta.CompactDone); err != nil {
+		return nil, err
+	}
+
+	if e.uploads, err = table.New(meta.Uploads, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], meta.CompactDone); err != nil {
 		return nil, err
 	}
 
@@ -307,10 +312,38 @@ func (e *Engine) releaseReplaced(ctx context.Context, before, after meta.Object)
 func (e *Engine) finishParts(ctx context.Context, uploadID string, parts map[int]storedPart) {
 	rows := make([]table.Entry[meta.LWW[json.RawMessage]], 0, len(parts))
 	for n := range parts {
-		rows = append(rows, table.Entry[meta.LWW[json.RawMessage]]{PK: uploadID, SK: partSK(n), Row: meta.PartDone})
+		rows = append(rows, table.Entry[meta.LWW[json.RawMessage]]{PK: uploadID, SK: partSK(n), Row: meta.Done})
 	}
 
 	_ = e.parts.InsertMany(ctx, uploadID, rows)
+}
+
+// row is a table row for writeRows; the error is kept for writeRows to
+// report, so a write's rows read as one list.
+func row[R any](t *table.Table[R], pk, sk string, r R) rowOrErr {
+	tr, err := t.Row(pk, sk, r)
+
+	return rowOrErr{tr, err}
+}
+
+type rowOrErr struct {
+	row table.Row
+	err error
+}
+
+// writeRows writes rows of any tables in one commit per node.
+func (e *Engine) writeRows(ctx context.Context, rows ...rowOrErr) error {
+	out := make([]table.Row, 0, len(rows))
+
+	for _, r := range rows {
+		if r.err != nil {
+			return r.err
+		}
+
+		out = append(out, r.row)
+	}
+
+	return table.Write(ctx, e.member, out...)
 }
 
 // releaseRows are the block_refs rows that release the blocks of the

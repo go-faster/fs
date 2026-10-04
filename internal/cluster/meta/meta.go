@@ -16,6 +16,9 @@
 //     fresh ID and starts empty.
 //   - block_refs: partition key the block hash, sort key the version ID that
 //     references it.
+//   - parts: an upload's parts, keyed by its ID (see Parts).
+//   - uploads: a bucket's uploads in flight, keyed by its ID (see Uploads), so
+//     listing them costs the uploads, not the keys.
 //
 // Two limits follow from that and are by design, as in Garage: one bucket's
 // objects live on one partition's replicas, so a bucket is bounded by what one
@@ -42,8 +45,12 @@ const (
 	// Parts holds multipart upload parts: partition key the upload's version
 	// ID, sort key the zero-padded part number, an LWW register per part so a
 	// re-uploaded part replaces the earlier one. Once the upload completes or
-	// aborts, each part is overwritten by PartDone, and collected.
+	// aborts, each part is overwritten by Done, and collected.
 	Parts = "parts"
+	// Uploads indexes a bucket's multipart uploads in flight: partition key
+	// the bucket's ID, sort key the object key, NUL, the upload ID; a
+	// register overwritten by Done when the upload completes or aborts.
+	Uploads = "uploads"
 )
 
 // LWW is a last-writer-wins register.
@@ -74,18 +81,20 @@ func (a LWW[T]) Merge(b LWW[T]) LWW[T] {
 // MergeLWW is the merge of a table whose rows are single registers.
 func MergeLWW[T any](a, b LWW[T]) LWW[T] { return a.Merge(b) }
 
-// PartDone is a finished upload's part: a register no write can follow, with
-// no value. CompactPart collects it.
-var PartDone = LWW[json.RawMessage]{TS: math.MaxInt64}
+// Done is a finished register: one no write can follow, with no value —
+// what a finished upload's part and upload rows are overwritten with.
+// CompactDone collects it.
+var Done = LWW[json.RawMessage]{TS: math.MaxInt64}
 
-// IsPartDone reports whether a parts row is PartDone.
-func IsPartDone(r LWW[json.RawMessage]) bool {
+// IsDone reports whether a register is Done.
+func IsDone(r LWW[json.RawMessage]) bool {
 	return r.TS == math.MaxInt64 && (len(r.V) == 0 || string(r.V) == "null")
 }
 
-// CompactPart is the parts table's compaction.
-func CompactPart(r LWW[json.RawMessage]) (LWW[json.RawMessage], table.Compaction) {
-	if IsPartDone(r) {
+// CompactDone is the compaction of a table of registers that finish: the
+// parts and uploads tables.
+func CompactDone(r LWW[json.RawMessage]) (LWW[json.RawMessage], table.Compaction) {
+	if IsDone(r) {
 		return r, table.Delete
 	}
 
