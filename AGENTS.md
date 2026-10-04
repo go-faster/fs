@@ -98,7 +98,8 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/cluster/meta` — the metadata rows and their merges: buckets
   (incarnation + per-setting LWW registers), objects (version list: uploads,
   versions, delete markers, null versions; Uploading → Complete → Gone),
-  block refs, multipart parts (`PartDone` once the upload finishes), and each
+  block refs, multipart parts and the index of uploads in flight (both
+  overwritten by `Done` once the upload finishes), and each
   table's compaction (what a tombstone reduces to). Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
 - `internal/cluster/block` — content-addressed blocks: a local disk store

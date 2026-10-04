@@ -268,7 +268,9 @@ On disk, single node and cluster alike, the engine lives under
 `<storage.root>/.engine/`:
 
 - `meta.db` — the bbolt metadata tables (buckets, object version lists, block
-  references). Every metadata write is a bbolt transaction.
+  references, multipart parts, and an index of a bucket's uploads in flight,
+  written with each upload's create, complete and abort). Every metadata write
+  is a bbolt transaction.
 - `blocks/` — content-addressed data blocks named by their SHA-256, each file
   the block plus a CRC-32C trailer (stamped by `blocks/FORMAT`; a store with
   blocks but no stamp is refused). Every local read checks the CRC, and a

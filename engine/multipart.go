@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -93,7 +94,13 @@ func (e *Engine) CreateMultipartUpload(ctx context.Context, req *fs.CreateMultip
 	}
 	v = withKey(v, enc, ts)
 
-	if err := e.objects.Insert(ctx, inc.ID, req.Key, meta.Object{Versions: []meta.Version{v}}); err != nil {
+	// The upload and its entry in the bucket's index of uploads, together.
+	if err := e.writeRows(ctx,
+		row(e.objects, inc.ID, req.Key, meta.Object{Versions: []meta.Version{v}}),
+		row(e.uploads, inc.ID, uploadSK(req.Key, id), meta.LWW[json.RawMessage]{TS: ts, V: mustJSON(uploadEntry{
+			Initiated: initiated, ChecksumAlgorithm: string(cksAlg), ChecksumType: string(cksType),
+		})}),
+	); err != nil {
 		return nil, err
 	}
 
@@ -179,7 +186,7 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 	}
 
 	// The upload completed or aborted while this part was being written.
-	if meta.IsPartDone(prev) {
+	if meta.IsDone(prev) {
 		e.release(ctx, owner, w.blocks)
 
 		return nil, fs.ErrUploadNotFound
@@ -211,7 +218,7 @@ type storedPart struct {
 
 func decodePart(r meta.LWW[json.RawMessage]) (storedPart, bool) {
 	var p storedPart
-	if meta.IsPartDone(r) || len(r.V) == 0 || json.Unmarshal(r.V, &p) != nil {
+	if meta.IsDone(r) || len(r.V) == 0 || json.Unmarshal(r.V, &p) != nil {
 		return p, false
 	}
 
@@ -271,7 +278,20 @@ func (e *Engine) ListParts(ctx context.Context, bucket, key, uploadID string) ([
 	return out, nil
 }
 
-// ListMultipartUploads lists the bucket's uploads in flight.
+// uploadEntry is what the uploads index holds of an upload in flight:
+// enough to list it without reading its object row.
+type uploadEntry struct {
+	Initiated         time.Time `json:"initiated"`
+	ChecksumAlgorithm string    `json:"cksum_alg,omitempty"`
+	ChecksumType      string    `json:"cksum_type,omitempty"`
+}
+
+// uploadSK is an upload's sort key in the index: its object key, NUL, its
+// ID. Keys may hold NUL but IDs never do, so the last NUL splits them.
+func uploadSK(key, id string) string { return key + "\x00" + id }
+
+// ListMultipartUploads lists the bucket's uploads in flight, from its index
+// of uploads: the cost is the uploads, not the keys.
 func (e *Engine) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.MultipartUpload, error) {
 	_, inc, err := e.bucket(ctx, bucket)
 	if err != nil {
@@ -282,26 +302,29 @@ func (e *Engine) ListMultipartUploads(ctx context.Context, bucket string) ([]fs.
 	start := ""
 
 	for {
-		page, err := e.objects.Range(ctx, inc.ID, start, 1000)
+		page, err := e.uploads.Range(ctx, inc.ID, start, 1000)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, r := range page {
-			for _, v := range r.Row.Versions {
-				if v.State != meta.Uploading {
-					continue
-				}
-
-				var up uploadPayload
-
-				_ = json.Unmarshal(v.Payload, &up)
-
-				out = append(out, fs.MultipartUpload{
-					UploadID: v.ID, Bucket: bucket, Key: r.SK, Initiated: up.Initiated,
-					ChecksumAlgorithm: up.ChecksumAlgorithm, ChecksumType: up.ChecksumType,
-				})
+			if meta.IsDone(r.Row) {
+				continue
 			}
+
+			i := strings.LastIndexByte(r.SK, 0)
+			if i < 0 {
+				continue
+			}
+
+			var u uploadEntry
+
+			_ = json.Unmarshal(r.Row.V, &u)
+
+			out = append(out, fs.MultipartUpload{
+				UploadID: r.SK[i+1:], Bucket: bucket, Key: r.SK[:i], Initiated: u.Initiated,
+				ChecksumAlgorithm: u.ChecksumAlgorithm, ChecksumType: u.ChecksumType,
+			})
 		}
 
 		if len(page) < 1000 {
@@ -453,12 +476,15 @@ func (e *Engine) CompleteMultipartUpload(
 	done.State = meta.Complete
 	done.Payload = mustJSON(p)
 
-	row := meta.Object{Versions: []meta.Version{done}}
-	if err := e.objects.Insert(ctx, inc.ID, req.Key, row); err != nil {
+	completedRow := meta.Object{Versions: []meta.Version{done}}
+	if err := e.writeRows(ctx,
+		row(e.objects, inc.ID, req.Key, completedRow),
+		row(e.uploads, inc.ID, uploadSK(req.Key, req.UploadID), meta.Done),
+	); err != nil {
 		return nil, err
 	}
 
-	e.releaseReplaced(ctx, before, meta.MergeObject(before, row))
+	e.releaseReplaced(ctx, before, meta.MergeObject(before, completedRow))
 
 	for _, part := range stored {
 		e.release(ctx, part.Owner, part.Blocks)
@@ -491,7 +517,10 @@ func (e *Engine) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID
 	defer e.lock(bucketID, key)()
 
 	v.State = meta.Gone
-	if err := e.objects.Insert(ctx, bucketID, key, meta.Object{Versions: []meta.Version{v}}); err != nil {
+	if err := e.writeRows(ctx,
+		row(e.objects, bucketID, key, meta.Object{Versions: []meta.Version{v}}),
+		row(e.uploads, bucketID, uploadSK(key, uploadID), meta.Done),
+	); err != nil {
 		return err
 	}
 

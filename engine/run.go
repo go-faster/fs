@@ -70,6 +70,7 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 		wg.Go(func() { e.objects.Run(ctx, cfg.Sync) })
 		wg.Go(func() { e.refs.Run(ctx, cfg.Sync) })
 		wg.Go(func() { e.parts.Run(ctx, cfg.Sync) })
+		wg.Go(func() { e.uploads.Run(ctx, cfg.Sync) })
 		wg.Go(func() { e.blocks.Run(ctx, cfg.Resync) })
 		wg.Go(func() {
 			every(ctx, cfg.Sync, func() {
@@ -86,7 +87,7 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 			// Rows first: a block's last reference collected this pass leaves
 			// it for the block collection after the grace period.
 			for _, collect := range []func(context.Context, time.Duration) error{
-				e.objects.Collect, e.refs.Collect, e.parts.Collect,
+				e.objects.Collect, e.refs.Collect, e.parts.Collect, e.uploads.Collect,
 			} {
 				if cerr := collect(ctx, cfg.Tombstones); cerr != nil {
 					err = errors.Join(err, cerr)
@@ -220,11 +221,13 @@ func (e *Engine) Stats() Stats {
 			"objects":    e.objects.SyncStats(),
 			"block_refs": e.refs.SyncStats(),
 			"parts":      e.parts.SyncStats(),
+			"uploads":    e.uploads.SyncStats(),
 		},
 		Tombstones: map[string]table.GCStats{
 			"objects":    e.objects.GCStats(),
 			"block_refs": e.refs.GCStats(),
 			"parts":      e.parts.GCStats(),
+			"uploads":    e.uploads.GCStats(),
 		},
 		LastGC:   gc.last,
 		GCFailed: gc.failed,
