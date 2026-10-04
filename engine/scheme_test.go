@@ -118,7 +118,16 @@ func TestCheckLayout(t *testing.T) {
 	narrow := *l
 	narrow.Widths = []int{2}
 	require.ErrorIs(t, e.CheckLayout(ctx, &narrow), fs.ErrUnsupportedOperation)
-	require.ErrorContains(t, e.CheckLayout(ctx, &narrow), `bucket "b" is ec:2,1 and needs 3`)
+	require.ErrorContains(t, e.CheckLayout(ctx, &narrow), `bucket "b" holds blocks coded 3 wide`)
+
+	// Switched back to three copies, the bucket still holds what it coded:
+	// the layout must stay wide enough to read it.
+	require.NoError(t, e.SetBucketScheme(ctx, "b", "rf3"))
+	require.ErrorIs(t, e.CheckLayout(ctx, &narrow), fs.ErrUnsupportedOperation)
+
+	got, err := e.BucketScheme(ctx, "b")
+	require.NoError(t, err)
+	assert.Equal(t, "rf3", got)
 }
 
 // TestCheckLayoutNeverBlocksBlind: with no layout yet, or the metadata out of

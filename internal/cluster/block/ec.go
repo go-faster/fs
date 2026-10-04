@@ -238,12 +238,25 @@ func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]b
 	if have < s.K {
 		m.degraded.Add(1)
 
+		// As many parity shards as data shards are missing, then the rest
+		// if some of those are missing too.
 		parity := make([]int, 0, s.M)
 		for i := s.K; i < len(nodes); i++ {
 			parity = append(parity, i)
 		}
 
-		fetch(parity)
+		first := min(s.K-have, len(parity))
+		fetch(parity[:first])
+
+		for _, sh := range shards[s.K:] {
+			if sh != nil {
+				have++
+			}
+		}
+
+		if have < s.K {
+			fetch(parity[first:])
+		}
 
 		if err := enc.ReconstructData(shards); err != nil {
 			return nil, errors.Wrapf(ErrNotFound, "block %s (%s): %v", h, s, err)

@@ -21,6 +21,7 @@ func Root() *cobra.Command {
 	cmd.AddCommand(Systemd())
 	cmd.AddCommand(Layout())
 	cmd.AddCommand(Encrypt())
+	cmd.AddCommand(Bucket())
 
 	return cmd
 }
