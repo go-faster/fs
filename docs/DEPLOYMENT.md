@@ -139,11 +139,12 @@ block as 4 data + 2 parity shards on six nodes — 1.5× the data, any two lost 
 and `ec:2,1` fits three nodes at 1.5×, any one lost. Spread the layout for
 the width first (`fs layout apply` with `widths: [3, 6]` for `ec:4,2`; with
 three zones that also puts at most two shards in a zone, so losing a zone
-loses no data), then `PUT /api/v1/buckets/{bucket}/scheme`
-`{"scheme": "ec:4,2"}`. Only new blocks of 256 KiB and up are coded: small
+loses no data), then `fs bucket scheme BUCKET ec:4,2` (or
+`PUT /api/v1/buckets/{bucket}/scheme` `{"scheme": "ec:4,2"}`). Only new blocks of 256 KiB and up are coded: small
 objects and short tail blocks stay replicated, and existing blocks keep the
 scheme they were written with. A write needs K+1 shard holders up, a read
-any K. A layout narrower than a bucket's code is refused.
+any K. A layout narrower than a bucket's code — current, or any it had
+before, since its coded blocks stay — is refused.
 
 ## Observability
 

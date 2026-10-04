@@ -245,3 +245,21 @@ func TestCodedPlacement(t *testing.T) {
 		}
 	}
 }
+
+// TestCodedReadFallsBackToMoreParity: one data shard is missing, so a read
+// fetches one parity shard; that one is missing too, so it fetches the next.
+func TestCodedReadFallsBackToMoreParity(t *testing.T) {
+	ctx := context.Background()
+	nodes := clusterOf(t, 6, 6, 3, 6)
+	s := Scheme{K: 4, M: 2}
+	data := bytes.Repeat([]byte("fallback "), 30000)
+	h, slots := putEverywhere(t, nodes, data, s)
+
+	for _, i := range []int{1, 4} {
+		require.NoError(t, byID(nodes, slots[i]).store.DeleteShard(Shard{Hash: h, K: 4, M: 2, I: i}))
+	}
+
+	got, err := nodes[0].blocks.GetCoded(ctx, h, len(data), s)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}

@@ -19,6 +19,26 @@ import (
 
 const settingScheme = "scheme"
 
+// settingSchemeWidth is the widest K+M a bucket has been coded with: a
+// bucket switched back to rf3 keeps the blocks it coded, and a layout must
+// stay wide enough to read them.
+const settingSchemeWidth = "scheme_width"
+
+// schemeWidth is the width b's blocks need: its current scheme's, or the
+// widest it ever had.
+func schemeWidth(b meta.Bucket) int {
+	var w int
+	if s, ok := b.Settings[settingSchemeWidth]; ok {
+		_ = json.Unmarshal(s.V, &w)
+	}
+
+	if s := bucketScheme(b); s.Coded() {
+		w = max(w, s.K+s.M)
+	}
+
+	return w
+}
+
 // bucketScheme is the scheme b's new blocks are written with.
 func bucketScheme(b meta.Bucket) block.Scheme {
 	var v string
@@ -60,7 +80,23 @@ func (e *Engine) SetBucketScheme(ctx context.Context, bucket, scheme string) err
 		}
 	}
 
-	return e.setSetting(ctx, bucket, settingScheme, sch.String())
+	defer e.lock(bucketsPK, bucket)()
+
+	b, _, err := e.bucket(ctx, bucket)
+	if err != nil {
+		return err
+	}
+
+	// The scheme, and the widest the bucket has ever needed, in one write.
+	settings := map[string]meta.LWW[json.RawMessage]{
+		settingScheme: {TS: meta.NextTS(e.ts(), b.Settings[settingScheme].TS), V: mustJSON(sch.String())},
+	}
+
+	if w := sch.K + sch.M; sch.Coded() && w > schemeWidth(b) {
+		settings[settingSchemeWidth] = meta.LWW[json.RawMessage]{TS: meta.NextTS(e.ts(), b.Settings[settingSchemeWidth].TS), V: mustJSON(w)}
+	}
+
+	return e.buckets.Insert(ctx, bucketsPK, bucket, meta.Bucket{Settings: settings})
 }
 
 // getBlock reads one block as loc says it is stored, into buf when it can.
@@ -77,9 +113,9 @@ func (e *Engine) getBlock(ctx context.Context, loc blockLoc, buf []byte) ([]byte
 	return e.blocks.GetCoded(ctx, loc.Hash, int(loc.Size), sch)
 }
 
-// CheckLayout refuses a layout narrower than a bucket's erasure code: it
-// would leave that bucket's new blocks nowhere to go and its coded blocks
-// unreadable until widened again.
+// CheckLayout refuses a layout narrower than a bucket's erasure code, current
+// or past: it would leave that bucket's new blocks nowhere to go and its coded
+// blocks unreadable until widened again.
 //
 // Not being able to tell never blocks a layout change: before the first
 // layout nothing is stored, and with the metadata unreachable a new layout
@@ -105,9 +141,9 @@ func (e *Engine) CheckLayout(ctx context.Context, l *layout.Layout) error {
 			continue // Deleted meanwhile.
 		}
 
-		if s := bucketScheme(row); s.Coded() && s.K+s.M > wide {
+		if need := schemeWidth(row); need > wide {
 			return errors.Wrapf(fs.ErrUnsupportedOperation,
-				"the layout spreads for width %d; bucket %q is %s and needs %d — add it to widths", wide, b.Name, s, s.K+s.M)
+				"the layout spreads for width %d; bucket %q holds blocks coded %d wide — add it to widths", wide, b.Name, need)
 		}
 	}
 
