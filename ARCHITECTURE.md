@@ -319,8 +319,11 @@ acknowledged. The engine's sync loop (`Engine.Sweep`) runs anti-entropy over
 every table, the blocks and shard repair; a sweep that completes under the
 current version — every replica compared, everything that moved handed over
 — marks the node synced for it, and gossip spreads every node's synced
-version. An old version retires once every node holding data in a retained
-version has synced past it. Until then handover copies but does not drop what
+version. The loop sweeps every sync interval and as soon as the layout
+version moves; a failed sweep — the first under a new version often is, while
+gossip catches up — runs again after a backoff from 5s up to the interval,
+since until one succeeds the node has not synced. An old version retires once
+every node holding data in a retained version has synced past it. Until then handover copies but does not drop what
 moved, and tombstone collection waits. A node gone for good is released with
 `Member.Skip` (admin `POST /api/v1/cluster/nodes/{id}/skip`, CLI
 `fs layout skip`).
