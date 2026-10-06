@@ -177,10 +177,6 @@ the hot credential/TLS reload.
   data and metadata are fsynced before a write is acknowledged) or `none`
   (dev/CI only); writes are always crash-atomic (no torn object). Every block is
   verified on read, and in a cluster anti-entropy repairs replicas.
-- **Upgrading from a filesystem-backend release** — the filesystem backend is
-  gone and its data directory is not converted: the server refuses to start on
-  one. Copy the objects out with the previous release into a new storage root
-  (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 - **Health & readiness** — `/health` (liveness: the process is up) and `/ready`
   (readiness: storage is reachable, 503 otherwise). Prometheus `/metrics` and
   pprof are served on a separate listener (default `localhost:9464`,

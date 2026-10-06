@@ -208,8 +208,7 @@ If the pod fails to start due to invalid configuration:
 2. Common issues:
    - Invalid duration format (must be like `30s`, `2m`)
    - Missing required fields
-   - A data directory written by the removed filesystem backend (copy the
-     objects out with the previous release into a fresh volume)
+   - A data directory in a storage format this release does not read
 
 ### View Running Configuration
 
