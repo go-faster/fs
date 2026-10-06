@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faster/fs/internal/cluster/layout"
 )
@@ -270,7 +272,12 @@ func (m *Manager) rebuild(ctx context.Context, nodes []layout.NodeID, b codedBlo
 // handOverShards moves shards to the node the layout now gives their slot,
 // and drops them here once it has them.
 func (m *Manager) handOverShards(ctx context.Context, l *layout.Layout, shards []Shard) int64 {
-	var n int64
+	var (
+		n atomic.Int64
+		g errgroup.Group
+	)
+
+	g.SetLimit(transfers)
 
 	for _, sh := range shards {
 		slots := l.Slots[l.Partition(sh.Hash[:])]
@@ -278,29 +285,35 @@ func (m *Manager) handOverShards(ctx context.Context, l *layout.Layout, shards [
 			continue // The layout is too narrow for this scheme; keep it.
 		}
 
-		data, err := m.store.GetShard(sh)
-		if err != nil {
-			continue
-		}
+		g.Go(func() error {
+			data, err := m.store.GetShard(sh)
+			if err != nil {
+				return nil
+			}
 
-		if m.putShardOn(ctx, slots[sh.I], sh, data) != nil {
-			continue
-		}
+			if m.putShardOn(ctx, slots[sh.I], sh, data) != nil {
+				return nil
+			}
 
-		// Reads may still come here while a retained version gives this
-		// node the slot.
-		if slices.ContainsFunc(m.member.Layouts(), func(lv *layout.Layout) bool {
-			s := lv.Slots[lv.Partition(sh.Hash[:])]
+			// Reads may still come here while a retained version gives this
+			// node the slot.
+			if slices.ContainsFunc(m.member.Layouts(), func(lv *layout.Layout) bool {
+				s := lv.Slots[lv.Partition(sh.Hash[:])]
 
-			return sh.I < len(s) && s[sh.I] == m.member.ID()
-		}) {
-			continue
-		}
+				return sh.I < len(s) && s[sh.I] == m.member.ID()
+			}) {
+				return nil
+			}
 
-		if m.store.DeleteShard(sh) == nil {
-			n++
-		}
+			if m.store.DeleteShard(sh) == nil {
+				n.Add(1)
+			}
+
+			return nil
+		})
 	}
 
-	return n
+	_ = g.Wait()
+
+	return n.Load()
 }
