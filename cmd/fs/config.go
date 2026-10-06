@@ -41,7 +41,7 @@ type Config struct {
 	// Cluster configures cluster membership; setting node_id turns it on.
 	Cluster ClusterConfig `yaml:"cluster,omitempty"`
 
-	// Lifecycle configures	// Lifecycle configures enforcement of bucket lifecycle rules.
+	// Lifecycle configures enforcement of bucket lifecycle rules.
 	Lifecycle LifecycleConfig `yaml:"lifecycle,omitempty"`
 
 	// Encryption configures server-side encryption of object bodies at rest.
@@ -59,7 +59,7 @@ type Config struct {
 	Revision string `yaml:"revision,omitempty"`
 }
 
-// DefaultLifecycleInterval// DefaultLifecycleInterval is how often lifecycle rules are enforced. Expiry is
+// DefaultLifecycleInterval is how often lifecycle rules are enforced. Expiry is
 // eventual by design — S3 promises the object goes away, not when — so the pass
 // is spaced to cost little rather than to be prompt.
 const DefaultLifecycleInterval = 12 * time.Hour
