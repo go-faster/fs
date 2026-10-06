@@ -134,6 +134,12 @@ encrypted** — keep it on a private network and never expose it publicly. Each
 node keeps its adopted layout in `<storage.root>/.cluster/layout.json`; a file
 in an unknown format stops the node from starting rather than being misread.
 
+Background work runs on defaults that rarely need changing:
+`storage.background.{sync_interval, resync_interval, gc_interval, gc_grace,
+tombstone_delay}` (10m, 10s, 1h, 10m, 24h). Shorter intervals repair faster at
+the cost of sweeping more often; a tombstone delay shorter than the longest a
+replica may stay unreachable risks deleted data coming back.
+
 **Erasure coding**, per bucket, instead of three copies: `ec:4,2` stores a
 block as 4 data + 2 parity shards on six nodes — 1.5× the data, any two lost —
 and `ec:2,1` fits three nodes at 1.5×, any one lost. Spread the layout for

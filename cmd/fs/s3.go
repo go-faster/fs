@@ -281,7 +281,15 @@ Command-line flags override YAML configuration values.`,
 				}
 
 				grp.Go(func() error {
-					eng.Run(grpCtx, engine.RunConfig{Cluster: member != nil})
+					bg := cfg.Storage.Background
+					eng.Run(grpCtx, engine.RunConfig{
+						Cluster:    member != nil,
+						Sync:       bg.SyncInterval,
+						Resync:     bg.ResyncInterval,
+						GC:         bg.GCInterval,
+						Grace:      bg.GCGrace,
+						Tombstones: bg.TombstoneDelay,
+					})
 
 					return nil
 				})
