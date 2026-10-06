@@ -150,8 +150,10 @@ If a node is gone for good and blocks a change from completing,
 
 Background work runs on defaults that rarely need changing:
 `storage.background.{sync_interval, resync_interval, gc_interval, gc_grace,
-tombstone_delay}` (10m, 10s, 1h, 10m, 24h). Shorter intervals repair faster at
-the cost of sweeping more often; a tombstone delay shorter than the longest a
+tombstone_delay}` (10m, 10s, 1h, 10m, 24h). A layout change does not wait for
+the sync interval: a node sweeps as soon as it adopts one, and retries a
+failed sweep after 5s, backing off to the interval. Shorter intervals repair
+faster at the cost of sweeping more often; a tombstone delay shorter than the longest a
 replica may stay unreachable risks deleted data coming back.
 
 **Erasure coding**, per bucket, instead of three copies: `ec:4,2` stores a

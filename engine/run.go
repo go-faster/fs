@@ -161,10 +161,45 @@ func (e *Engine) setLastGC(t time.Time) {
 	})
 }
 
+// syncRetry is how soon a failed sweep runs again, doubling on each further
+// failure up to the sync period.
+var syncRetry = 5 * time.Second
+
 // syncLoop runs a sweep every period, and right away when the layout version
 // changes — a moved partition should not wait a full period.
 func (e *Engine) syncLoop(ctx context.Context, period time.Duration, onSweep func(error)) {
-	var last uint64
+	sweepLoop(ctx, period, e.layoutVersion, e.Sweep, onSweep)
+}
+
+// layoutVersion is the adopted layout's version, zero before the first.
+func (e *Engine) layoutVersion() uint64 {
+	if l := e.member.Layout(); l != nil {
+		return l.Version
+	}
+
+	return 0
+}
+
+// sweepLoop drives sweep: every period, when version moves, and after a
+// failure again soon. The first sweep of a new layout often fails for a
+// moment — a peer has not adopted the layout yet, or gossip has not carried a
+// joining node's address — and until a sweep succeeds this node has not
+// synced the version, so older versions stay retained and a removed node
+// keeps running. Waiting the full period for the next try would hold the
+// whole layout change that long. The retry backs off to the period, so a node
+// that stays down costs one sweep per period, as before.
+func sweepLoop(
+	ctx context.Context,
+	period time.Duration,
+	version func() uint64,
+	sweep func(context.Context) error,
+	onSweep func(error),
+) {
+	var (
+		last  uint64
+		retry time.Duration
+		due   time.Time
+	)
 
 	tick := time.NewTicker(period)
 	defer tick.Stop()
@@ -178,20 +213,31 @@ func (e *Engine) syncLoop(ctx context.Context, period time.Duration, onSweep fun
 			return
 		case <-tick.C:
 		case <-check.C:
-			l := e.member.Layout()
-			if l == nil || l.Version == last {
+			moved := version() != 0 && version() != last
+			if !moved && (due.IsZero() || time.Now().Before(due)) {
 				continue
 			}
 		}
 
-		if l := e.member.Layout(); l != nil {
-			last = l.Version
+		// A new layout starts its own backoff: an old one's failures say
+		// nothing about it.
+		if v := version(); v != last {
+			last, retry = v, 0
 		}
 
-		err := e.Sweep(ctx)
+		err := sweep(ctx)
 		if onSweep != nil && ctx.Err() == nil {
 			onSweep(err)
 		}
+
+		if err == nil {
+			retry, due = 0, time.Time{}
+
+			continue
+		}
+
+		retry = min(max(retry*2, syncRetry), period)
+		due = time.Now().Add(retry)
 	}
 }
 
