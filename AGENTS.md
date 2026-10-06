@@ -170,7 +170,12 @@ about HTTP or S3; don't import upward.
 - `make chaos` — soak a six-node cluster of real processes (`scripts/chaos`)
   under a mixed workload while killing, freezing and re-laying-out nodes;
   fails on any read outside what the acknowledged writes allow (lost, torn or
-  resurrected objects). About a minute per round; `ROUNDS=n`, `ARGS=-actions 4,5`.
+  resurrected objects), that layout changes complete, and that access keys
+  created through one node are accepted and revoked on every node. About a
+  minute per round; `ROUNDS=n`, `ARGS=-actions 4,5`. `ARGS=-realistic` runs
+  the nodes at fs's defaults (fsync on, production background cadence) —
+  slower, and data accumulates (~6 GB a round), so give it a `-dir` on a disk
+  with room.
 - `make fuzz` — actively fuzz the wire parsers (`FUZZTIME=5m` to search
   longer); `make fuzz_selftest` checks the runner's own failure handling in
   seconds, without fuzzing.

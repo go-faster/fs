@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -70,10 +71,21 @@ type cluster struct {
 	nodes []*node
 }
 
-func (c *cluster) config(n *node) string {
-	return fmt.Sprintf(`server:
-  addr: "127.0.0.1:%d"
-storage:
+// realistic runs the nodes with fs's own defaults: fsync on, and the
+// background work at its production cadence. The shortened intervals make a
+// round exercise collection and repair within a minute; they also hide a path
+// that only waits at production cadence — a retry that waits a sync interval,
+// say — which is what this mode is for.
+var realistic bool
+
+// storageConfig is the node's storage section.
+func storageConfig() string {
+	if realistic {
+		return `storage:
+  root: data`
+	}
+
+	return `storage:
   root: data
   # SIGKILL does not drop the page cache, so fsync changes nothing the soak
   # tests; it only makes seven nodes on one disk wait on each other's syncs.
@@ -83,7 +95,13 @@ storage:
     resync_interval: 1s
     gc_interval: 10s
     gc_grace: 60s
-    tombstone_delay: 20s
+    tombstone_delay: 20s`
+}
+
+func (c *cluster) config(n *node) string {
+	return fmt.Sprintf(`server:
+  addr: "127.0.0.1:%d"
+`+storageConfig()+`
 auth:
   keys:
     - access_key: %s
@@ -549,9 +567,24 @@ func main() {
 	settle := flag.Duration("settle", 2*time.Minute, "how long a layout change may take to complete")
 	only := flag.String("actions", "", "comma-separated action numbers to cycle through (default all: 1 kill one, 2 freeze, 3 kill two, 4 add node, 5 remove node)")
 
+	realisticFlag := flag.Bool("realistic", false, "run the nodes with fs's defaults (fsync on, production background cadence) instead of shortened intervals")
+
 	flag.Parse()
 
 	settleWithin = *settle
+	realistic = *realisticFlag
+
+	// At production cadence nothing is collected for an hour, so every round
+	// adds data, and a node joining late pulls tens of gigabytes through one
+	// shared disk. Two minutes measures the disk, not fs; each change still
+	// prints how long it took.
+	settleSet := false
+
+	flag.Visit(func(f *flag.Flag) { settleSet = settleSet || f.Name == "settle" })
+
+	if realistic && !settleSet {
+		settleWithin = 10 * time.Minute
+	}
 
 	if err := run(*bin, *dir, *rounds, *workers, *keysPer, *load, *seed, *only); err != nil {
 		fmt.Fprintln(os.Stderr, "chaos:", err)
@@ -578,6 +611,20 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 	c := &cluster{bin: abs}
 	zones := []string{"a", "b", "c", "a", "b", "c", "a"}
+
+	// A port someone else holds — a node left over from an earlier soak, say —
+	// would make a node of this one fail to start while the harness talks to
+	// a stranger in its place, and every finding after that is noise.
+	for i := range 7 {
+		for _, port := range []int{18400 + i, 18500 + i, 18600 + i} {
+			l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err != nil {
+				return fmt.Errorf("port %d is taken; stop whatever holds it (a node of an earlier soak?): %w", port, err)
+			}
+
+			_ = l.Close()
+		}
+	}
 
 	for i := range 7 {
 		n := &node{
@@ -677,7 +724,7 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 			return c.start(n)
 		}},
-		{"freeze one node past the tombstone delay", func() error {
+		{freezeName(), func() error {
 			n := h.pick(1)[0]
 			fmt.Printf("  SIGSTOP %s for 45s\n", n.id)
 			c.signal(n, syscall.SIGSTOP, false)
@@ -774,6 +821,8 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 	readErrs := 0
 
+	var keyErrs []string
+
 	for round := range rounds {
 		h.round = round + 1
 		act := actions[round%len(actions)]
@@ -796,6 +845,8 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		wg.Wait()
 
 		if actErr != nil {
+			h.report()
+
 			return fmt.Errorf("round %d: %w", h.round, actErr)
 		}
 
@@ -805,22 +856,24 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		errs := h.verify(ctx)
 		readErrs += errs
 
+		if err := h.checkKeys(ctx); err != nil {
+			keyErrs = append(keyErrs, fmt.Sprintf("round %d: %v", h.round, err))
+			fmt.Println("  KEYS:", err)
+		}
+
 		fmt.Printf("  ops ok %d, failed %d, unavailable reads %d; verify read errors %d; violations so far %d\n",
 			h.ok.Load(), h.failed.Load(), h.unavailable.Load(), errs, len(h.violations))
 	}
 
-	for _, v := range h.violations {
-		fmt.Printf("VIOLATION round %d (%s): %s/%s read %q, expected one of %q\n",
-			v.round, v.phase, v.bucket, v.key, v.observed, v.possible)
+	h.report()
 
-		for _, line := range v.history {
-			fmt.Println("    " + line)
-		}
+	for _, e := range keyErrs {
+		fmt.Println("KEYS " + e)
 	}
 
-	if len(h.violations) > 0 || readErrs > 0 {
-		return fmt.Errorf("%d violations, %d read errors with every node up; data kept in %s",
-			len(h.violations), readErrs, dir)
+	if len(h.violations) > 0 || readErrs > 0 || len(keyErrs) > 0 {
+		return fmt.Errorf("%d violations, %d read errors with every node up, %d access-key failures; data kept in %s",
+			len(h.violations), readErrs, len(keyErrs), dir)
 	}
 
 	fmt.Println("PASS")
@@ -853,4 +906,102 @@ func (h *harness) pick(n int) []*node {
 	}
 
 	return out
+}
+
+// freezeName names the freeze action for what it does in this mode: past the
+// tombstone delay only when that is shortened.
+func freezeName() string {
+	if realistic {
+		return "freeze one node for 45s"
+	}
+
+	return "freeze one node past the tombstone delay"
+}
+
+// keyDeadline bounds how long a node may take to accept a key created through
+// another, or to refuse one deleted through another: nodes refresh every 5s.
+const keyDeadline = 30 * time.Second
+
+// checkKeys creates an access key through one live node and requires every
+// live node to accept it, then deletes it through another and requires every
+// live node to refuse it, each within keyDeadline.
+func (h *harness) checkKeys(ctx context.Context) error {
+	live := h.c.live()
+	if len(live) < 2 {
+		return nil
+	}
+
+	id := fmt.Sprintf("CHAOSKEY%04d", h.round)
+	secret := "chaos-round-key-secret-" + id
+
+	created, deleted := live[h.rng.IntN(len(live))], live[h.rng.IntN(len(live))]
+
+	_, err := h.c.admin(created).CreateAccessKey(ctx, &adminapi.CreateAccessKeyRequest{
+		AccessKey: adminapi.NewOptString(id),
+		SecretKey: adminapi.NewOptString(secret),
+		Grants:    []adminapi.Grant{{Bucket: "*", Permission: adminapi.PermissionRead}},
+	})
+	if err != nil {
+		return fmt.Errorf("create %s through %s: %w", id, created.id, err)
+	}
+
+	if err := h.everyNode(ctx, live, id, secret, true); err != nil {
+		return err
+	}
+
+	if err := h.c.admin(deleted).DeleteAccessKey(ctx, adminapi.DeleteAccessKeyParams{AccessKey: id}); err != nil {
+		return fmt.Errorf("delete %s through %s: %w", id, deleted.id, err)
+	}
+
+	return h.everyNode(ctx, live, id, secret, false)
+}
+
+// everyNode waits until every node accepts (or refuses) the key.
+func (h *harness) everyNode(ctx context.Context, nodes []*node, id, secret string, accepted bool) error {
+	for _, n := range nodes {
+		client, err := minio.New(fmt.Sprintf("127.0.0.1:%d", n.s3), &minio.Options{
+			Creds: credentials.NewStaticV4(id, secret, ""),
+		})
+		if err != nil {
+			return err
+		}
+
+		deadline := time.Now().Add(keyDeadline)
+
+		for {
+			_, err := client.ListBuckets(ctx)
+			if (err == nil) == accepted {
+				break
+			}
+
+			if time.Now().After(deadline) {
+				state := "refused"
+				if !accepted {
+					state = "still accepted"
+				}
+
+				return fmt.Errorf("%s %s by %s after %s", id, state, n.id, keyDeadline)
+			}
+
+			time.Sleep(time.Second)
+		}
+	}
+
+	return nil
+}
+
+// report prints the violations recorded so far, with each key's history: on
+// a run that fails partway as much as on one that finishes.
+func (h *harness) report() {
+	h.vmu.Lock()
+	defer h.vmu.Unlock()
+
+	for _, v := range h.violations {
+		fmt.Printf("VIOLATION round %d (%s): %s/%s read %q, expected one of %q\n",
+			v.round, v.phase, v.bucket, v.key, v.observed, v.possible)
+
+		for _, line := range v.history {
+			fmt.Println("    " + line)
+		}
+	}
 }
