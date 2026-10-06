@@ -1,3 +1,5 @@
+//go:build unix
+
 // Command chaos runs a soak test of a cluster: real fs processes under a
 // mixed workload while nodes are killed, frozen and moved in and out of the
 // layout, checking after every round that the cluster lost no acknowledged
