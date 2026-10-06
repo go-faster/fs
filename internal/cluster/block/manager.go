@@ -123,18 +123,25 @@ func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte, release fu
 		return errors.Errorf("block of %d bytes exceeds %d", len(data), MaxSize)
 	}
 
-	nodes, err := m.replicas(h)
+	sets, err := m.replicaSets(h)
 	if err != nil {
 		done()
 
 		return err
 	}
 
+	nodes := union(sets)
+
 	// Replicas past the quorum still get the block: detach from the caller,
-	// who stops waiting once a quorum has it.
+	// who stops waiting once every set has a quorum.
 	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundTimeout)
 
-	results := make(chan error, len(nodes))
+	type result struct {
+		node layout.NodeID
+		err  error
+	}
+
+	results := make(chan result, len(nodes))
 
 	var wg sync.WaitGroup
 
@@ -145,7 +152,7 @@ func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte, release fu
 				m.enqueue(h, id)
 			}
 
-			results <- err
+			results <- result{id, err}
 		})
 	}
 
@@ -155,27 +162,38 @@ func (m *Manager) PutHashed(ctx context.Context, h Hash, data []byte, release fu
 		done()
 	}()
 
-	need := len(nodes)/2 + 1
-
-	var ok, failed int
+	ok, failed := make([]int, len(sets)), make([]int, len(sets))
 
 	var errs []error
 
 	for range nodes {
-		if err := <-results; err != nil {
-			failed++
+		res := <-results
+		if res.err != nil {
+			errs = append(errs, res.err)
+		}
 
-			errs = append(errs, err)
+		all := true
 
-			if len(nodes)-failed < need {
+		for i, set := range sets {
+			if slices.Contains(set, res.node) {
+				if res.err != nil {
+					failed[i]++
+				} else {
+					ok[i]++
+				}
+			}
+
+			need := len(set)/2 + 1
+			if len(set)-failed[i] < need {
 				return errors.Wrapf(ErrQuorum, "block %s: %v", h, errors.Join(errs...))
 			}
 
-			continue
+			if ok[i] < need {
+				all = false
+			}
 		}
 
-		ok++
-		if ok == need {
+		if all {
 			return nil
 		}
 	}
@@ -403,16 +421,50 @@ func (m *Manager) enqueue(h Hash, node layout.NodeID) {
 	}
 }
 
-// replicas returns the nodes holding h.
-func (m *Manager) replicas(h Hash) ([]layout.NodeID, error) {
-	l := m.member.Layout()
-	if l == nil {
+// replicaSets returns h's replicas in every retained layout version: a block
+// is written to a quorum of each, and may be read from any of them.
+func (m *Manager) replicaSets(h Hash) ([][]layout.NodeID, error) {
+	ls := m.member.Layouts()
+	if len(ls) == 0 {
 		return nil, ErrNoLayout
 	}
 
-	slots := l.Slots[l.Partition(h[:])]
+	var sets [][]layout.NodeID
 
-	return slices.Clone(slots[:min(Replicas, len(slots))]), nil
+	for _, l := range ls {
+		slots := l.Slots[l.Partition(h[:])]
+		set := slices.Clone(slots[:min(Replicas, len(slots))])
+
+		if !slices.ContainsFunc(sets, func(s []layout.NodeID) bool { return slices.Equal(s, set) }) {
+			sets = append(sets, set)
+		}
+	}
+
+	return sets, nil
+}
+
+// replicas returns every node that may hold h, oldest version's first.
+func (m *Manager) replicas(h Hash) ([]layout.NodeID, error) {
+	sets, err := m.replicaSets(h)
+	if err != nil {
+		return nil, err
+	}
+
+	return union(sets), nil
+}
+
+func union(sets [][]layout.NodeID) []layout.NodeID {
+	var out []layout.NodeID
+
+	for _, set := range sets {
+		for _, id := range set {
+			if !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+
+	return out
 }
 
 func (m *Manager) putOn(ctx context.Context, id layout.NodeID, h Hash, data []byte) error {

@@ -289,6 +289,11 @@ Command-line flags override YAML configuration values.`,
 						GC:         bg.GCInterval,
 						Grace:      bg.GCGrace,
 						Tombstones: bg.TombstoneDelay,
+						OnSweep: func(err error) {
+							if err != nil {
+								lg.Warn("Anti-entropy sweep incomplete; this node has not synced the layout", zap.Error(err))
+							}
+						},
 					})
 
 					return nil

@@ -131,6 +131,30 @@ that has to move does; --dry-run shows how much without applying.
 
 	cmd.AddCommand(apply)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "skip NODE",
+		Short: "Stop waiting for a node that is gone to sync a layout change",
+		Long: `A layout change completes once every node holding data has synced it; until
+then the versions before it stay in use. A node that is gone for good never
+syncs: skip releases it, so the change can complete. Whatever only that node
+held is given up — use it for a node that will not come back.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+
+			if err := c.SkipClusterNode(cmd.Context(), adminapi.SkipClusterNodeParams{ID: args[0]}); err != nil {
+				return errors.Wrap(err, "skip")
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s released; gossip carries it to every node\n", args[0])
+
+			return nil
+		},
+	})
+
 	return cmd
 }
 
@@ -198,7 +222,14 @@ func readRoles(path string) (*adminapi.ApplyLayoutRequest, error) {
 }
 
 func printLayout(w io.Writer, l *adminapi.Layout) {
-	_, _ = fmt.Fprintf(w, "Version %d, %d partitions, widths %v\n\n", l.Version, l.Partitions, l.Widths)
+	_, _ = fmt.Fprintf(w, "Version %d, %d partitions, widths %v\n", l.Version, l.Partitions, l.Widths)
+
+	if len(l.RetainedVersions) > 0 {
+		_, _ = fmt.Fprintf(w, "In transition: versions %v still in use until every node syncs %d (see fs layout nodes)\n",
+			l.RetainedVersions, l.Version)
+	}
+
+	_, _ = fmt.Fprintln(w)
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "ID\tZONE\tRACK\tCAPACITY\tSLOTS")
@@ -224,7 +255,7 @@ func printLayout(w io.Writer, l *adminapi.Layout) {
 
 func printNodes(w io.Writer, nodes []adminapi.ClusterNode) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tADDR\tSTATE\tLAYOUT\tLAST SEEN\tERROR")
+	_, _ = fmt.Fprintln(tw, "ID\tADDR\tSTATE\tLAYOUT\tSYNCED\tLAST SEEN\tERROR")
 
 	for _, n := range nodes {
 		state := "down"
@@ -241,8 +272,8 @@ func printNodes(w io.Writer, nodes []adminapi.ClusterNode) {
 			seen = humanize.Time(v)
 		}
 
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
-			n.ID.Or("?"), n.Addr, state, n.LayoutVersion.Or(0), seen, n.Error.Or(""))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+			n.ID.Or("?"), n.Addr, state, n.LayoutVersion.Or(0), n.SyncedVersion.Or(0), seen, n.Error.Or(""))
 	}
 
 	_ = tw.Flush()

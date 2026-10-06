@@ -3,6 +3,7 @@ package table
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync"
 
 	"github.com/go-faster/errors"
@@ -28,7 +29,7 @@ type Row struct {
 type writer interface {
 	tableName() string
 	insertTx(tx *bbolt.Tx, entries []wireEntry) error
-	replicas(pk string) ([]layout.NodeID, error)
+	writeSets(pk string) ([][]layout.NodeID, error)
 	database() *bbolt.DB
 }
 
@@ -121,8 +122,9 @@ func (r *registry) apply(entries []tableEntry) error {
 }
 
 // Write merges rows, of any tables of one member, into their replicas, and
-// returns once each row has a quorum of its own. Every node gets its rows in
-// one request and applies them in one transaction.
+// returns once each row has a quorum in the replica set of every retained
+// layout version. Every node gets its rows in one request and applies them in
+// one transaction.
 func Write(ctx context.Context, member *peer.Member, rows ...Row) error {
 	if len(rows) == 0 {
 		return nil
@@ -135,21 +137,36 @@ func Write(ctx context.Context, member *peer.Member, rows ...Row) error {
 
 	reg := v.(*registry) //nolint:forcetypeassert // Only registries are stored.
 
-	// Each row's replicas, and each node's share of the rows.
-	need := make([]int, len(rows))
-	holders := make([][]layout.NodeID, len(rows))
+	// Every (row, replica set) needs its own quorum.
+	type target struct {
+		row   int
+		nodes []layout.NodeID
+		need  int
+		ok    int
+		fail  int
+	}
+
+	var targets []*target
+
 	byNode := map[layout.NodeID][]tableEntry{}
 
 	for i, r := range rows {
-		nodes, err := r.t.replicas(r.entry.PK)
+		sets, err := r.t.writeSets(r.entry.PK)
 		if err != nil {
 			return err
 		}
 
-		holders[i], need[i] = nodes, len(nodes)/2+1
+		sent := map[layout.NodeID]bool{}
 
-		for _, id := range nodes {
-			byNode[id] = append(byNode[id], tableEntry{Table: r.t.tableName(), wireEntry: r.entry})
+		for _, nodes := range sets {
+			targets = append(targets, &target{row: i, nodes: nodes, need: len(nodes)/2 + 1})
+
+			for _, id := range nodes {
+				if !sent[id] {
+					sent[id] = true
+					byNode[id] = append(byNode[id], tableEntry{Table: r.t.tableName(), wireEntry: r.entry})
+				}
+			}
 		}
 	}
 
@@ -183,8 +200,6 @@ func Write(ctx context.Context, member *peer.Member, rows ...Row) error {
 		cancel()
 	}()
 
-	okN, failed := make([]int, len(rows)), make([]int, len(rows))
-
 	var errs []error
 
 	for range byNode {
@@ -195,24 +210,20 @@ func Write(ctx context.Context, member *peer.Member, rows ...Row) error {
 
 		done := true
 
-		for i := range rows {
-			for _, id := range holders[i] {
-				if id != res.node {
-					continue
-				}
-
+		for _, t := range targets {
+			if slices.Contains(t.nodes, res.node) {
 				if res.err != nil {
-					failed[i]++
+					t.fail++
 				} else {
-					okN[i]++
+					t.ok++
 				}
 			}
 
-			if len(holders[i])-failed[i] < need[i] {
-				return errors.Wrapf(ErrQuorum, "%d of %d replicas failed: %v", failed[i], len(holders[i]), errors.Join(errs...))
+			if len(t.nodes)-t.fail < t.need {
+				return errors.Wrapf(ErrQuorum, "%d of %d replicas failed: %v", t.fail, len(t.nodes), errors.Join(errs...))
 			}
 
-			if okN[i] < need[i] {
+			if t.ok < t.need {
 				done = false
 			}
 		}

@@ -83,7 +83,11 @@ automated resumable migration and the public API becomes additive-only.
   racks, stable across changes, balanced by capacity. Pure.
 - `internal/cluster/peer` — peer membership: HMAC-authenticated peer HTTP
   (`Secret`), the adopted layout persisted under the data dir, and gossip that
-  spreads the highest layout version and discovers peers. The engine
+  spreads the highest layout version and discovers peers. A layout change is a
+  transition: the versions before it stay retained (`Layouts`) — writes go to
+  every retained version's replicas, reads to the oldest's — until every node
+  holding data has synced the new one (`MarkSynced`, gossiped; `Skip` releases
+  a node that is gone). The engine
   replicates over it; `cmd/fs/cluster.go` starts it (config `cluster:`,
   metrics), the admin API exposes it (`/api/v1/cluster/*`), and `fs layout`
   drives it.

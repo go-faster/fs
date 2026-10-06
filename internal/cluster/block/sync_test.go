@@ -48,7 +48,8 @@ func TestSyncUnreachable(t *testing.T) {
 	nodes := cluster(t, 3)
 	nodes[2].srv.Close()
 
-	require.NoError(t, nodes[0].blocks.Sync(context.Background()))
+	require.ErrorIs(t, nodes[0].blocks.Sync(context.Background()), ErrIncomplete,
+		"an unreachable replica leaves the sweep incomplete: the node has not synced")
 	assert.Equal(t, 1, nodes[0].blocks.SyncStats().Unreachable)
 }
 
@@ -96,6 +97,32 @@ func TestSyncHandsOver(t *testing.T) {
 		for _, n := range nodes {
 			require.NoError(t, n.blocks.Sync(ctx))
 		}
+	}
+
+	// Copied, and kept while the old version is retained; once every node
+	// has synced the new one it retires, and the next sweep drops them.
+	require.Len(t, nodes[0].member.Layouts(), 2)
+
+	for _, n := range nodes {
+		require.NoError(t, n.member.MarkSynced(next.Version))
+	}
+
+	require.Eventually(t, func() bool {
+		for _, n := range nodes {
+			n.member.Round(ctx)
+		}
+
+		for _, n := range nodes {
+			if len(n.member.Layouts()) != 1 {
+				return false
+			}
+		}
+
+		return true
+	}, 5*time.Second, time.Millisecond)
+
+	for _, n := range nodes {
+		require.NoError(t, n.blocks.Sync(ctx))
 	}
 
 	var handed int64

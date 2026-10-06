@@ -148,6 +148,12 @@ func encodeSetBucketSchemeResponse(response *BucketScheme, w http.ResponseWriter
 	return nil
 }
 
+func encodeSkipClusterNodeResponse(response *SkipClusterNodeNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
+
+	return nil
+}
+
 func encodeErrorResponse(response *ErrorStatusCode, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	code := response.StatusCode

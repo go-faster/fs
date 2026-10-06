@@ -100,6 +100,7 @@ func (m *Manager) Sync(ctx context.Context) error {
 
 	var (
 		outOfSync, unreachable int
+		failures               []error
 		pulled                 int64
 	)
 
@@ -114,10 +115,12 @@ func (m *Manager) Sync(ctx context.Context) error {
 			}
 
 			unreachable++
+
+			failures = append(failures, errors.Wrapf(err, "replica %s", id))
 		}
 	}
 
-	handed, err := m.handOver(ctx, l)
+	handed, pending, err := m.handOver(ctx, l)
 
 	m.sync.mu.Lock()
 	m.sync.stats.LastSweep = time.Now()
@@ -127,8 +130,21 @@ func (m *Manager) Sync(ctx context.Context) error {
 	m.sync.stats.HandedOver += handed
 	m.sync.mu.Unlock()
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	if unreachable > 0 || pending > 0 {
+		return errors.Wrapf(ErrIncomplete, "%d replicas unreachable, %d blocks not handed over: %v",
+			unreachable, pending, errors.Join(failures...))
+	}
+
+	return nil
 }
+
+// ErrIncomplete is a sweep that could not compare with every replica or hand
+// over every block: the node has not synced its layout yet.
+var ErrIncomplete = errors.New("sync incomplete")
 
 func (m *Manager) syncWith(
 	ctx context.Context, id layout.NodeID, partitions []int, local map[Slot][32]byte,
@@ -172,6 +188,11 @@ func (m *Manager) syncWith(
 			}
 
 			data, err := m.Get(ctx, h)
+			if errors.Is(err, ErrNotFound) {
+				// Collected since it was listed: garbage, not a gap.
+				continue
+			}
+
 			if err != nil {
 				return pulled, len(differ), err
 			}
@@ -192,49 +213,63 @@ func (m *Manager) syncWith(
 }
 
 // handOver pushes blocks of partitions this node no longer replicates to the
-// owners missing them, and drops each once every owner has it.
-func (m *Manager) handOver(ctx context.Context, l *layout.Layout) (int64, error) {
+// owners missing them, and drops each once every owner has it and no retained
+// layout version gives it to this node. It reports blocks dropped and blocks
+// not yet on every owner.
+func (m *Manager) handOver(ctx context.Context, l *layout.Layout) (handed int64, pending int, err error) {
 	self := m.member.ID()
+	retained := m.member.Layouts()
 
 	var moving []Hash
 
-	err := m.store.Walk(func(h Hash, tmp bool, _ time.Time, _ string) error {
+	err = m.store.Walk(func(h Hash, tmp bool, _ time.Time, _ string) error {
 		if tmp {
 			return nil
 		}
 
-		slots := l.Slots[l.Partition(h[:])]
-		if !slices.Contains(slots[:min(Replicas, len(slots))], self) {
+		if !holdsBlock(l, h, self) {
 			moving = append(moving, h)
 		}
 
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-
-	var handed int64
 
 	for _, h := range moving {
 		if err := ctx.Err(); err != nil {
-			return handed, err
+			return handed, pending, err
 		}
 
 		slots := l.Slots[l.Partition(h[:])]
 
 		if !m.pushTo(ctx, h, slots[:min(Replicas, len(slots))]) {
+			pending++
+
 			continue // Kept, and retried next sweep.
 		}
 
+		// Reads may still come here while a retained version gives the
+		// block to this node.
+		if slices.ContainsFunc(retained, func(lv *layout.Layout) bool { return holdsBlock(lv, h, self) }) {
+			continue
+		}
+
 		if err := m.store.Delete(h); err != nil {
-			return handed, err
+			return handed, pending, err
 		}
 
 		handed++
 	}
 
-	return handed, nil
+	return handed, pending, nil
+}
+
+func holdsBlock(l *layout.Layout, h Hash, id layout.NodeID) bool {
+	slots := l.Slots[l.Partition(h[:])]
+
+	return slices.Contains(slots[:min(Replicas, len(slots))], id)
 }
 
 // pushTo makes sure every owner holds h, sending it to those that do not. It
@@ -254,7 +289,8 @@ func (m *Manager) pushTo(ctx context.Context, h Hash, owners []layout.NodeID) bo
 
 		if data == nil {
 			if data, err = m.store.Get(h); err != nil {
-				return false
+				// Collected here since the walk: nothing left to hand over.
+				return errors.Is(err, ErrNotFound)
 			}
 		}
 

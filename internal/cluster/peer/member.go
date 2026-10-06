@@ -6,6 +6,15 @@
 // its own to a peer that is behind. The highest layout version wins, so an
 // applied layout reaches every node within a few rounds.
 //
+// A layout change is a transition, not a switch. Until every node has synced
+// the new layout — pulled what it now replicates and handed over what it no
+// longer does — the versions before it stay retained: writes go to the
+// replicas of every retained version and reads come from the oldest, which
+// holds everything acknowledged. Each node gossips the newest version it has
+// synced; an old version is retired once every node holding data in a
+// retained version has synced past it. A node that will never sync again is
+// released with Skip.
+//
 // All peer traffic is authenticated with the shared cluster secret; see
 // Secret.
 package peer
@@ -18,6 +27,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -70,6 +80,10 @@ type Status struct {
 	Version uint64        `json:"version"`
 	Digest  string        `json:"digest,omitempty"`
 	Peers   []string      `json:"peers,omitempty"`
+	// Synced is the newest layout version this node has synced, and
+	// SyncedBy what it knows of every node's, its own included.
+	Synced   uint64                   `json:"synced,omitempty"`
+	SyncedBy map[layout.NodeID]uint64 `json:"synced_by,omitempty"`
 }
 
 // PeerState is what a node knows about one of its peers.
@@ -78,6 +92,8 @@ type PeerState struct {
 	// ID and Version are as of the last successful exchange.
 	ID      layout.NodeID
 	Version uint64
+	// Synced is the newest layout version the peer has synced.
+	Synced uint64
 	// Seen is the time of the last successful exchange; zero if none.
 	Seen time.Time
 	// Err is the last exchange's failure, nil if it succeeded.
@@ -95,6 +111,10 @@ type Member struct {
 	mu     sync.Mutex
 	layout *layout.Layout
 	digest string
+	// history are the retained versions before layout, oldest first.
+	history []*layout.Layout
+	// synced is the newest version each node has reported synced.
+	synced map[layout.NodeID]uint64
 	peers  map[string]*PeerState // by address
 }
 
@@ -124,8 +144,9 @@ func New(cfg Config) (*Member, error) {
 			Transport: &transport{secret: cfg.Secret, node: cfg.ID, base: base, now: cfg.Now},
 			Timeout:   10 * time.Second,
 		},
-		peers: map[string]*PeerState{},
-		mux:   http.NewServeMux(),
+		peers:  map[string]*PeerState{},
+		synced: map[layout.NodeID]uint64{},
+		mux:    http.NewServeMux(),
 	}
 
 	m.routes()
@@ -134,13 +155,16 @@ func New(cfg Config) (*Member, error) {
 		m.learn(addr)
 	}
 
-	l, err := load(filepath.Join(cfg.Dir, layoutFile))
+	s, err := load(filepath.Join(cfg.Dir, layoutFile))
 	if err != nil {
 		return nil, err
 	}
 
-	if l != nil {
-		m.layout, m.digest = l, digest(l)
+	if s != nil {
+		m.layout, m.digest, m.history = s.Layout, digest(s.Layout), s.History
+		if s.Synced != nil {
+			m.synced = s.Synced
+		}
 	}
 
 	return m, nil
@@ -152,6 +176,94 @@ func (m *Member) Layout() *layout.Layout {
 	defer m.mu.Unlock()
 
 	return m.layout
+}
+
+// Layouts returns the retained versions, oldest first, ending with the
+// current one; empty before the first layout. Write to every one's replicas;
+// read from the first's.
+func (m *Member) Layouts() []*layout.Layout {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.layout == nil {
+		return nil
+	}
+
+	return append(slices.Clone(m.history), m.layout)
+}
+
+// MarkSynced records that this node has synced layout version v: it holds
+// what v gives it and has handed over what v moved away.
+func (m *Member) MarkSynced(v uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if v <= m.synced[m.cfg.ID] {
+		return nil
+	}
+
+	m.synced[m.cfg.ID] = v
+	m.prune()
+
+	return m.persist()
+}
+
+// Skip records node as synced through the current version, so retained
+// versions can retire without it. For a node that is gone for good: data only
+// it held is lost to the cluster's view.
+func (m *Member) Skip(node layout.NodeID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.layout == nil {
+		return errors.New("no layout")
+	}
+
+	m.synced[node] = max(m.synced[node], m.layout.Version)
+	m.prune()
+
+	return m.persist()
+}
+
+// Synced returns the newest version each node has reported synced.
+func (m *Member) Synced() map[layout.NodeID]uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return maps.Clone(m.synced)
+}
+
+// prune retires the retained versions every data-holding node has synced
+// past. Called with mu held.
+func (m *Member) prune() {
+	if len(m.history) == 0 {
+		return
+	}
+
+	// The nodes that hold slots in any retained version.
+	holders := map[layout.NodeID]bool{}
+
+	for _, l := range append(slices.Clone(m.history), m.layout) {
+		for _, slots := range l.Slots {
+			for _, id := range slots {
+				holders[id] = true
+			}
+		}
+	}
+
+	low := m.layout.Version
+	for id := range holders {
+		low = min(low, m.synced[id])
+	}
+
+	m.history = slices.DeleteFunc(m.history, func(l *layout.Layout) bool { return l.Version < low })
+}
+
+// persist saves the layout, history and sync state. Called with mu held.
+func (m *Member) persist() error {
+	return save(filepath.Join(m.cfg.Dir, layoutFile), &stored{
+		Format: format, Layout: m.layout, History: m.history, Synced: m.synced,
+	})
 }
 
 // Peers returns what this node knows about its peers, by address.
@@ -185,7 +297,15 @@ func (m *Member) Adopt(l *layout.Layout) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if cur := m.layout; cur != nil {
+	return m.adopt(l, d, nil)
+}
+
+// adopt makes l current if it is newer, retaining the version it replaces
+// and any of history, a peer's retained versions, that are newer than what
+// this node has retired. Called with mu held.
+func (m *Member) adopt(l *layout.Layout, d string, history []*layout.Layout) (bool, error) {
+	cur := m.layout
+	if cur != nil {
 		if len(cur.Slots) != len(l.Slots) {
 			return false, errors.Errorf("layout has %d partitions, this cluster has %d", len(l.Slots), len(cur.Slots))
 		}
@@ -195,11 +315,32 @@ func (m *Member) Adopt(l *layout.Layout) (bool, error) {
 		}
 	}
 
-	if err := save(filepath.Join(m.cfg.Dir, layoutFile), l); err != nil {
-		return false, err
+	retained := slices.Clone(m.history)
+	if cur != nil && cur.Version < l.Version {
+		retained = append(retained, cur)
 	}
 
-	m.layout, m.digest = l, d
+	for _, h := range history {
+		if h.Version < l.Version && !slices.ContainsFunc(retained, func(r *layout.Layout) bool { return r.Version == h.Version }) &&
+			h.Validate() == nil && len(h.Slots) == len(l.Slots) {
+			retained = append(retained, h)
+		}
+	}
+
+	slices.SortFunc(retained, func(a, b *layout.Layout) int { return cmp.Compare(a.Version, b.Version) })
+
+	prev := m.layout
+	prevDigest := m.digest
+	prevHistory := m.history
+
+	m.layout, m.digest, m.history = l, d, retained
+	m.prune()
+
+	if err := m.persist(); err != nil {
+		m.layout, m.digest, m.history = prev, prevDigest, prevHistory
+
+		return false, err
+	}
 
 	return true, nil
 }
@@ -302,8 +443,27 @@ func (m *Member) exchange(ctx context.Context, addr string) error {
 
 	m.mu.Lock()
 	p := m.peers[addr]
-	p.ID, p.Version = st.ID, st.Version
+	p.ID, p.Version, p.Synced = st.ID, st.Version, st.Synced
 	cur, curDigest := m.layout, m.digest
+
+	// A peer's own report is the authority on it; others are merged by
+	// taking the newest, so a node released with Skip stays released.
+	changed := false
+
+	for id, v := range st.SyncedBy {
+		if v > m.synced[id] {
+			m.synced[id], changed = v, true
+		}
+	}
+
+	if st.Synced > m.synced[st.ID] {
+		m.synced[st.ID], changed = st.Synced, true
+	}
+
+	if changed && m.layout != nil {
+		m.prune()
+		_ = m.persist()
+	}
 	m.mu.Unlock()
 
 	for _, a := range st.Peers {
@@ -312,19 +472,51 @@ func (m *Member) exchange(ctx context.Context, addr string) error {
 
 	switch {
 	case st.Version > 0 && (cur == nil || newer(st.Version, st.Digest, cur.Version, curDigest)):
-		var l layout.Layout
-		if err := m.call(ctx, http.MethodGet, addr, "/v1/layout", nil, &l); err != nil {
+		var ls layouts
+		if err := m.call(ctx, http.MethodGet, addr, "/v1/layouts", nil, &ls); err != nil {
 			return err
 		}
 
-		if _, err := m.Adopt(&l); err != nil {
+		if err := m.adoptAll(ls); err != nil {
 			return errors.Wrapf(err, "adopt layout from %s", addr)
 		}
 	case cur != nil && newer(cur.Version, curDigest, st.Version, st.Digest):
-		return m.call(ctx, http.MethodPost, addr, "/v1/layout", cur, nil)
+		return m.call(ctx, http.MethodPost, addr, "/v1/layouts", m.retained(), nil)
 	}
 
 	return nil
+}
+
+// layouts is a node's retained versions and current layout, as gossip moves
+// them: a node that is behind needs the versions still in transition too,
+// to write to their replicas.
+type layouts struct {
+	Current *layout.Layout   `json:"current"`
+	History []*layout.Layout `json:"history,omitempty"`
+}
+
+func (m *Member) retained() layouts {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return layouts{Current: m.layout, History: slices.Clone(m.history)}
+}
+
+func (m *Member) adoptAll(ls layouts) error {
+	if ls.Current == nil {
+		return errors.New("no layout")
+	}
+
+	if err := ls.Current.Validate(); err != nil {
+		return errors.Wrap(err, "invalid layout")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, err := m.adopt(ls.Current, digest(ls.Current), ls.History)
+
+	return err
 }
 
 // learn adds a peer address, ignoring this node's own.
@@ -346,7 +538,10 @@ func (m *Member) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	st := Status{ID: m.cfg.ID, Addr: m.cfg.Addr, Digest: m.digest}
+	st := Status{
+		ID: m.cfg.ID, Addr: m.cfg.Addr, Digest: m.digest,
+		Synced: m.synced[m.cfg.ID], SyncedBy: maps.Clone(m.synced),
+	}
 	if m.layout != nil {
 		st.Version = m.layout.Version
 	}
@@ -418,25 +613,25 @@ func (m *Member) routes() {
 
 		writeJSON(w, m.Status())
 	})
-	mux.HandleFunc("GET /v1/layout", func(w http.ResponseWriter, _ *http.Request) {
-		l := m.Layout()
-		if l == nil {
+	mux.HandleFunc("GET /v1/layouts", func(w http.ResponseWriter, _ *http.Request) {
+		ls := m.retained()
+		if ls.Current == nil {
 			http.Error(w, "no layout", http.StatusNotFound)
 
 			return
 		}
 
-		writeJSON(w, l)
+		writeJSON(w, ls)
 	})
-	mux.HandleFunc("POST /v1/layout", func(w http.ResponseWriter, r *http.Request) {
-		var l layout.Layout
-		if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
+	mux.HandleFunc("POST /v1/layouts", func(w http.ResponseWriter, r *http.Request) {
+		var ls layouts
+		if err := json.NewDecoder(r.Body).Decode(&ls); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 
 			return
 		}
 
-		if _, err := m.Adopt(&l); err != nil {
+		if err := m.adoptAll(ls); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 
 			return
@@ -526,13 +721,16 @@ func digest(l *layout.Layout) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// stored is the layout file's shape.
+// stored is the layout file's shape. History and Synced came later; a file
+// without them is a node with nothing in transition.
 type stored struct {
-	Format int            `json:"format"`
-	Layout *layout.Layout `json:"layout"`
+	Format  int                      `json:"format"`
+	Layout  *layout.Layout           `json:"layout"`
+	History []*layout.Layout         `json:"history,omitempty"`
+	Synced  map[layout.NodeID]uint64 `json:"synced,omitempty"`
 }
 
-func load(path string) (*layout.Layout, error) {
+func load(path string) (*stored, error) {
 	b, err := os.ReadFile(path) // #nosec G304 -- path is under the configured data directory
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -555,18 +753,20 @@ func load(path string) (*layout.Layout, error) {
 		return nil, errors.Errorf("%s holds no layout", path)
 	}
 
-	if err := s.Layout.Validate(); err != nil {
-		return nil, errors.Wrapf(err, "%s", path)
+	for _, l := range append(slices.Clone(s.History), s.Layout) {
+		if err := l.Validate(); err != nil {
+			return nil, errors.Wrapf(err, "%s", path)
+		}
 	}
 
-	return s.Layout, nil
+	return &s, nil
 }
 
 // save writes the layout durably: a temporary file, synced, renamed over the
 // old one, and the directory synced, so a crash leaves the old layout or the
 // new one and never a torn file.
-func save(path string, l *layout.Layout) error {
-	b, err := json.Marshal(stored{Format: format, Layout: l})
+func save(path string, s *stored) error {
+	b, err := json.Marshal(s)
 	if err != nil {
 		return errors.Wrap(err, "encode layout")
 	}

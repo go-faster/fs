@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -128,48 +128,23 @@ func (t *Table[R]) Insert(ctx context.Context, pk, sk string, row R) error {
 // InsertMany is Insert of several rows of one partition key, in one request
 // to each replica. Every entry's PK must be pk.
 func (t *Table[R]) InsertMany(ctx context.Context, pk string, rows []Entry[R]) error {
-	req := insertReq{Entries: make([]wireEntry, len(rows))}
+	out := make([]Row, 0, len(rows))
 
-	for i, r := range rows {
-		b, err := json.Marshal(r.Row)
+	for _, r := range rows {
+		row, err := t.Row(pk, r.SK, r.Row)
 		if err != nil {
-			return errors.Wrap(err, "encode row")
+			return err
 		}
 
-		req.Entries[i] = wireEntry{PK: pk, SK: r.SK, Row: b}
+		out = append(out, row)
 	}
 
-	nodes, err := t.replicas(pk)
-	if err != nil {
-		return err
-	}
-
-	// Replicas past the quorum still get the write: detach from the caller,
-	// who stops waiting once a quorum has it, and release the context only
-	// when every replica has answered.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundTimeout)
-
-	var wg sync.WaitGroup
-
-	wg.Add(len(nodes))
-
-	go func() {
-		wg.Wait()
-		cancel()
-	}()
-
-	_, err = quorum(nodes, len(nodes)/2+1, func(id layout.NodeID) (struct{}, error) {
-		defer wg.Done()
-
-		return struct{}{}, t.insertOn(ctx, id, req)
-	})
-
-	return err
+	return Write(ctx, t.member, out...)
 }
 
 // Get returns the merged row at (pk, sk) as a quorum of replicas holds it.
 func (t *Table[R]) Get(ctx context.Context, pk, sk string) (row R, found bool, err error) {
-	nodes, err := t.replicas(pk)
+	nodes, err := t.readSet(pk)
 	if err != nil {
 		return row, false, err
 	}
@@ -247,7 +222,7 @@ func (t *Table[R]) RangePrefix(ctx context.Context, pk, start, prefix string, li
 		return nil, nil
 	}
 
-	nodes, err := t.replicas(pk)
+	nodes, err := t.readSet(pk)
 	if err != nil {
 		return nil, err
 	}
@@ -349,16 +324,42 @@ func (t *Table[R]) repair(ctx context.Context, nodes []layout.NodeID, entries []
 	}()
 }
 
-// replicas returns the nodes holding partition key pk.
-func (t *Table[R]) replicas(pk string) ([]layout.NodeID, error) {
-	l := t.member.Layout()
-	if l == nil {
+// readSet returns the nodes to read partition key pk from: its replicas in
+// the oldest retained layout version, which hold every acknowledged write —
+// a write reaches a quorum in every retained version.
+func (t *Table[R]) readSet(pk string) ([]layout.NodeID, error) {
+	ls := t.member.Layouts()
+	if len(ls) == 0 {
 		return nil, ErrNoLayout
 	}
 
+	return replicasIn(ls[0], pk), nil
+}
+
+// writeSets returns pk's replica set in every retained layout version, each
+// of which a write must reach a quorum of.
+func (t *Table[R]) writeSets(pk string) ([][]layout.NodeID, error) {
+	ls := t.member.Layouts()
+	if len(ls) == 0 {
+		return nil, ErrNoLayout
+	}
+
+	var sets [][]layout.NodeID
+
+	for _, l := range ls {
+		nodes := replicasIn(l, pk)
+		if !slices.ContainsFunc(sets, func(s []layout.NodeID) bool { return slices.Equal(s, nodes) }) {
+			sets = append(sets, nodes)
+		}
+	}
+
+	return sets, nil
+}
+
+func replicasIn(l *layout.Layout, pk string) []layout.NodeID {
 	slots := l.Slots[l.Partition([]byte(pk))]
 
-	return slots[:min(Replicas, len(slots))], nil
+	return slots[:min(Replicas, len(slots))]
 }
 
 func (t *Table[R]) insertOn(ctx context.Context, id layout.NodeID, req insertReq) error {

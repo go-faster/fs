@@ -308,6 +308,23 @@ repairs replicas that missed a write, and a block GC removes blocks nothing
 references. There is no background scrubber: verification happens on every
 read, and repair is anti-entropy's job.
 
+**Layout changes are transitions** (as in Garage). Quorums intersect within
+one layout, not across two: right after a change, the new replicas of a
+partition may not hold a row yet, so reading them could miss an acknowledged
+write — and block GC, which decides from those reads, could delete a live
+block. So each node keeps the versions before the current one retained
+(`peer.Member.Layouts`): writes reach a quorum in the replica set of every
+retained version, reads come from the oldest, which holds everything
+acknowledged. The engine's sync loop (`Engine.Sweep`) runs anti-entropy over
+every table, the blocks and shard repair; a sweep that completes under the
+current version — every replica compared, everything that moved handed over
+— marks the node synced for it, and gossip spreads every node's synced
+version. An old version retires once every node holding data in a retained
+version has synced past it. Until then handover copies but does not drop what
+moved, and tombstone collection waits. A node gone for good is released with
+`Member.Skip` (admin `POST /api/v1/cluster/nodes/{id}/skip`, CLI
+`fs layout skip`).
+
 **SSE-C.** A customer key never reaches storage: the handler checks its
 headers (algorithm, base64 key, key MD5; over TLS or a proxy saying
 `X-Forwarded-Proto: https`, unless `encryption.customer_keys_over_http`) and

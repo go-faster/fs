@@ -112,6 +112,13 @@ func (t *Table[R]) collectPass(ctx context.Context, delay time.Duration) (more b
 		return false, ErrNoLayout
 	}
 
+	// During a layout change a replica of an older version may still hold
+	// the row from before the delete; dropping the tombstone now could let
+	// handover bring that back. Collection waits for the change to retire.
+	if len(t.member.Layouts()) > 1 {
+		return false, nil
+	}
+
 	self := t.member.ID()
 	cutoff := time.Now().Add(-delay).UnixNano()
 

@@ -139,8 +139,11 @@ type ClusterNode struct {
 	Addr string    `json:"addr"`
 	Self bool      `json:"self"`
 	// The last exchange with this peer succeeded. Always true for this node.
-	Up            bool        `json:"up"`
-	LayoutVersion OptUint64   `json:"layout_version"`
+	Up            bool      `json:"up"`
+	LayoutVersion OptUint64 `json:"layout_version"`
+	// The newest layout version this node has synced: holds what it gives the node, handed over what it
+	// moved away.
+	SyncedVersion OptUint64   `json:"synced_version"`
 	LastSeen      OptDateTime `json:"last_seen"`
 	Error         OptString   `json:"error"`
 }
@@ -168,6 +171,11 @@ func (s *ClusterNode) GetUp() bool {
 // GetLayoutVersion returns the value of LayoutVersion.
 func (s *ClusterNode) GetLayoutVersion() OptUint64 {
 	return s.LayoutVersion
+}
+
+// GetSyncedVersion returns the value of SyncedVersion.
+func (s *ClusterNode) GetSyncedVersion() OptUint64 {
+	return s.SyncedVersion
 }
 
 // GetLastSeen returns the value of LastSeen.
@@ -203,6 +211,11 @@ func (s *ClusterNode) SetUp(val bool) {
 // SetLayoutVersion sets the value of LayoutVersion.
 func (s *ClusterNode) SetLayoutVersion(val OptUint64) {
 	s.LayoutVersion = val
+}
+
+// SetSyncedVersion sets the value of SyncedVersion.
+func (s *ClusterNode) SetSyncedVersion(val OptUint64) {
+	s.SyncedVersion = val
 }
 
 // SetLastSeen sets the value of LastSeen.
@@ -504,6 +517,9 @@ type Layout struct {
 	Widths     []int          `json:"widths"`
 	Members    []LayoutMember `json:"members"`
 	Spread     []LayoutSpread `json:"spread"`
+	// Older layout versions still in transition, oldest first: writes go to their replicas too and reads
+	// come from the oldest, until every node has synced the current version. Empty when nothing is moving.
+	RetainedVersions []uint64 `json:"retained_versions"`
 }
 
 // GetVersion returns the value of Version.
@@ -531,6 +547,11 @@ func (s *Layout) GetSpread() []LayoutSpread {
 	return s.Spread
 }
 
+// GetRetainedVersions returns the value of RetainedVersions.
+func (s *Layout) GetRetainedVersions() []uint64 {
+	return s.RetainedVersions
+}
+
 // SetVersion sets the value of Version.
 func (s *Layout) SetVersion(val uint64) {
 	s.Version = val
@@ -554,6 +575,11 @@ func (s *Layout) SetMembers(val []LayoutMember) {
 // SetSpread sets the value of Spread.
 func (s *Layout) SetSpread(val []LayoutSpread) {
 	s.Spread = val
+}
+
+// SetRetainedVersions sets the value of RetainedVersions.
+func (s *Layout) SetRetainedVersions(val []uint64) {
+	s.RetainedVersions = val
 }
 
 // Ref: #/components/schemas/LayoutChange
@@ -1103,6 +1129,9 @@ func (s *RotateResult) SetRemaining(val int) {
 func (s *RotateResult) SetFailed(val []string) {
 	s.Failed = val
 }
+
+// SkipClusterNodeNoContent is response for SkipClusterNode operation.
+type SkipClusterNodeNoContent struct{}
 
 // Where the credential is defined.
 // Ref: #/components/schemas/Source

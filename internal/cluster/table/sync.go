@@ -103,6 +103,8 @@ func (t *Table[R]) Sync(ctx context.Context) error {
 
 	var outOfSync, unreachable int
 
+	var failures []error
+
 	var pulled int64
 
 	for id, partitions := range shared {
@@ -116,10 +118,12 @@ func (t *Table[R]) Sync(ctx context.Context) error {
 			}
 
 			unreachable++
+
+			failures = append(failures, errors.Wrapf(err, "replica %s", id))
 		}
 	}
 
-	handed, err := t.handOver(ctx, l)
+	handed, pending, err := t.handOver(ctx, l)
 
 	t.sync.mu.Lock()
 	t.sync.stats.LastSweep = time.Now()
@@ -129,39 +133,21 @@ func (t *Table[R]) Sync(ctx context.Context) error {
 	t.sync.stats.HandedOver += handed
 	t.sync.mu.Unlock()
 
-	return err
-}
-
-// Run sweeps every interval until ctx is canceled, and right away when the
-// layout version changes — a moved partition should not wait a full period.
-func (t *Table[R]) Run(ctx context.Context, interval time.Duration) {
-	var last uint64
-
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
-
-	check := time.NewTicker(time.Second)
-	defer check.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		case <-check.C:
-			l := t.member.Layout()
-			if l == nil || l.Version == last {
-				continue
-			}
-		}
-
-		if l := t.member.Layout(); l != nil {
-			last = l.Version
-		}
-
-		_ = t.Sync(ctx)
+	if err != nil {
+		return err
 	}
+
+	if unreachable > 0 || pending > 0 {
+		return errors.Wrapf(ErrIncomplete, "%d replicas unreachable, %d rows not handed over: %v",
+			unreachable, pending, errors.Join(failures...))
+	}
+
+	return nil
 }
+
+// ErrIncomplete is a sweep that could not compare with every replica or hand
+// over every row: the node has not synced its layout yet.
+var ErrIncomplete = errors.New("sync incomplete")
 
 // syncWith pulls the slots of partitions that differ from replica id.
 func (t *Table[R]) syncWith(
@@ -214,16 +200,23 @@ func (t *Table[R]) syncWith(
 	}
 }
 
-// handOver moves rows of partitions this node no longer replicates to their
-// replicas, and drops them here once every replica has merged them.
-func (t *Table[R]) handOver(ctx context.Context, l *layout.Layout) (int64, error) {
+// handOver copies rows of partitions this node no longer replicates to their
+// replicas, and drops them here once no retained layout version gives them to
+// this node any more: until then reads may still come to it. It reports rows
+// handed over and rows that could not be.
+func (t *Table[R]) handOver(ctx context.Context, l *layout.Layout) (handed int64, pending int, err error) {
 	self := t.member.ID()
+	retained := t.member.Layouts()
+
+	holds := func(lv *layout.Layout, p int) bool {
+		return slices.Contains(lv.Slots[p][:min(Replicas, len(lv.Slots[p]))], self)
+	}
 
 	byOwners := map[int][]wireEntry{}
 
-	err := t.scan(func(k, v []byte, pk string) error {
+	err = t.scan(func(k, v []byte, pk string) error {
 		p := l.Partition([]byte(pk))
-		if slices.Contains(l.Slots[p][:min(Replicas, len(l.Slots[p]))], self) {
+		if holds(l, p) {
 			return nil
 		}
 
@@ -232,13 +225,12 @@ func (t *Table[R]) handOver(ctx context.Context, l *layout.Layout) (int64, error
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-
-	var handed int64
 
 	for p, entries := range byOwners {
 		owners := l.Slots[p][:min(Replicas, len(l.Slots[p]))]
+		keep := slices.ContainsFunc(retained, func(lv *layout.Layout) bool { return holds(lv, p) })
 
 		for chunk := range slices.Chunk(entries, syncPage) {
 			req := insertReq{Entries: chunk}
@@ -256,19 +248,25 @@ func (t *Table[R]) handOver(ctx context.Context, l *layout.Layout) (int64, error
 			// Keep everything until every owner has it: a partial handover
 			// is retried next sweep, and merging twice is harmless.
 			if !ok {
+				pending += len(chunk)
+
+				continue
+			}
+
+			if keep {
 				continue
 			}
 
 			n, err := t.dropIfUnchanged(chunk)
 			if err != nil {
-				return handed, err
+				return handed, pending, err
 			}
 
 			handed += n
 		}
 	}
 
-	return handed, nil
+	return handed, pending, nil
 }
 
 // dropIfUnchanged deletes entries whose stored row is still the one handed

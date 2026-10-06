@@ -17,4 +17,5 @@ const (
 	ReloadConfigOperation         OperationName = "ReloadConfig"
 	RotateEncryptionKeysOperation OperationName = "RotateEncryptionKeys"
 	SetBucketSchemeOperation      OperationName = "SetBucketScheme"
+	SkipClusterNodeOperation      OperationName = "SkipClusterNode"
 )

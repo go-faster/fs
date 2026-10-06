@@ -174,6 +174,19 @@ func registerClusterMetrics(mp metric.MeterProvider, m *peer.Member) error {
 		return errors.Wrap(err, "peers gauge")
 	}
 
+	retained, err := meter.Int64ObservableGauge("fs.cluster.layout.retained",
+		metric.WithDescription("Layout versions in use: 1 normally, more while a layout change is in transition. "+
+			"Above 1 for long means a node has not synced the change; see the admin API's cluster nodes."))
+	if err != nil {
+		return errors.Wrap(err, "retained layouts gauge")
+	}
+
+	synced, err := meter.Int64ObservableGauge("fs.cluster.layout.synced",
+		metric.WithDescription("The newest layout version this node has synced."))
+	if err != nil {
+		return errors.Wrap(err, "synced gauge")
+	}
+
 	up, down := attribute.String("state", "up"), attribute.String("state", "down")
 
 	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
@@ -183,6 +196,8 @@ func registerClusterMetrics(mp metric.MeterProvider, m *peer.Member) error {
 		}
 
 		o.ObserveInt64(version, v)
+		o.ObserveInt64(retained, int64(len(m.Layouts())))
+		o.ObserveInt64(synced, int64(m.Status().Synced)) //nolint:gosec // Versions never reach 2^63.
 
 		var nUp, nDown int64
 
@@ -198,7 +213,7 @@ func registerClusterMetrics(mp metric.MeterProvider, m *peer.Member) error {
 		o.ObserveInt64(peers, nDown, metric.WithAttributes(down))
 
 		return nil
-	}, version, peers)
+	}, version, retained, synced, peers)
 	if err != nil {
 		return errors.Wrap(err, "register cluster metrics")
 	}

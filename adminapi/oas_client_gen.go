@@ -115,6 +115,14 @@ type Invoker interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/scheme
 	SetBucketScheme(ctx context.Context, request *BucketScheme, params SetBucketSchemeParams) (*BucketScheme, error)
+	// SkipClusterNode invokes skipClusterNode operation.
+	//
+	// Record the node as synced through the current layout version, so older versions can retire without
+	// it. For a node that is gone for good and blocks a layout change from completing: whatever only it
+	// held is given up. Gossip carries the release to every node. Returns 501 when cluster mode is off.
+	//
+	// POST /api/v1/cluster/nodes/{id}/skip
+	SkipClusterNode(ctx context.Context, params SkipClusterNodeParams) error
 }
 
 // Client implements OAS client.
@@ -1136,6 +1144,107 @@ func (c *Client) sendSetBucketScheme(ctx context.Context, request *BucketScheme,
 
 	stage = "DecodeResponse"
 	result, err := decodeSetBucketSchemeResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SkipClusterNode invokes skipClusterNode operation.
+//
+// Record the node as synced through the current layout version, so older versions can retire without
+// it. For a node that is gone for good and blocks a layout change from completing: whatever only it
+// held is given up. Gossip carries the release to every node. Returns 501 when cluster mode is off.
+//
+// POST /api/v1/cluster/nodes/{id}/skip
+func (c *Client) SkipClusterNode(ctx context.Context, params SkipClusterNodeParams) error {
+	_, err := c.sendSkipClusterNode(ctx, params)
+	return err
+}
+
+func (c *Client) sendSkipClusterNode(ctx context.Context, params SkipClusterNodeParams) (res *SkipClusterNodeNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("skipClusterNode"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/api/v1/cluster/nodes/{id}/skip"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SkipClusterNodeOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/cluster/nodes/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/skip"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSkipClusterNodeResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

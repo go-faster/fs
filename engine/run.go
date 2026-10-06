@@ -29,6 +29,10 @@ type RunConfig struct {
 	// long an unreferenced block is kept (default block.DefaultGrace).
 	GC    time.Duration
 	Grace time.Duration
+	// OnSweep, when set, is told how each anti-entropy sweep ended: nil
+	// once it synced the layout, or why it has not — what an operator
+	// needs to see a layout change that does not complete.
+	OnSweep func(error)
 	// Tombstones is how long a deleted row is kept before it is collected
 	// (default a day): long past any write still in flight to a replica,
 	// and any partition handover a layout change started.
@@ -66,18 +70,8 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 	var wg sync.WaitGroup
 
 	if cfg.Cluster {
-		wg.Go(func() { e.buckets.Run(ctx, cfg.Sync) })
-		wg.Go(func() { e.objects.Run(ctx, cfg.Sync) })
-		wg.Go(func() { e.refs.Run(ctx, cfg.Sync) })
-		wg.Go(func() { e.parts.Run(ctx, cfg.Sync) })
-		wg.Go(func() { e.uploads.Run(ctx, cfg.Sync) })
 		wg.Go(func() { e.blocks.Run(ctx, cfg.Resync) })
-		wg.Go(func() {
-			every(ctx, cfg.Sync, func() {
-				_ = e.blocks.Sync(ctx)
-				_ = e.blocks.RepairShards(ctx, e.BlockLive)
-			})
-		})
+		wg.Go(func() { e.syncLoop(ctx, cfg.Sync, cfg.OnSweep) })
 	}
 
 	wg.Go(func() {
@@ -167,19 +161,76 @@ func (e *Engine) setLastGC(t time.Time) {
 	})
 }
 
-// every calls fn every period until ctx is canceled.
-func every(ctx context.Context, period time.Duration, fn func()) {
-	t := time.NewTicker(period)
-	defer t.Stop()
+// syncLoop runs a sweep every period, and right away when the layout version
+// changes — a moved partition should not wait a full period.
+func (e *Engine) syncLoop(ctx context.Context, period time.Duration, onSweep func(error)) {
+	var last uint64
+
+	tick := time.NewTicker(period)
+	defer tick.Stop()
+
+	check := time.NewTicker(time.Second)
+	defer check.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-			fn()
+		case <-tick.C:
+		case <-check.C:
+			l := e.member.Layout()
+			if l == nil || l.Version == last {
+				continue
+			}
+		}
+
+		if l := e.member.Layout(); l != nil {
+			last = l.Version
+		}
+
+		err := e.Sweep(ctx)
+		if onSweep != nil && ctx.Err() == nil {
+			onSweep(err)
 		}
 	}
+}
+
+// Sweep runs anti-entropy over every table and the blocks, and shard repair.
+// When all of it completes under one layout version — every replica compared
+// with, everything that moved handed over — this node has synced that
+// version, and says so through gossip: once every node has, the versions
+// before it retire.
+func (e *Engine) Sweep(ctx context.Context) error {
+	l := e.member.Layout()
+	if l == nil {
+		return table.ErrNoLayout
+	}
+
+	var errs []error
+
+	for _, sync := range []func(context.Context) error{
+		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.blocks.Sync,
+	} {
+		if err := sync(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if err := e.blocks.RepairShards(ctx, e.BlockLive); err != nil {
+		errs = append(errs, err)
+	} else if n := e.blocks.ShardStats().Unreachable; n > 0 {
+		errs = append(errs, errors.Errorf("shard repair: %d partitions unreachable", n))
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+
+	if cur := e.member.Layout(); cur == nil || cur.Version != l.Version {
+		return errors.New("layout changed during the sweep")
+	}
+
+	return e.member.MarkSynced(l.Version)
 }
 
 type gcStats struct {
