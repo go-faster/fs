@@ -86,8 +86,8 @@ func (r *registry) serveWrite(req writeReq) (any, error) {
 }
 
 // apply merges entries of any of the member's tables in one transaction.
-// Batch coalesces concurrent writes, and may run fn more than once —
-// harmless, merging is idempotent.
+// It is grouped with concurrent writes into one transaction, and may run
+// more than once — harmless, merging is idempotent.
 func (r *registry) apply(entries []tableEntry) error {
 	byTable := map[string][]wireEntry{}
 
@@ -110,7 +110,7 @@ func (r *registry) apply(entries []tableEntry) error {
 
 	r.mu.Unlock()
 
-	return r.db.Batch(func(tx *bbolt.Tx) error {
+	return commit(r.db, func(tx *bbolt.Tx) error {
 		for name, es := range byTable {
 			if err := tables[name].insertTx(tx, es); err != nil {
 				return err

@@ -412,9 +412,9 @@ func key(pk, sk string) []byte {
 }
 
 func (t *Table[R]) localInsert(entries []wireEntry) error {
-	// Batch coalesces concurrent inserts into one transaction, and may run fn
-	// more than once — harmless, merging is idempotent.
-	return t.db.Batch(func(tx *bbolt.Tx) error { return t.insertTx(tx, entries) })
+	// Grouped with concurrent writes into one transaction; fn may run more
+	// than once — harmless, merging is idempotent.
+	return commit(t.db, func(tx *bbolt.Tx) error { return t.insertTx(tx, entries) })
 }
 
 // insertTx merges entries into the table within tx.
@@ -616,14 +616,8 @@ func quorum[T any](nodes []layout.NodeID, need int, fn func(layout.NodeID) (T, e
 	return nil, errors.Wrap(ErrQuorum, "not enough replicas")
 }
 
-// OpenDB opens the bbolt database tables live in, tuned for them.
-//
-// Writes go through bbolt's Batch, which holds each one up to MaxBatchDelay to
-// coalesce it with concurrent writes. A lone writer pays that delay on every
-// insert — several per object written: a 4 KiB PUT took 3 ms at bbolt's
-// default and 0.4 ms at zero. Zero still coalesces under load: writers that
-// arrive while a batch commits form the next one, which is group commit
-// without the wait.
+// OpenDB opens the bbolt database tables live in. Writes to it go through
+// commit, which groups them; see commit.go.
 func OpenDB(path string) (*bbolt.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, errors.Wrap(err, "create metadata dir")
@@ -633,8 +627,6 @@ func OpenDB(path string) (*bbolt.DB, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "open %s", path)
 	}
-
-	db.MaxBatchDelay = 0
 
 	return db, nil
 }
