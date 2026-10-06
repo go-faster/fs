@@ -159,6 +159,30 @@ func TestShardHandOver(t *testing.T) {
 	require.Positive(t, moved, "the new node takes slots, or the test proves nothing")
 	assert.Zero(t, nodes[6].blocks.Stats().Degraded, "every shard reached its new slot")
 
+	// The old holders keep their copies while the old version is retained;
+	// once every node has synced the new one, it retires and they go.
+	for _, n := range nodes {
+		require.NoError(t, n.member.MarkSynced(next.Version))
+	}
+
+	require.Eventually(t, func() bool {
+		for _, n := range nodes {
+			n.member.Round(ctx)
+		}
+
+		for _, n := range nodes {
+			if len(n.member.Layouts()) != 1 {
+				return false
+			}
+		}
+
+		return true
+	}, 5*time.Second, time.Millisecond)
+
+	for _, n := range nodes {
+		require.NoError(t, n.blocks.RepairShards(ctx, alive))
+	}
+
 	var shards int
 
 	for _, n := range nodes {

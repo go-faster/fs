@@ -27,6 +27,12 @@ func (a *AdminAPI) GetLayout(_ context.Context) (*adminapi.Layout, error) {
 
 	out := layoutToAPI(l)
 
+	for _, old := range a.opts.Cluster.Layouts() {
+		if old.Version != l.Version {
+			out.RetainedVersions = append(out.RetainedVersions, old.Version)
+		}
+	}
+
 	return &out, nil
 }
 
@@ -86,6 +92,7 @@ func (a *AdminAPI) ListClusterNodes(_ context.Context) (*adminapi.ClusterNodeLis
 		Self:          true,
 		Up:            true,
 		LayoutVersion: adminapi.NewOptUint64(self.Version),
+		SyncedVersion: adminapi.NewOptUint64(self.Synced),
 	}}
 
 	for _, p := range a.opts.Cluster.Peers() {
@@ -94,6 +101,7 @@ func (a *AdminAPI) ListClusterNodes(_ context.Context) (*adminapi.ClusterNodeLis
 		if p.ID != "" {
 			n.ID = adminapi.NewOptString(string(p.ID))
 			n.LayoutVersion = adminapi.NewOptUint64(p.Version)
+			n.SyncedVersion = adminapi.NewOptUint64(p.Synced)
 		}
 
 		if !p.Seen.IsZero() {
@@ -134,4 +142,18 @@ func layoutToAPI(l *layout.Layout) adminapi.Layout {
 	}
 
 	return out
+}
+
+// SkipClusterNode stops waiting for a node to sync, so a layout change can
+// complete without it.
+func (a *AdminAPI) SkipClusterNode(_ context.Context, params adminapi.SkipClusterNodeParams) error {
+	if a.opts.Cluster == nil {
+		return a.errNoCluster()
+	}
+
+	if err := a.opts.Cluster.Skip(layout.NodeID(params.ID)); err != nil {
+		return apiErr(http.StatusBadRequest, err)
+	}
+
+	return nil
 }

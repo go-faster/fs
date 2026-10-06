@@ -557,6 +557,12 @@ func (s *ClusterNode) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.SyncedVersion.Set {
+			e.FieldStart("synced_version")
+			s.SyncedVersion.Encode(e)
+		}
+	}
+	{
 		if s.LastSeen.Set {
 			e.FieldStart("last_seen")
 			s.LastSeen.Encode(e, json.EncodeDateTime)
@@ -570,14 +576,15 @@ func (s *ClusterNode) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfClusterNode = [7]string{
+var jsonFieldsNameOfClusterNode = [8]string{
 	0: "id",
 	1: "addr",
 	2: "self",
 	3: "up",
 	4: "layout_version",
-	5: "last_seen",
-	6: "error",
+	5: "synced_version",
+	6: "last_seen",
+	7: "error",
 }
 
 // Decode decodes ClusterNode from json.
@@ -644,6 +651,16 @@ func (s *ClusterNode) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"layout_version\"")
+			}
+		case "synced_version":
+			if err := func() error {
+				s.SyncedVersion.Reset()
+				if err := s.SyncedVersion.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"synced_version\"")
 			}
 		case "last_seen":
 			if err := func() error {
@@ -1605,14 +1622,25 @@ func (s *Layout) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		if s.RetainedVersions != nil {
+			e.FieldStart("retained_versions")
+			e.ArrStart()
+			for _, elem := range s.RetainedVersions {
+				e.UInt64(elem)
+			}
+			e.ArrEnd()
+		}
+	}
 }
 
-var jsonFieldsNameOfLayout = [5]string{
+var jsonFieldsNameOfLayout = [6]string{
 	0: "version",
 	1: "partitions",
 	2: "widths",
 	3: "members",
 	4: "spread",
+	5: "retained_versions",
 }
 
 // Decode decodes Layout from json.
@@ -1703,6 +1731,25 @@ func (s *Layout) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"spread\"")
+			}
+		case "retained_versions":
+			if err := func() error {
+				s.RetainedVersions = make([]uint64, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem uint64
+					v, err := d.UInt64()
+					elem = uint64(v)
+					if err != nil {
+						return err
+					}
+					s.RetainedVersions = append(s.RetainedVersions, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"retained_versions\"")
 			}
 		default:
 			return d.Skip()

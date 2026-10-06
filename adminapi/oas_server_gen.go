@@ -95,6 +95,14 @@ type Handler interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/scheme
 	SetBucketScheme(ctx context.Context, req *BucketScheme, params SetBucketSchemeParams) (*BucketScheme, error)
+	// SkipClusterNode implements skipClusterNode operation.
+	//
+	// Record the node as synced through the current layout version, so older versions can retire without
+	// it. For a node that is gone for good and blocks a layout change from completing: whatever only it
+	// held is given up. Gossip carries the release to every node. Returns 501 when cluster mode is off.
+	//
+	// POST /api/v1/cluster/nodes/{id}/skip
+	SkipClusterNode(ctx context.Context, params SkipClusterNodeParams) error
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.

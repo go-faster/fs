@@ -75,6 +75,9 @@ func (c *cluster) config(n *node) string {
   addr: "127.0.0.1:%d"
 storage:
   root: data
+  # SIGKILL does not drop the page cache, so fsync changes nothing the soak
+  # tests; it only makes seven nodes on one disk wait on each other's syncs.
+  fsync: none
   background:
     sync_interval: 3s
     resync_interval: 1s
@@ -238,6 +241,77 @@ func (c *cluster) applyLayout(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// settleWithin bounds how long a layout change may take to complete.
+var settleWithin = 2 * time.Minute
+
+// settle waits until the layout change has completed — every node has
+// synced it and no older version is in use — which is when a node that left
+// may be shut down.
+func (c *cluster) settle(ctx context.Context, within time.Duration) error {
+	start := time.Now()
+	deadline := start.Add(within)
+
+	for time.Now().Before(deadline) {
+		done := true
+
+		for _, n := range c.live() {
+			l, err := c.admin(n).GetLayout(ctx)
+			if err != nil || len(l.RetainedVersions) > 0 {
+				done = false
+
+				break
+			}
+		}
+
+		if done {
+			fmt.Printf("  %s layout change complete in %s\n", time.Now().Format("15:04:05.000"), time.Since(start).Round(time.Second))
+
+			return nil
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	// Say who is holding it up.
+	for _, n := range c.live() {
+		l, err := c.admin(n).GetLayout(ctx)
+		if err != nil {
+			fmt.Printf("  %s: layout: %v\n", n.id, err)
+
+			continue
+		}
+
+		list, err := c.admin(n).ListClusterNodes(ctx)
+		if err != nil {
+			fmt.Printf("  %s: nodes: %v\n", n.id, err)
+
+			continue
+		}
+
+		var synced []string
+		for _, p := range list.Nodes {
+			synced = append(synced, fmt.Sprintf("%s=%d", p.ID.Or("?"), p.SyncedVersion.Or(0)))
+		}
+
+		fmt.Printf("  %s: version %d, retained %v, synced %v\n", n.id, l.Version, l.RetainedVersions, synced)
+
+		// A node behind gets a goroutine dump in its log: SIGQUIT.
+		for _, p := range list.Nodes {
+			if p.Self && p.SyncedVersion.Or(0) < l.Version {
+				fmt.Printf("  %s is behind; goroutines dumped to %s/server.log\n", n.id, n.dir)
+
+				n.mu.Lock()
+				_ = n.cmd.Process.Signal(syscall.SIGQUIT)
+				n.mu.Unlock()
+			}
+		}
+	}
+
+	time.Sleep(2 * time.Second)
+
+	return fmt.Errorf("layout change did not complete within %s", within)
 }
 
 // keyModel is what a key may hold: hashes of content, "" for absent.
@@ -472,9 +546,12 @@ func main() {
 	keysPer := flag.Int("keys", 12, "keys per worker")
 	load := flag.Duration("load", 20*time.Second, "load before and after each disruption")
 	seed := flag.Uint64("seed", uint64(time.Now().UnixNano()), "random seed")
+	settle := flag.Duration("settle", 2*time.Minute, "how long a layout change may take to complete")
 	only := flag.String("actions", "", "comma-separated action numbers to cycle through (default all: 1 kill one, 2 freeze, 3 kill two, 4 add node, 5 remove node)")
 
 	flag.Parse()
+
+	settleWithin = *settle
 
 	if err := run(*bin, *dir, *rounds, *workers, *keysPer, *load, *seed, *only); err != nil {
 		fmt.Fprintln(os.Stderr, "chaos:", err)
@@ -640,7 +717,11 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 			spare.member = true
 			fmt.Printf("  %s joins\n", spare.id)
 
-			return c.applyLayout(ctx)
+			if err := c.applyLayout(ctx); err != nil {
+				return err
+			}
+
+			return c.settle(ctx, settleWithin)
 		}},
 		{"remove it again", func() error {
 			spare := c.nodes[6]
@@ -655,8 +736,12 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 				return err
 			}
 
-			// Handover runs on the sweeps a layout change starts.
-			time.Sleep(20 * time.Second)
+			// A node that leaves may go once every node has synced the change:
+			// until then reads may still come to it.
+			if err := c.settle(ctx, settleWithin); err != nil {
+				return err
+			}
+
 			c.stop(spare)
 
 			return nil

@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -128,48 +128,23 @@ func (t *Table[R]) Insert(ctx context.Context, pk, sk string, row R) error {
 // InsertMany is Insert of several rows of one partition key, in one request
 // to each replica. Every entry's PK must be pk.
 func (t *Table[R]) InsertMany(ctx context.Context, pk string, rows []Entry[R]) error {
-	req := insertReq{Entries: make([]wireEntry, len(rows))}
+	out := make([]Row, 0, len(rows))
 
-	for i, r := range rows {
-		b, err := json.Marshal(r.Row)
+	for _, r := range rows {
+		row, err := t.Row(pk, r.SK, r.Row)
 		if err != nil {
-			return errors.Wrap(err, "encode row")
+			return err
 		}
 
-		req.Entries[i] = wireEntry{PK: pk, SK: r.SK, Row: b}
+		out = append(out, row)
 	}
 
-	nodes, err := t.replicas(pk)
-	if err != nil {
-		return err
-	}
-
-	// Replicas past the quorum still get the write: detach from the caller,
-	// who stops waiting once a quorum has it, and release the context only
-	// when every replica has answered.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundTimeout)
-
-	var wg sync.WaitGroup
-
-	wg.Add(len(nodes))
-
-	go func() {
-		wg.Wait()
-		cancel()
-	}()
-
-	_, err = quorum(nodes, len(nodes)/2+1, func(id layout.NodeID) (struct{}, error) {
-		defer wg.Done()
-
-		return struct{}{}, t.insertOn(ctx, id, req)
-	})
-
-	return err
+	return Write(ctx, t.member, out...)
 }
 
 // Get returns the merged row at (pk, sk) as a quorum of replicas holds it.
 func (t *Table[R]) Get(ctx context.Context, pk, sk string) (row R, found bool, err error) {
-	nodes, err := t.replicas(pk)
+	nodes, err := t.readSet(pk)
 	if err != nil {
 		return row, false, err
 	}
@@ -247,7 +222,7 @@ func (t *Table[R]) RangePrefix(ctx context.Context, pk, start, prefix string, li
 		return nil, nil
 	}
 
-	nodes, err := t.replicas(pk)
+	nodes, err := t.readSet(pk)
 	if err != nil {
 		return nil, err
 	}
@@ -349,16 +324,42 @@ func (t *Table[R]) repair(ctx context.Context, nodes []layout.NodeID, entries []
 	}()
 }
 
-// replicas returns the nodes holding partition key pk.
-func (t *Table[R]) replicas(pk string) ([]layout.NodeID, error) {
-	l := t.member.Layout()
-	if l == nil {
+// readSet returns the nodes to read partition key pk from: its replicas in
+// the oldest retained layout version, which hold every acknowledged write —
+// a write reaches a quorum in every retained version.
+func (t *Table[R]) readSet(pk string) ([]layout.NodeID, error) {
+	ls := t.member.Layouts()
+	if len(ls) == 0 {
 		return nil, ErrNoLayout
 	}
 
+	return replicasIn(ls[0], pk), nil
+}
+
+// writeSets returns pk's replica set in every retained layout version, each
+// of which a write must reach a quorum of.
+func (t *Table[R]) writeSets(pk string) ([][]layout.NodeID, error) {
+	ls := t.member.Layouts()
+	if len(ls) == 0 {
+		return nil, ErrNoLayout
+	}
+
+	var sets [][]layout.NodeID
+
+	for _, l := range ls {
+		nodes := replicasIn(l, pk)
+		if !slices.ContainsFunc(sets, func(s []layout.NodeID) bool { return slices.Equal(s, nodes) }) {
+			sets = append(sets, nodes)
+		}
+	}
+
+	return sets, nil
+}
+
+func replicasIn(l *layout.Layout, pk string) []layout.NodeID {
 	slots := l.Slots[l.Partition([]byte(pk))]
 
-	return slots[:min(Replicas, len(slots))], nil
+	return slots[:min(Replicas, len(slots))]
 }
 
 func (t *Table[R]) insertOn(ctx context.Context, id layout.NodeID, req insertReq) error {
@@ -411,9 +412,9 @@ func key(pk, sk string) []byte {
 }
 
 func (t *Table[R]) localInsert(entries []wireEntry) error {
-	// Batch coalesces concurrent inserts into one transaction, and may run fn
-	// more than once — harmless, merging is idempotent.
-	return t.db.Batch(func(tx *bbolt.Tx) error { return t.insertTx(tx, entries) })
+	// Grouped with concurrent writes into one transaction; fn may run more
+	// than once — harmless, merging is idempotent.
+	return commit(t.db, func(tx *bbolt.Tx) error { return t.insertTx(tx, entries) })
 }
 
 // insertTx merges entries into the table within tx.
@@ -615,14 +616,8 @@ func quorum[T any](nodes []layout.NodeID, need int, fn func(layout.NodeID) (T, e
 	return nil, errors.Wrap(ErrQuorum, "not enough replicas")
 }
 
-// OpenDB opens the bbolt database tables live in, tuned for them.
-//
-// Writes go through bbolt's Batch, which holds each one up to MaxBatchDelay to
-// coalesce it with concurrent writes. A lone writer pays that delay on every
-// insert — several per object written: a 4 KiB PUT took 3 ms at bbolt's
-// default and 0.4 ms at zero. Zero still coalesces under load: writers that
-// arrive while a batch commits form the next one, which is group commit
-// without the wait.
+// OpenDB opens the bbolt database tables live in. Writes to it go through
+// commit, which groups them; see commit.go.
 func OpenDB(path string) (*bbolt.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, errors.Wrap(err, "create metadata dir")
@@ -632,8 +627,6 @@ func OpenDB(path string) (*bbolt.DB, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "open %s", path)
 	}
-
-	db.MaxBatchDelay = 0
 
 	return db, nil
 }

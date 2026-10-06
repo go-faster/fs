@@ -3,6 +3,7 @@ package block
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,6 +104,38 @@ func (m *Manager) slotsFor(h Hash, s Scheme) ([]layout.NodeID, error) {
 	return slots[:s.K+s.M], nil
 }
 
+// shardHolders returns, for each shard index, the nodes that may hold it:
+// its slot's node in the current layout first, then in older retained
+// versions, which hold shards written before a layout change until it
+// retires.
+func (m *Manager) shardHolders(h Hash, s Scheme) ([][]layout.NodeID, error) {
+	cur, err := m.slotsFor(h, s)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([][]layout.NodeID, len(cur))
+	for i, id := range cur {
+		out[i] = []layout.NodeID{id}
+	}
+
+	ls := m.member.Layouts()
+	for j := len(ls) - 2; j >= 0; j-- {
+		slots := ls[j].Slots[ls[j].Partition(h[:])]
+		if len(slots) < len(cur) {
+			continue
+		}
+
+		for i := range out {
+			if !slices.Contains(out[i], slots[i]) {
+				out[i] = append(out[i], slots[i])
+			}
+		}
+	}
+
+	return out, nil
+}
+
 // PutCoded stores data, which hashes to h, as the shards of s on their
 // nodes, and returns once K+1 hold theirs: one more than a read needs, so a
 // write acknowledged survives losing any one of them. The rest are still
@@ -194,7 +227,7 @@ func (m *Manager) PutCoded(ctx context.Context, h Hash, data []byte, s Scheme, r
 // joined, or, when any is missing or corrupt, the block rebuilt from any K
 // shards. Fewer than K reachable is ErrNotFound.
 func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]byte, error) {
-	nodes, err := m.slotsFor(h, s)
+	holders, err := m.shardHolders(h, s)
 	if err != nil {
 		return nil, err
 	}
@@ -204,21 +237,26 @@ func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]b
 		return nil, err
 	}
 
-	shards := make([][]byte, len(nodes))
+	shards := make([][]byte, len(holders))
 	fetch := func(idx []int) {
 		var wg sync.WaitGroup
 
 		for _, i := range idx {
 			wg.Go(func() {
-				data, err := m.getShardFrom(ctx, nodes[i], Shard{Hash: h, K: s.K, M: s.M, I: i})
-				if err == nil {
-					shards[i] = data
+				for _, id := range holders[i] {
+					if data, err := m.getShardFrom(ctx, id, Shard{Hash: h, K: s.K, M: s.M, I: i}); err == nil {
+						shards[i] = data
+
+						return
+					}
 				}
 			})
 		}
 
 		wg.Wait()
 	}
+
+	nodes := holders
 
 	data := make([]int, s.K)
 	for i := range data {

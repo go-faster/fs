@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,7 +81,8 @@ func TestSyncUnreachable(t *testing.T) {
 	nodes := cluster(t)
 	nodes[2].srv.Close()
 
-	require.NoError(t, nodes[0].table.Sync(context.Background()), "an unreachable replica is reported, not fatal")
+	require.ErrorIs(t, nodes[0].table.Sync(context.Background()), ErrIncomplete,
+		"an unreachable replica leaves the sweep incomplete: the node has not synced")
 	assert.Equal(t, 1, nodes[0].table.SyncStats().Unreachable)
 	assert.False(t, nodes[0].table.SyncStats().LastSweep.IsZero())
 }
@@ -104,11 +106,38 @@ func TestSyncHandsOver(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// New owners pull, old ones hand over; two sweeps settle both.
+	// New owners pull, old ones copy theirs over and keep them: the old
+	// version is retained until every node has synced the new one.
 	for range 2 {
 		for _, n := range nodes {
 			require.NoError(t, n.table.Sync(ctx))
 		}
+	}
+
+	require.Len(t, nodes[0].member.Layouts(), 2, "the old version is retained")
+
+	for _, n := range nodes {
+		require.NoError(t, n.member.MarkSynced(next.Version))
+	}
+
+	// Gossip carries every node's sync; once all have it, the old version
+	// retires and the next sweep drops what moved.
+	require.Eventually(t, func() bool {
+		for _, n := range nodes {
+			n.member.Round(ctx)
+		}
+
+		for _, n := range nodes {
+			if len(n.member.Layouts()) != 1 {
+				return false
+			}
+		}
+
+		return true
+	}, 5*time.Second, time.Millisecond)
+
+	for _, n := range nodes {
+		require.NoError(t, n.table.Sync(ctx))
 	}
 
 	var handed int64

@@ -211,6 +211,27 @@ paths:
                 $ref: "#/components/schemas/BucketScheme"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/cluster/nodes/{id}/skip:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: "skipClusterNode"
+      summary: "Stop waiting for a node to sync"
+      description: >
+        Record the node as synced through the current layout version, so older
+        versions can retire without it. For a node that is gone for good and
+        blocks a layout change from completing: whatever only it held is
+        given up. Gossip carries the release to every node. Returns 501 when
+        cluster mode is off.
+      responses:
+        204:
+          description: Released.
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/encryption/rotate:
     post:
       operationId: "rotateEncryptionKeys"
@@ -480,6 +501,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LayoutSpread"
+        retained_versions:
+          type: array
+          description: >
+            Older layout versions still in transition, oldest first: writes go
+            to their replicas too and reads come from the oldest, until every
+            node has synced the current version. Empty when nothing is moving.
+          items:
+            type: integer
+            format: uint64
     ApplyLayoutRequest:
       type: object
       required:
@@ -530,6 +560,10 @@ components:
         layout_version:
           type: integer
           format: uint64
+        synced_version:
+          type: integer
+          format: uint64
+          description: "The newest layout version this node has synced: holds what it gives the node, handed over what it moved away."
         last_seen:
           type: string
           format: date-time

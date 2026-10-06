@@ -287,6 +287,16 @@ func (m *Manager) handOverShards(ctx context.Context, l *layout.Layout, shards [
 			continue
 		}
 
+		// Reads may still come here while a retained version gives this
+		// node the slot.
+		if slices.ContainsFunc(m.member.Layouts(), func(lv *layout.Layout) bool {
+			s := lv.Slots[lv.Partition(sh.Hash[:])]
+
+			return sh.I < len(s) && s[sh.I] == m.member.ID()
+		}) {
+			continue
+		}
+
 		if m.store.DeleteShard(sh) == nil {
 			n++
 		}

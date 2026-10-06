@@ -134,6 +134,18 @@ encrypted** — keep it on a private network and never expose it publicly. Each
 node keeps its adopted layout in `<storage.root>/.cluster/layout.json`; a file
 in an unknown format stops the node from starting rather than being misread.
 
+**Changing the layout** (adding, removing or resizing nodes) is a transition,
+not a switch. Until every node holding data has synced the new layout —
+pulled what it now replicates, handed over what it no longer does — writes
+also go to the replicas of the old layout and reads come from them, so nothing
+acknowledged is missed while data moves. `fs layout show` says when a change
+is still in transition and `fs layout nodes` shows each node's synced
+version; `fs.cluster.layout.retained` above 1 for long means some node has
+not synced it (down, or unable to reach a replica). **Keep a node you remove
+running until the change completes**: it still serves reads for what it held.
+If a node is gone for good and blocks a change from completing,
+`fs layout skip NODE` releases it — whatever only it held is given up.
+
 Background work runs on defaults that rarely need changing:
 `storage.background.{sync_interval, resync_interval, gc_interval, gc_grace,
 tombstone_delay}` (10m, 10s, 1h, 10m, 24h). Shorter intervals repair faster at
@@ -177,7 +189,10 @@ before, since its coded blocks stay — is refused.
   wait a day, then go once every replica has them; `queued` climbing with
   `deferred` means a replica has been unreachable through collections.
 - **Cluster** (when `cluster.node_id` is set): `fs.cluster.layout.version` —
-  compare across nodes; one lagging means gossip is not reaching it — and
+  compare across nodes; one lagging means gossip is not reaching it —
+  `fs.cluster.layout.retained` (layout versions in use: above 1 while a change
+  is in transition, and for long when a node has not synced it),
+  `fs.cluster.layout.synced` (the newest version this node has synced), and
   `fs.cluster.peers{state=up|down}`. `fs layout nodes` shows the same per
   peer, with the last error.
 - Toggle whole subsystems with `observability.enable_metrics` /
