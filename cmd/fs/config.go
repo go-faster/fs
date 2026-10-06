@@ -183,6 +183,26 @@ type StorageConfig struct {
 
 	// Buckets to pre-create on startup (optional)
 	Buckets []string `yaml:"buckets,omitempty"`
+
+	// Background sets how often the engine's background work runs. Zero
+	// values keep the defaults; there is rarely a reason to change them
+	// outside tests.
+	Background BackgroundConfig `yaml:"background,omitempty"`
+}
+
+// BackgroundConfig tunes the engine's background work (engine.RunConfig).
+type BackgroundConfig struct {
+	// SyncInterval is the anti-entropy period (default 10m).
+	SyncInterval time.Duration `yaml:"sync_interval,omitempty"`
+	// ResyncInterval is how often queued block copies are retried
+	// (default 10s).
+	ResyncInterval time.Duration `yaml:"resync_interval,omitempty"`
+	// GCInterval is the collection period (default 1h), GCGrace how long an
+	// unreferenced block is kept (default 10m), and TombstoneDelay how long
+	// a deleted row is kept before it is collected (default 24h).
+	GCInterval     time.Duration `yaml:"gc_interval,omitempty"`
+	GCGrace        time.Duration `yaml:"gc_grace,omitempty"`
+	TombstoneDelay time.Duration `yaml:"tombstone_delay,omitempty"`
 }
 
 // ObservabilityConfig contains telemetry and observability settings.

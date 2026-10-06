@@ -160,6 +160,10 @@ about HTTP or S3; don't import upward.
   (CI drift-checks it).
 - `make cli-smoke` — drive a live binary with aws-cli/mc/s3cmd/rclone over
   edge-case keys (installed clients only; CI runs all four).
+- `make chaos` — soak a six-node cluster of real processes (`scripts/chaos`)
+  under a mixed workload while killing, freezing and re-laying-out nodes;
+  fails on any read outside what the acknowledged writes allow (lost, torn or
+  resurrected objects). About a minute per round; `ROUNDS=n`, `ARGS=-actions 4,5`.
 - `make fuzz` — actively fuzz the wire parsers (`FUZZTIME=5m` to search
   longer); `make fuzz_selftest` checks the runner's own failure handling in
   seconds, without fuzzing.

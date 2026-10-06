@@ -54,3 +54,10 @@ cli-smoke:
 	./scripts/cli-smoke.sh
 .PHONY: cli-smoke
 
+
+# Soak a 6-node cluster under load while killing, freezing and re-laying-out
+# nodes; fails on any lost, torn or resurrected object. ROUNDS=n, ARGS=... .
+chaos:
+	go build -o fs ./cmd/fs
+	go run ./scripts/chaos -fs ./fs -rounds $(or $(ROUNDS),10) $(ARGS)
+.PHONY: chaos
