@@ -794,6 +794,8 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 	readErrs := 0
 
+	var keyErrs []string
+
 	for round := range rounds {
 		h.round = round + 1
 		act := actions[round%len(actions)]
@@ -825,6 +827,11 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		errs := h.verify(ctx)
 		readErrs += errs
 
+		if err := h.checkKeys(ctx); err != nil {
+			keyErrs = append(keyErrs, fmt.Sprintf("round %d: %v", h.round, err))
+			fmt.Println("  KEYS:", err)
+		}
+
 		fmt.Printf("  ops ok %d, failed %d, unavailable reads %d; verify read errors %d; violations so far %d\n",
 			h.ok.Load(), h.failed.Load(), h.unavailable.Load(), errs, len(h.violations))
 	}
@@ -838,9 +845,13 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		}
 	}
 
-	if len(h.violations) > 0 || readErrs > 0 {
-		return fmt.Errorf("%d violations, %d read errors with every node up; data kept in %s",
-			len(h.violations), readErrs, dir)
+	for _, e := range keyErrs {
+		fmt.Println("KEYS " + e)
+	}
+
+	if len(h.violations) > 0 || readErrs > 0 || len(keyErrs) > 0 {
+		return fmt.Errorf("%d violations, %d read errors with every node up, %d access-key failures; data kept in %s",
+			len(h.violations), readErrs, len(keyErrs), dir)
 	}
 
 	fmt.Println("PASS")
@@ -883,4 +894,76 @@ func freezeName() string {
 	}
 
 	return "freeze one node past the tombstone delay"
+}
+
+// keyDeadline bounds how long a node may take to accept a key created through
+// another, or to refuse one deleted through another: nodes refresh every 5s.
+const keyDeadline = 30 * time.Second
+
+// checkKeys creates an access key through one live node and requires every
+// live node to accept it, then deletes it through another and requires every
+// live node to refuse it, each within keyDeadline.
+func (h *harness) checkKeys(ctx context.Context) error {
+	live := h.c.live()
+	if len(live) < 2 {
+		return nil
+	}
+
+	id := fmt.Sprintf("CHAOSKEY%04d", h.round)
+	secret := "chaos-round-key-secret-" + id
+
+	created, deleted := live[h.rng.IntN(len(live))], live[h.rng.IntN(len(live))]
+
+	_, err := h.c.admin(created).CreateAccessKey(ctx, &adminapi.CreateAccessKeyRequest{
+		AccessKey: adminapi.NewOptString(id),
+		SecretKey: adminapi.NewOptString(secret),
+		Grants:    []adminapi.Grant{{Bucket: "*", Permission: adminapi.PermissionRead}},
+	})
+	if err != nil {
+		return fmt.Errorf("create %s through %s: %w", id, created.id, err)
+	}
+
+	if err := h.everyNode(ctx, live, id, secret, true); err != nil {
+		return err
+	}
+
+	if err := h.c.admin(deleted).DeleteAccessKey(ctx, adminapi.DeleteAccessKeyParams{AccessKey: id}); err != nil {
+		return fmt.Errorf("delete %s through %s: %w", id, deleted.id, err)
+	}
+
+	return h.everyNode(ctx, live, id, secret, false)
+}
+
+// everyNode waits until every node accepts (or refuses) the key.
+func (h *harness) everyNode(ctx context.Context, nodes []*node, id, secret string, accepted bool) error {
+	for _, n := range nodes {
+		client, err := minio.New(fmt.Sprintf("127.0.0.1:%d", n.s3), &minio.Options{
+			Creds: credentials.NewStaticV4(id, secret, ""),
+		})
+		if err != nil {
+			return err
+		}
+
+		deadline := time.Now().Add(keyDeadline)
+
+		for {
+			_, err := client.ListBuckets(ctx)
+			if (err == nil) == accepted {
+				break
+			}
+
+			if time.Now().After(deadline) {
+				state := "refused"
+				if !accepted {
+					state = "still accepted"
+				}
+
+				return fmt.Errorf("%s %s by %s after %s", id, state, n.id, keyDeadline)
+			}
+
+			time.Sleep(time.Second)
+		}
+	}
+
+	return nil
 }
