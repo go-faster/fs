@@ -209,8 +209,9 @@ func (s *Server) handleApplyLayoutRequest(args [0]string, argsEscaped bool, w ht
 
 // handleCreateAccessKeyRequest handles createAccessKey operation.
 //
-// Create a runtime credential. The access key and secret are generated when not supplied. The secret
-// is returned only in this response and cannot be retrieved later.
+// Create a runtime credential, stored in the replicated metadata: every node of a cluster accepts it,
+// this one at once and the others within seconds. The access key and secret are generated when not
+// supplied. The secret is returned only in this response and cannot be retrieved later.
 //
 // POST /api/v1/access-keys
 func (s *Server) handleCreateAccessKeyRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -364,7 +365,8 @@ func (s *Server) handleCreateAccessKeyRequest(args [0]string, argsEscaped bool, 
 
 // handleDeleteAccessKeyRequest handles deleteAccessKey operation.
 //
-// Remove a runtime credential. Config-defined credentials cannot be deleted.
+// Remove a runtime credential from every node (the others stop accepting it within seconds).
+// Config-defined credentials cannot be deleted.
 //
 // DELETE /api/v1/access-keys/{accessKey}
 func (s *Server) handleDeleteAccessKeyRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

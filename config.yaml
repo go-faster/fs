@@ -69,7 +69,6 @@ storage:
 #   enabled: false
 #   addr: "localhost:8090"
 #   token: "change-me"                # or FS_ADMIN_TOKEN
-#   # keys_file: ".access-keys.json"  # file-source runtime keys (default under root)
 
 # Bucket lifecycle rules (?lifecycle), enforced by a background sweep that
 # deletes expired objects and aborts abandoned multipart uploads.

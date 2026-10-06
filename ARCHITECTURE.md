@@ -154,7 +154,12 @@ handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`, `Owner`).
 by.
 
 Credentials are config/env keys plus runtime keys the admin API creates, held
-by `auth.Manager` and persisted to a local JSON file.
+by `auth.Manager`. Runtime keys live in the engine's replicated `access_keys`
+table (one partition, a last-writer-wins record per key, null once deleted;
+`auth.Backend`), so a key created through any node is accepted by every node:
+the node that created it at once, the others when they next refresh (every
+5s, `fs.auth.keys.refresh_age`). A config key wins over a runtime key of the
+same ID.
 
 Anonymous (unsigned) requests are authorized against **canned ACLs**
 (`private` / `public-read` / `public-read-write`) stored per bucket and per

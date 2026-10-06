@@ -67,8 +67,10 @@ automated resumable migration and the public API becomes additive-only.
 - `internal/sigv4` — SigV4 verification (header, presigned, streaming chunk
   signatures). Verified against the real aws-sdk-go-v2 signer.
 - `auth`, `cors` (public) — credential/grant store and per-bucket CORS config,
-  wired via `server.WithAuth` / `server.WithCORS`. `auth.Manager` is the local
-  (file) credential store.
+  wired via `server.WithAuth` / `server.WithCORS`. `auth.Manager` merges config
+  keys with the runtime keys the admin API creates, which it keeps in an
+  `auth.Backend` — the engine's replicated `access_keys` table — and
+  refreshes from it.
 - `engine` (public, formerly `internal/engine`) — the persistent storage,
   described below; `storagemem` — the in-memory `fs.Storage` backend.
 - `storagetest` — exported conformance suite; every backend (and any
@@ -103,7 +105,8 @@ automated resumable migration and the public API becomes additive-only.
   (incarnation + per-setting LWW registers), objects (version list: uploads,
   versions, delete markers, null versions; Uploading → Complete → Gone),
   block refs, multipart parts and the index of uploads in flight (both
-  overwritten by `Done` once the upload finishes), and each
+  overwritten by `Done` once the upload finishes), access keys created
+  through the admin API, and each
   table's compaction (what a tombstone reduces to). Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
 - `internal/cluster/block` — content-addressed blocks: a local disk store

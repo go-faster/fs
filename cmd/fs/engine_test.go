@@ -81,8 +81,6 @@ func TestRefuseLegacyLayout(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, p), 0o750))
 	}
 
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".access-keys.json"), []byte("{}"), 0o600))
-
 	e, err := buildEngine(root, nil, nil, true)
 	require.NoError(t, err)
 	require.NoError(t, e.Close())

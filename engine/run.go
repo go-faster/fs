@@ -255,7 +255,7 @@ func (e *Engine) Sweep(ctx context.Context) error {
 	var errs []error
 
 	for _, sync := range []func(context.Context) error{
-		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.blocks.Sync,
+		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.keys.Sync, e.blocks.Sync,
 	} {
 		if err := sync(ctx); err != nil {
 			errs = append(errs, err)
@@ -314,11 +314,12 @@ func (e *Engine) Stats() Stats {
 		BlockSync: e.blocks.SyncStats(),
 		Shards:    e.blocks.ShardStats(),
 		TableSync: map[string]table.SyncStats{
-			"buckets":    e.buckets.SyncStats(),
-			"objects":    e.objects.SyncStats(),
-			"block_refs": e.refs.SyncStats(),
-			"parts":      e.parts.SyncStats(),
-			"uploads":    e.uploads.SyncStats(),
+			"buckets":     e.buckets.SyncStats(),
+			"objects":     e.objects.SyncStats(),
+			"block_refs":  e.refs.SyncStats(),
+			"parts":       e.parts.SyncStats(),
+			"uploads":     e.uploads.SyncStats(),
+			"access_keys": e.keys.SyncStats(),
 		},
 		Tombstones: map[string]table.GCStats{
 			"objects":    e.objects.GCStats(),

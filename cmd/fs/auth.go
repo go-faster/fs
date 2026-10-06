@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-faster/errors"
+	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/go-faster/fs/auth"
 )
@@ -93,11 +98,11 @@ func buildAuthStore(cfg Config, insecureNoAuth bool) (*auth.Store, error) {
 	return store, nil
 }
 
-// buildAuthManager builds a mutable, persistent auth manager from configuration
-// and environment, returning (nil, nil) when authentication is disabled. keysPath
-// is where runtime-created credentials are persisted (empty to keep them in
-// memory only).
-func buildAuthManager(cfg Config, insecureNoAuth bool, keysPath string) (*auth.Manager, error) {
+// buildAuthManager builds the auth manager from configuration and environment,
+// returning (nil, nil) when authentication is disabled. backend keeps the
+// credentials created through the admin API: the engine, which replicates
+// them to every node.
+func buildAuthManager(cfg Config, insecureNoAuth bool, backend auth.Backend) (*auth.Manager, error) {
 	ac, enabled, err := buildAuthConfig(cfg, insecureNoAuth)
 	if err != nil {
 		return nil, err
@@ -107,7 +112,7 @@ func buildAuthManager(cfg Config, insecureNoAuth bool, keysPath string) (*auth.M
 		return nil, nil
 	}
 
-	mgr, err := auth.NewManager(ac, keysPath)
+	mgr, err := auth.NewManager(ac, backend)
 	if err != nil {
 		return nil, errors.Wrap(err, "build auth manager")
 	}
@@ -148,4 +153,110 @@ func parsePermission(s string) (auth.Permission, error) {
 	default:
 		return 0, errors.Errorf("invalid permission %q (want read, write or admin)", s)
 	}
+}
+
+// keyRefreshInterval is how soon a key created or deleted through another node
+// takes effect on this one.
+const keyRefreshInterval = 5 * time.Second
+
+// keyRefresh pulls the replicated runtime credentials into the auth manager,
+// and records what an operator needs to see it fall behind.
+type keyRefresh struct {
+	mgr *auth.Manager
+	lg  *zap.Logger
+
+	// lastOK is when a refresh last succeeded, in Unix nanoseconds; zero until
+	// one has.
+	lastOK atomic.Int64
+	start  time.Time
+}
+
+// run refreshes every keyRefreshInterval until ctx ends. A failure is logged
+// when refreshing starts failing and when it recovers, not every interval: a
+// cluster without a layout yet fails each one, and says so once.
+func (k *keyRefresh) run(ctx context.Context) {
+	k.start = time.Now()
+
+	tick := time.NewTicker(keyRefreshInterval)
+	defer tick.Stop()
+
+	failing := false
+
+	for {
+		err := k.mgr.Refresh(ctx)
+
+		switch {
+		case err == nil:
+			k.lastOK.Store(time.Now().UnixNano())
+
+			if failing {
+				k.lg.Info("Access keys refreshed again")
+			}
+
+			failing = false
+		case ctx.Err() != nil:
+			return
+		case !failing:
+			k.lg.Warn("Access keys not refreshed; keys created through other nodes are not accepted here yet",
+				zap.Error(err))
+
+			failing = true
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// age is how long since a refresh last succeeded — since start, before one
+// has.
+func (k *keyRefresh) age() time.Duration {
+	if t := k.lastOK.Load(); t != 0 {
+		return time.Since(time.Unix(0, t))
+	}
+
+	return time.Since(k.start)
+}
+
+// register exports the refresh's state on the meter provider.
+func (k *keyRefresh) register(mp metric.MeterProvider) error {
+	meter := mp.Meter("github.com/go-faster/fs/auth")
+
+	age, err := meter.Int64ObservableGauge("fs.auth.keys.refresh_age",
+		metric.WithDescription("Seconds since this node last read the replicated access keys; "+
+			"keys created through other nodes take effect here no sooner."),
+		metric.WithUnit("s"))
+	if err != nil {
+		return errors.Wrap(err, "refresh age gauge")
+	}
+
+	managed, err := meter.Int64ObservableGauge("fs.auth.keys.managed",
+		metric.WithDescription("Access keys created through the admin API that this node accepts."))
+	if err != nil {
+		return errors.Wrap(err, "managed keys gauge")
+	}
+
+	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		o.ObserveInt64(age, int64(k.age().Seconds()))
+
+		var n int64
+
+		for _, info := range k.mgr.List() {
+			if info.Source == auth.SourceManaged {
+				n++
+			}
+		}
+
+		o.ObserveInt64(managed, n)
+
+		return nil
+	}, age, managed)
+	if err != nil {
+		return errors.Wrap(err, "register key metrics")
+	}
+
+	return nil
 }

@@ -194,5 +194,10 @@ before, since its coded blocks stay — is refused.
   `fs.cluster.layout.synced` (the newest version this node has synced), and
   `fs.cluster.peers{state=up|down}`. `fs layout nodes` shows the same per
   peer, with the last error.
+- **Access keys** (with auth on): `fs.auth.keys.managed` — keys created
+  through the admin API this node accepts; compare across nodes — and
+  `fs.auth.keys.refresh_age`, seconds since the node last read them: a key
+  created through another node takes effect here no sooner, and a value well
+  above 5 means this node cannot read the replicated metadata.
 - Toggle whole subsystems with `observability.enable_metrics` /
   `enable_tracing` / `enable_request_logging`.

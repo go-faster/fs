@@ -20,7 +20,7 @@ func managerWithKeyA(t *testing.T) *auth.Manager {
 
 	mgr, err := auth.NewManager(auth.Config{Keys: []auth.Key{
 		{AccessKey: "AKIAAAAAAAAAAAAAAAAA", SecretKey: "secret-a", Grants: []auth.Grant{{Pattern: "*", Permission: auth.Admin}}},
-	}}, "")
+	}}, nil)
 	require.NoError(t, err)
 
 	return mgr
@@ -96,7 +96,7 @@ func TestReload_PreservesRuntimeKeys(t *testing.T) {
 	mgr := managerWithKeyA(t)
 
 	// A key created at runtime through the admin API.
-	created, err := mgr.Create(auth.CreateInput{Grants: []auth.Grant{{Pattern: "*", Permission: auth.Read}}})
+	created, err := mgr.Create(t.Context(), auth.CreateInput{Grants: []auth.Grant{{Pattern: "*", Permission: auth.Read}}})
 	require.NoError(t, err)
 
 	rel := newReloader(zap.NewNop(), writeConfig(t, configKeyB), false, mgr, emptyServer(t))

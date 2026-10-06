@@ -113,13 +113,13 @@ func (a *AdminAPI) ListAccessKeys(_ context.Context) (*adminapi.AccessKeyList, e
 }
 
 // CreateAccessKey creates a runtime credential.
-func (a *AdminAPI) CreateAccessKey(_ context.Context, req *adminapi.CreateAccessKeyRequest) (*adminapi.CreatedAccessKey, error) {
+func (a *AdminAPI) CreateAccessKey(ctx context.Context, req *adminapi.CreateAccessKeyRequest) (*adminapi.CreatedAccessKey, error) {
 	grants, err := grantsFromAPI(req.Grants)
 	if err != nil {
 		return nil, apiErr(http.StatusBadRequest, err)
 	}
 
-	created, err := a.opts.Manager.Create(auth.CreateInput{
+	created, err := a.opts.Manager.Create(ctx, auth.CreateInput{
 		AccessKey: req.AccessKey.Or(""),
 		SecretKey: req.SecretKey.Or(""),
 		Grants:    grants,
@@ -141,8 +141,8 @@ func (a *AdminAPI) CreateAccessKey(_ context.Context, req *adminapi.CreateAccess
 }
 
 // DeleteAccessKey removes a runtime credential.
-func (a *AdminAPI) DeleteAccessKey(_ context.Context, params adminapi.DeleteAccessKeyParams) error {
-	err := a.opts.Manager.Delete(params.AccessKey)
+func (a *AdminAPI) DeleteAccessKey(ctx context.Context, params adminapi.DeleteAccessKeyParams) error {
+	err := a.opts.Manager.Delete(ctx, params.AccessKey)
 	switch {
 	case err == nil:
 		return nil

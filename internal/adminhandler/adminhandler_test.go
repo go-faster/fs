@@ -22,7 +22,7 @@ func newTestAPI(t *testing.T) *AdminAPI {
 			SecretKey: "config-secret",
 			Grants:    []auth.Grant{{Pattern: "*", Permission: auth.Admin}},
 		}},
-	}, "")
+	}, nil)
 	require.NoError(t, err)
 
 	api := NewAdminAPI(Options{

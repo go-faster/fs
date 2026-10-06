@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"time"
 
@@ -49,16 +48,6 @@ func buildInfo() buildMeta {
 	}
 
 	return meta
-}
-
-// resolveAdminKeysFile returns the path where runtime-created access keys are
-// persisted: the configured path, or <root>/.access-keys.json by default.
-func resolveAdminKeysFile(cfg Config, absRoot string) string {
-	if cfg.Admin.KeysFile != "" {
-		return cfg.Admin.KeysFile
-	}
-
-	return filepath.Join(absRoot, DefaultAdminKeysFile)
 }
 
 // adminServerConfig is what an admin listener serves: the listener settings,

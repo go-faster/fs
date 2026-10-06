@@ -99,10 +99,6 @@ type AuthConfig struct {
 // DefaultAdminAddr is the default admin listener address.
 const DefaultAdminAddr = "localhost:8090"
 
-// DefaultAdminKeysFile is the default filename (under the storage root) for
-// persisted runtime-created access keys.
-const DefaultAdminKeysFile = ".access-keys.json"
-
 // AdminConfig configures the admin API, served on a separate listener
 // protected by a bearer token.
 type AdminConfig struct {
@@ -117,10 +113,6 @@ type AdminConfig struct {
 	// be supplied via the FS_ADMIN_TOKEN environment variable, which takes
 	// precedence. Required when Enabled.
 	Token string `yaml:"token,omitempty"`
-
-	// KeysFile persists runtime-created access keys. Defaults to
-	// <storage.root>/.access-keys.json.
-	KeysFile string `yaml:"keys_file,omitempty"`
 }
 
 // KeyConfig is one credential, the owner identity it acts as, and its grants.
