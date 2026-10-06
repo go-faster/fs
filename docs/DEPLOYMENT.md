@@ -5,13 +5,8 @@ redundancy beyond the underlying disk — or, experimentally, as a replicated
 cluster (see [Cluster mode](#cluster-mode)). Both store data in the engine under
 `<storage.root>/.engine/`.
 
-**Upgrading from a filesystem-backend release.** The filesystem backend has
-been removed and its data directory is not converted. A node started on a root
-it wrote (one holding `.tmp`, `.meta`, `.multipart`, `.versions`,
-`.quarantine` or any non-dot directory) refuses to start and says so. Copy the
-objects out with the previous release (e.g. `aws s3 sync` / `mc mirror`) and
-into a new storage root served by this one. This is a pre-v1 break: there is no
-in-place migration.
+A root written in a storage format this release does not read is refused at
+startup, never misread. There is no migration between releases before v1.
 
 One binary (`fs s3`) and one YAML config. `fs s3 --generate-config` prints a
 fully-defaulted config to start from. A key the binary does not know —
