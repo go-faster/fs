@@ -25,15 +25,22 @@ func (a *AdminAPI) GetLayout(_ context.Context) (*adminapi.Layout, error) {
 		return nil, apiErr(http.StatusNotFound, errors.New("no layout has been applied"))
 	}
 
-	out := layoutToAPI(l)
+	out := a.withRetained(layoutToAPI(l))
 
+	return &out, nil
+}
+
+// withRetained adds the versions retained beside out: the ones still in
+// transition, which a client must not read as gone — a node they place data
+// on is still serving it.
+func (a *AdminAPI) withRetained(out adminapi.Layout) adminapi.Layout {
 	for _, old := range a.opts.Cluster.Layouts() {
-		if old.Version != l.Version {
+		if old.Version != out.Version {
 			out.RetainedVersions = append(out.RetainedVersions, old.Version)
 		}
 	}
 
-	return &out, nil
+	return out
 }
 
 // ApplyLayout computes the next layout from the requested roles and, unless
@@ -76,7 +83,15 @@ func (a *AdminAPI) ApplyLayout(
 		return nil, apiErr(http.StatusBadRequest, err)
 	}
 
-	return &adminapi.LayoutChange{Layout: layoutToAPI(next), MovedSlots: moved, Applied: !dryRun}, nil
+	// The versions the change retains, as GetLayout would report them right
+	// after: an answer without them reads as "nothing is moving", and a
+	// client that trusts it removes a node mid-transition. For a dry run
+	// they are what applying would retain.
+	return &adminapi.LayoutChange{
+		Layout:     a.withRetained(layoutToAPI(next)),
+		MovedSlots: moved,
+		Applied:    !dryRun,
+	}, nil
 }
 
 // ListClusterNodes reports this node and its peers.

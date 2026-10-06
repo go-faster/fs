@@ -12,9 +12,10 @@ type Handler interface {
 	//
 	// Compute the next layout from the full set of member roles and adopt it on this node; gossip carries
 	// it to every other node. Slots keep their node wherever it is still valid, so only the data that has
-	// to move does. With dry_run the computed layout and the number of slots that would move are returned
-	// without adopting anything. Returns 400 when the roles cannot produce a layout, e.g. fewer members
-	// with capacity than the widest width.
+	// to move does. The answer carries the versions the change retains, as a read right after would; a
+	// node they place data on is still serving it. With dry_run the computed layout and the number of
+	// slots that would move are returned without adopting anything. Returns 400 when the roles cannot
+	// produce a layout, e.g. fewer members with capacity than the widest width.
 	//
 	// POST /api/v1/cluster/layout
 	ApplyLayout(ctx context.Context, req *ApplyLayoutRequest, params ApplyLayoutParams) (*LayoutChange, error)
