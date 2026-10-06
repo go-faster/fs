@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,6 +132,20 @@ func TestLayoutViaAdminAPI(t *testing.T) {
 		assert.Equal(t, 16, member.Slots)
 	}
 
+	// A change answers with the versions it retained, as a read right after
+	// would: the others have not synced version 2, so version 1 still serves.
+	grown := &adminapi.ApplyLayoutRequest{Members: append(slices.Clone(roles.Members),
+		adminapi.LayoutRole{ID: "d", Zone: adminapi.NewOptString("z-d"), Capacity: 1 << 40})}
+
+	change, err = client.ApplyLayout(ctx, grown, adminapi.ApplyLayoutParams{})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(2), change.Layout.Version)
+	assert.Equal(t, []uint64{1}, change.Layout.RetainedVersions, "the apply answer hides the transition")
+
+	l, err = client.GetLayout(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, change.Layout.RetainedVersions, l.RetainedVersions)
+
 	roles.Members = roles.Members[:2]
 	_, err = client.ApplyLayout(ctx, roles, adminapi.ApplyLayoutParams{})
 	require.Error(t, err, "two members cannot hold three replicas")
@@ -139,7 +154,7 @@ func TestLayoutViaAdminAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodes.Nodes, 1)
 	assert.True(t, nodes.Nodes[0].Self)
-	assert.Equal(t, uint64(1), nodes.Nodes[0].LayoutVersion.Or(0))
+	assert.Equal(t, uint64(2), nodes.Nodes[0].LayoutVersion.Or(0))
 
 	// And the command itself, against the same server.
 	var out bytes.Buffer
@@ -148,7 +163,8 @@ func TestLayoutViaAdminAPI(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetArgs([]string{"show", "--admin-addr", srv.URL, "--token", token})
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "Version 1, 16 partitions")
+	assert.Contains(t, out.String(), "Version 2, 16 partitions")
+	assert.Contains(t, out.String(), "In transition: versions [1]")
 }
 
 func TestClusterEndpointsWhenOff(t *testing.T) {
