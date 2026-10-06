@@ -574,6 +574,18 @@ func main() {
 	settleWithin = *settle
 	realistic = *realisticFlag
 
+	// At production cadence nothing is collected for an hour, so every round
+	// adds data, and a node joining late pulls tens of gigabytes through one
+	// shared disk. Two minutes measures the disk, not fs; each change still
+	// prints how long it took.
+	settleSet := false
+
+	flag.Visit(func(f *flag.Flag) { settleSet = settleSet || f.Name == "settle" })
+
+	if realistic && !settleSet {
+		settleWithin = 10 * time.Minute
+	}
+
 	if err := run(*bin, *dir, *rounds, *workers, *keysPer, *load, *seed, *only); err != nil {
 		fmt.Fprintln(os.Stderr, "chaos:", err)
 		os.Exit(1)
