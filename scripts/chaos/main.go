@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -599,6 +600,20 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 	c := &cluster{bin: abs}
 	zones := []string{"a", "b", "c", "a", "b", "c", "a"}
 
+	// A port someone else holds — a node left over from an earlier soak, say —
+	// would make a node of this one fail to start while the harness talks to
+	// a stranger in its place, and every finding after that is noise.
+	for i := range 7 {
+		for _, port := range []int{18400 + i, 18500 + i, 18600 + i} {
+			l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err != nil {
+				return fmt.Errorf("port %d is taken; stop whatever holds it (a node of an earlier soak?): %w", port, err)
+			}
+
+			_ = l.Close()
+		}
+	}
+
 	for i := range 7 {
 		n := &node{
 			id: fmt.Sprintf("n%d", i+1), zone: zones[i], member: i < 6,
@@ -818,6 +833,8 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		wg.Wait()
 
 		if actErr != nil {
+			h.report()
+
 			return fmt.Errorf("round %d: %w", h.round, actErr)
 		}
 
@@ -836,14 +853,7 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 			h.ok.Load(), h.failed.Load(), h.unavailable.Load(), errs, len(h.violations))
 	}
 
-	for _, v := range h.violations {
-		fmt.Printf("VIOLATION round %d (%s): %s/%s read %q, expected one of %q\n",
-			v.round, v.phase, v.bucket, v.key, v.observed, v.possible)
-
-		for _, line := range v.history {
-			fmt.Println("    " + line)
-		}
-	}
+	h.report()
 
 	for _, e := range keyErrs {
 		fmt.Println("KEYS " + e)
@@ -966,4 +976,20 @@ func (h *harness) everyNode(ctx context.Context, nodes []*node, id, secret strin
 	}
 
 	return nil
+}
+
+// report prints the violations recorded so far, with each key's history: on
+// a run that fails partway as much as on one that finishes.
+func (h *harness) report() {
+	h.vmu.Lock()
+	defer h.vmu.Unlock()
+
+	for _, v := range h.violations {
+		fmt.Printf("VIOLATION round %d (%s): %s/%s read %q, expected one of %q\n",
+			v.round, v.phase, v.bucket, v.key, v.observed, v.possible)
+
+		for _, line := range v.history {
+			fmt.Println("    " + line)
+		}
+	}
 }
