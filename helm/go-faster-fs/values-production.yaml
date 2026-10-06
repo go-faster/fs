@@ -13,10 +13,10 @@ config:
   server:
     addr: ":8080"
     # Increased timeouts for production workloads
-    readTimeout: "60s"
-    writeTimeout: "2m0s"   # 2 minutes for large file uploads
-    idleTimeout: "5m0s"    # 5 minutes
-    healthPath: "/health"
+    read_timeout: "60s"
+    write_timeout: "2m0s"   # 2 minutes for large file uploads
+    idle_timeout: "5m0s"    # 5 minutes
+    health_path: "/health"
 
   # Storage configuration
   storage:
@@ -29,10 +29,10 @@ config:
 
   # Observability - all features enabled for production
   observability:
-    serviceName: "go-faster/fs-prod"
-    enableRequestLogging: true
-    enableMetrics: true
-    enableTracing: true
+    service_name: "go-faster/fs-prod"
+    enable_request_logging: true
+    enable_metrics: true
+    enable_tracing: true
 
 service:
   type: ClusterIP

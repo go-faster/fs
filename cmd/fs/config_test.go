@@ -284,7 +284,7 @@ storage:
     - bucket3
 
 observability:
-  serviceName: "test"
+  service_name: "test"
 `
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
