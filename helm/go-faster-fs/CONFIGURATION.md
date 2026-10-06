@@ -18,10 +18,10 @@ Controls HTTP server behavior:
 config:
   server:
     addr: ":8080"           # Listen address
-    readTimeout: "30s"      # Request read timeout
-    writeTimeout: "30s"     # Response write timeout
-    idleTimeout: "2m0s"     # Connection idle timeout
-    healthPath: "/health"   # Health check endpoint
+    read_timeout: "30s"      # Request read timeout
+    write_timeout: "30s"     # Response write timeout
+    idle_timeout: "2m0s"     # Connection idle timeout
+    health_path: "/health"   # Health check endpoint
 ```
 
 ### Storage Configuration
@@ -41,10 +41,10 @@ Controls telemetry and monitoring:
 ```yaml
 config:
   observability:
-    serviceName: "go-faster/fs"          # Service name for traces/metrics
-    enableRequestLogging: true            # Enable HTTP request logging
-    enableMetrics: true                   # Enable Prometheus metrics
-    enableTracing: true                   # Enable OpenTelemetry tracing
+    service_name: "go-faster/fs"          # Service name for traces/metrics
+    enable_request_logging: true            # Enable HTTP request logging
+    enable_metrics: true                   # Enable Prometheus metrics
+    enable_tracing: true                   # Enable OpenTelemetry tracing
 ```
 
 ## How It Works
@@ -62,18 +62,18 @@ Create a custom `values.yaml`:
 config:
   server:
     addr: ":9000"
-    readTimeout: "60s"
-    writeTimeout: "120s"
-    idleTimeout: "5m0s"
+    read_timeout: "60s"
+    write_timeout: "120s"
+    idle_timeout: "5m0s"
 
   storage:
     root: "/mnt/s3-data"
 
   observability:
-    serviceName: "my-s3-server"
-    enableRequestLogging: true
-    enableMetrics: true
-    enableTracing: false
+    service_name: "my-s3-server"
+    enable_request_logging: true
+    enable_metrics: true
+    enable_tracing: false
 ```
 
 Deploy with:
@@ -140,12 +140,12 @@ Timeout values use Go's duration format:
 ```yaml
 config:
   server:
-    readTimeout: "10s"
-    writeTimeout: "10s"
-    idleTimeout: "30s"
+    read_timeout: "10s"
+    write_timeout: "10s"
+    idle_timeout: "30s"
   observability:
-    serviceName: "go-faster/fs-dev"
-    enableRequestLogging: true
+    service_name: "go-faster/fs-dev"
+    enable_request_logging: true
 ```
 
 ### Staging
@@ -153,11 +153,11 @@ config:
 ```yaml
 config:
   server:
-    readTimeout: "30s"
-    writeTimeout: "60s"
-    idleTimeout: "2m0s"
+    read_timeout: "30s"
+    write_timeout: "60s"
+    idle_timeout: "2m0s"
   observability:
-    serviceName: "go-faster/fs-staging"
+    service_name: "go-faster/fs-staging"
 ```
 
 ### Production
@@ -165,14 +165,14 @@ config:
 ```yaml
 config:
   server:
-    readTimeout: "60s"
-    writeTimeout: "2m0s"   # For large uploads
-    idleTimeout: "5m0s"
+    read_timeout: "60s"
+    write_timeout: "2m0s"   # For large uploads
+    idle_timeout: "5m0s"
   observability:
-    serviceName: "go-faster/fs-prod"
-    enableRequestLogging: true
-    enableMetrics: true
-    enableTracing: true
+    service_name: "go-faster/fs-prod"
+    enable_request_logging: true
+    enable_metrics: true
+    enable_tracing: true
 ```
 
 ## Troubleshooting
