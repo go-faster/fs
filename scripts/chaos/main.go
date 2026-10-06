@@ -70,10 +70,21 @@ type cluster struct {
 	nodes []*node
 }
 
-func (c *cluster) config(n *node) string {
-	return fmt.Sprintf(`server:
-  addr: "127.0.0.1:%d"
-storage:
+// realistic runs the nodes with fs's own defaults: fsync on, and the
+// background work at its production cadence. The shortened intervals make a
+// round exercise collection and repair within a minute; they also hide a path
+// that only waits at production cadence — a retry that waits a sync interval,
+// say — which is what this mode is for.
+var realistic bool
+
+// storageConfig is the node's storage section.
+func storageConfig() string {
+	if realistic {
+		return `storage:
+  root: data`
+	}
+
+	return `storage:
   root: data
   # SIGKILL does not drop the page cache, so fsync changes nothing the soak
   # tests; it only makes seven nodes on one disk wait on each other's syncs.
@@ -83,7 +94,13 @@ storage:
     resync_interval: 1s
     gc_interval: 10s
     gc_grace: 60s
-    tombstone_delay: 20s
+    tombstone_delay: 20s`
+}
+
+func (c *cluster) config(n *node) string {
+	return fmt.Sprintf(`server:
+  addr: "127.0.0.1:%d"
+`+storageConfig()+`
 auth:
   keys:
     - access_key: %s
@@ -549,9 +566,12 @@ func main() {
 	settle := flag.Duration("settle", 2*time.Minute, "how long a layout change may take to complete")
 	only := flag.String("actions", "", "comma-separated action numbers to cycle through (default all: 1 kill one, 2 freeze, 3 kill two, 4 add node, 5 remove node)")
 
+	realisticFlag := flag.Bool("realistic", false, "run the nodes with fs's defaults (fsync on, production background cadence) instead of shortened intervals")
+
 	flag.Parse()
 
 	settleWithin = *settle
+	realistic = *realisticFlag
 
 	if err := run(*bin, *dir, *rounds, *workers, *keysPer, *load, *seed, *only); err != nil {
 		fmt.Fprintln(os.Stderr, "chaos:", err)
@@ -677,7 +697,7 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 			return c.start(n)
 		}},
-		{"freeze one node past the tombstone delay", func() error {
+		{freezeName(), func() error {
 			n := h.pick(1)[0]
 			fmt.Printf("  SIGSTOP %s for 45s\n", n.id)
 			c.signal(n, syscall.SIGSTOP, false)
@@ -853,4 +873,14 @@ func (h *harness) pick(n int) []*node {
 	}
 
 	return out
+}
+
+// freezeName names the freeze action for what it does in this mode: past the
+// tombstone delay only when that is shortened.
+func freezeName() string {
+	if realistic {
+		return "freeze one node for 45s"
+	}
+
+	return "freeze one node past the tombstone delay"
 }
