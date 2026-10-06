@@ -51,6 +51,12 @@ const (
 	// the bucket's ID, sort key the object key, NUL, the upload ID; a
 	// register overwritten by Done when the upload completes or aborts.
 	Uploads = "uploads"
+	// AccessKeys holds the access keys created through the admin API: one
+	// partition (a cluster has few keys, and listing them is then one quorum
+	// read), sort key the access key ID, an LWW register holding the key's
+	// record, or null once deleted — a tombstone a later create of the same
+	// ID supersedes.
+	AccessKeys = "access_keys"
 )
 
 // LWW is a last-writer-wins register.

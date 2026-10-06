@@ -29,8 +29,9 @@ func (UnimplementedHandler) ApplyLayout(ctx context.Context, req *ApplyLayoutReq
 
 // CreateAccessKey implements createAccessKey operation.
 //
-// Create a runtime credential. The access key and secret are generated when not supplied. The secret
-// is returned only in this response and cannot be retrieved later.
+// Create a runtime credential, stored in the replicated metadata: every node of a cluster accepts it,
+// this one at once and the others within seconds. The access key and secret are generated when not
+// supplied. The secret is returned only in this response and cannot be retrieved later.
 //
 // POST /api/v1/access-keys
 func (UnimplementedHandler) CreateAccessKey(ctx context.Context, req *CreateAccessKeyRequest) (r *CreatedAccessKey, _ error) {
@@ -39,7 +40,8 @@ func (UnimplementedHandler) CreateAccessKey(ctx context.Context, req *CreateAcce
 
 // DeleteAccessKey implements deleteAccessKey operation.
 //
-// Remove a runtime credential. Config-defined credentials cannot be deleted.
+// Remove a runtime credential from every node (the others stop accepting it within seconds).
+// Config-defined credentials cannot be deleted.
 //
 // DELETE /api/v1/access-keys/{accessKey}
 func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error {

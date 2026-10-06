@@ -90,9 +90,11 @@ bare handler stays anonymous unless you opt in.
 ### Admin API
 
 Multiple access-key/secret credentials can be managed **at runtime** — without a
-restart — through a separate admin listener. Config-defined keys stay read-only and keys created through the admin
-API are persisted (`<root>/.access-keys.json`, mode `0600`) and survive restarts
-and `SIGHUP` reloads.
+restart — through a separate admin listener. Config-defined keys stay read-only.
+Keys created through the admin API are stored in the engine, replicated like
+any metadata: in a cluster every node accepts them (within seconds on nodes
+other than the one that created them), and they survive restarts and `SIGHUP`
+reloads.
 
 ```yaml
 admin:

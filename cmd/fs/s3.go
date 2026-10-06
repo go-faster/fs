@@ -196,12 +196,21 @@ Command-line flags override YAML configuration values.`,
 				)
 
 				if authEnabled {
-					authManager, err = buildAuthManager(cfg, insecureNoAuth, resolveAdminKeysFile(cfg, absRoot))
+					authManager, err = buildAuthManager(cfg, insecureNoAuth, eng)
 					if err != nil {
 						return errors.Wrap(err, "configure auth")
 					}
 
 					authStore = authManager.Store()
+
+					// Keys created through the admin API live in the engine,
+					// replicated; every node pulls them in.
+					refresh := &keyRefresh{mgr: authManager, lg: lg}
+					if err := refresh.register(t.MeterProvider()); err != nil {
+						return err
+					}
+
+					go refresh.run(ctx)
 				}
 
 				// wrap injects OpenTelemetry instrumentation and optional request

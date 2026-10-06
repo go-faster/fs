@@ -70,6 +70,7 @@ type Engine struct {
 	refs    *table.Table[meta.BlockRef]
 	parts   *table.Table[meta.LWW[json.RawMessage]]
 	uploads *table.Table[meta.LWW[json.RawMessage]]
+	keys    *table.Table[meta.LWW[json.RawMessage]]
 	blocks  *block.Manager
 	member  *peer.Member
 
@@ -133,6 +134,10 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	if e.uploads, err = table.New(meta.Uploads, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], meta.CompactDone); err != nil {
+		return nil, err
+	}
+
+	if e.keys, err = table.New(meta.AccessKeys, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], nil); err != nil {
 		return nil, err
 	}
 

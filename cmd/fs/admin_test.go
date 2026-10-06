@@ -23,7 +23,7 @@ func newTestAdminServer(t *testing.T, token string) (*httptest.Server, *auth.Man
 
 	mgr, err := auth.NewManager(auth.Config{Keys: []auth.Key{
 		{AccessKey: "AKIACONFIG", SecretKey: "config-secret", Grants: []auth.Grant{{Pattern: "*", Permission: auth.Admin}}},
-	}}, "")
+	}}, nil)
 	require.NoError(t, err)
 
 	handler := adminhandler.NewAdminAPI(adminhandler.Options{Manager: mgr, AuthEnabled: true})

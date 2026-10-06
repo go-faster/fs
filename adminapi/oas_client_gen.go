@@ -41,14 +41,16 @@ type Invoker interface {
 	ApplyLayout(ctx context.Context, request *ApplyLayoutRequest, params ApplyLayoutParams) (*LayoutChange, error)
 	// CreateAccessKey invokes createAccessKey operation.
 	//
-	// Create a runtime credential. The access key and secret are generated when not supplied. The secret
-	// is returned only in this response and cannot be retrieved later.
+	// Create a runtime credential, stored in the replicated metadata: every node of a cluster accepts it,
+	// this one at once and the others within seconds. The access key and secret are generated when not
+	// supplied. The secret is returned only in this response and cannot be retrieved later.
 	//
 	// POST /api/v1/access-keys
 	CreateAccessKey(ctx context.Context, request *CreateAccessKeyRequest) (*CreatedAccessKey, error)
 	// DeleteAccessKey invokes deleteAccessKey operation.
 	//
-	// Remove a runtime credential. Config-defined credentials cannot be deleted.
+	// Remove a runtime credential from every node (the others stop accepting it within seconds).
+	// Config-defined credentials cannot be deleted.
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
@@ -276,8 +278,9 @@ func (c *Client) sendApplyLayout(ctx context.Context, request *ApplyLayoutReques
 
 // CreateAccessKey invokes createAccessKey operation.
 //
-// Create a runtime credential. The access key and secret are generated when not supplied. The secret
-// is returned only in this response and cannot be retrieved later.
+// Create a runtime credential, stored in the replicated metadata: every node of a cluster accepts it,
+// this one at once and the others within seconds. The access key and secret are generated when not
+// supplied. The secret is returned only in this response and cannot be retrieved later.
 //
 // POST /api/v1/access-keys
 func (c *Client) CreateAccessKey(ctx context.Context, request *CreateAccessKeyRequest) (*CreatedAccessKey, error) {
@@ -360,7 +363,8 @@ func (c *Client) sendCreateAccessKey(ctx context.Context, request *CreateAccessK
 
 // DeleteAccessKey invokes deleteAccessKey operation.
 //
-// Remove a runtime credential. Config-defined credentials cannot be deleted.
+// Remove a runtime credential from every node (the others stop accepting it within seconds).
+// Config-defined credentials cannot be deleted.
 //
 // DELETE /api/v1/access-keys/{accessKey}
 func (c *Client) DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error {
