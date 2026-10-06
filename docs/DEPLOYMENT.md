@@ -14,7 +14,9 @@ into a new storage root served by this one. This is a pre-v1 break: there is no
 in-place migration.
 
 One binary (`fs s3`) and one YAML config. `fs s3 --generate-config` prints a
-fully-defaulted config to start from.
+fully-defaulted config to start from. A key the binary does not know —
+misspelled, or a setting an earlier release had — stops it at startup with an
+error naming the key, rather than being ignored.
 
 Contents: [systemd](#systemd) · [Docker](#docker) · [Docker Compose](#docker-compose)
 · [Kubernetes / Helm](#kubernetes--helm) · [Security](#security)

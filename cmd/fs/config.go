@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -266,8 +268,12 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, errors.Wrap(err, "read config file")
 	}
 
-	// Parse YAML
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	// Strict: a key this binary does not know — misspelled, or a setting
+	// a release removed — stops the server rather than being ignored.
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, errors.Wrap(err, "parse config")
 	}
 
