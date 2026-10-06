@@ -8,9 +8,11 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faster/fs/internal/cluster/layout"
 )
@@ -182,26 +184,44 @@ func (m *Manager) syncWith(
 			return pulled, len(differ), err
 		}
 
+		var (
+			n atomic.Int64
+			g errgroup.Group
+		)
+
+		g.SetLimit(transfers)
+
 		for _, h := range page.Hashes {
 			if m.store.Has(h) {
 				continue
 			}
 
-			data, err := m.Get(ctx, h)
-			if errors.Is(err, ErrNotFound) {
-				// Collected since it was listed: garbage, not a gap.
-				continue
-			}
+			g.Go(func() error {
+				data, err := m.Get(ctx, h)
+				if errors.Is(err, ErrNotFound) {
+					// Collected since it was listed: garbage, not a gap.
+					return nil
+				}
 
-			if err != nil {
-				return pulled, len(differ), err
-			}
+				if err != nil {
+					return err
+				}
 
-			if err := m.store.Put(h, data); err != nil {
-				return pulled, len(differ), err
-			}
+				if err := m.store.Put(h, data); err != nil {
+					return err
+				}
 
-			pulled++
+				n.Add(1)
+
+				return nil
+			})
+		}
+
+		err := g.Wait()
+		pulled += n.Load()
+
+		if err != nil {
+			return pulled, len(differ), err
 		}
 
 		if !page.More {
@@ -211,6 +231,11 @@ func (m *Manager) syncWith(
 		after = page.Hashes[len(page.Hashes)-1]
 	}
 }
+
+// transfers bounds the block and shard copies one loop runs at once. Each is
+// a round trip and, with fsync on, a sync on the receiving disk: one at a
+// time, a layout change moving thousands of them took minutes.
+const transfers = 16
 
 // handOver pushes blocks of partitions this node no longer replicates to the
 // owners missing them, and drops each once every owner has it and no retained
@@ -237,33 +262,49 @@ func (m *Manager) handOver(ctx context.Context, l *layout.Layout) (handed int64,
 		return 0, 0, err
 	}
 
+	var (
+		handedN, pendingN atomic.Int64
+		g                 errgroup.Group
+	)
+
+	g.SetLimit(transfers)
+
 	for _, h := range moving {
 		if err := ctx.Err(); err != nil {
-			return handed, pending, err
+			break
 		}
 
-		slots := l.Slots[l.Partition(h[:])]
+		g.Go(func() error {
+			slots := l.Slots[l.Partition(h[:])]
 
-		if !m.pushTo(ctx, h, slots[:min(Replicas, len(slots))]) {
-			pending++
+			if !m.pushTo(ctx, h, slots[:min(Replicas, len(slots))]) {
+				pendingN.Add(1)
 
-			continue // Kept, and retried next sweep.
-		}
+				return nil // Kept, and retried next sweep.
+			}
 
-		// Reads may still come here while a retained version gives the
-		// block to this node.
-		if slices.ContainsFunc(retained, func(lv *layout.Layout) bool { return holdsBlock(lv, h, self) }) {
-			continue
-		}
+			// Reads may still come here while a retained version gives the
+			// block to this node.
+			if slices.ContainsFunc(retained, func(lv *layout.Layout) bool { return holdsBlock(lv, h, self) }) {
+				return nil
+			}
 
-		if err := m.store.Delete(h); err != nil {
-			return handed, pending, err
-		}
+			if err := m.store.Delete(h); err != nil {
+				return err
+			}
 
-		handed++
+			handedN.Add(1)
+
+			return nil
+		})
 	}
 
-	return handed, pending, nil
+	err = g.Wait()
+	if err == nil {
+		err = ctx.Err()
+	}
+
+	return handedN.Load(), int(pendingN.Load()), err
 }
 
 func holdsBlock(l *layout.Layout, h Hash, id layout.NodeID) bool {
