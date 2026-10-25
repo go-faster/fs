@@ -342,6 +342,15 @@ func (s Service) SetBucketLifecycle(ctx context.Context, bucket string, rules []
 		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store lifecycle rules")
 	}
 
+	// A rule on versions is stored only where the sweep can enforce it.
+	if _, ok := s.storage.(fs.Versioner); !ok {
+		for _, r := range rules {
+			if r.Versioned() {
+				return errors.Wrapf(fs.ErrUnsupportedOperation, "rule %q acts on versions; backend cannot list or remove them", r.ID)
+			}
+		}
+	}
+
 	return store.SetBucketLifecycle(ctx, bucket, rules)
 }
 
