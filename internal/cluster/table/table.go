@@ -460,6 +460,10 @@ func (t *Table[R]) insertTx(tx *bbolt.Tx, entries []wireEntry) error {
 			}
 		}
 
+		if err := t.moveDigest(tx, k, e.PK, old, v); err != nil {
+			return err
+		}
+
 		if err := b.Put(k, v); err != nil {
 			return errors.Wrap(err, "put")
 		}

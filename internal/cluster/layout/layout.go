@@ -168,11 +168,15 @@ func (l *Layout) Validate() error {
 func (l *Layout) Width() int { return l.Widths[len(l.Widths)-1] }
 
 // Partition maps a key to its partition.
-func (l *Layout) Partition(key []byte) int {
+func (l *Layout) Partition(key []byte) int { return PartitionOf(key, len(l.Slots)) }
+
+// PartitionOf maps a key to its partition among n, as a layout of n
+// partitions does.
+func PartitionOf(key []byte, n int) int {
 	h := fnv.New64a()
 	_, _ = h.Write(key)
 
-	return int(mix(h.Sum64()) % uint64(len(l.Slots))) //nolint:gosec // Below the partition count, at most 1<<16.
+	return int(mix(h.Sum64()) % uint64(n)) //nolint:gosec // Below the partition count, at most 1<<16.
 }
 
 // Moved counts the slots whose node differs between two layouts of the same

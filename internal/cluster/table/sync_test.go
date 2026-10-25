@@ -146,6 +146,7 @@ func TestSyncHandsOver(t *testing.T) {
 	}
 
 	assert.Positive(t, handed)
+	kept(t, nodes)
 
 	for i := range 64 {
 		pk := fmt.Sprint("bucket", i)
