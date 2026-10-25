@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,6 +137,8 @@ func testVersioningDeleteMarker(t *testing.T, storage fs.Storage) {
 	require.Equal(t, []string{del.VersionID, put.VersionID}, ids(versions))
 	assert.True(t, versions[0].DeleteMarker)
 	assert.True(t, versions[0].IsLatest)
+	// S3 lists a marker with when it was written, which lifecycle ages it by.
+	assert.WithinDuration(t, time.Now(), versions[0].LastModified, time.Minute)
 
 	// Removing the marker brings the key back.
 	_, err = v.DeleteObjectVersion(ctx, testBucket, testKey, del.VersionID)
