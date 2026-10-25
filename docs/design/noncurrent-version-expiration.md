@@ -35,9 +35,10 @@ bounds the row.
 
 ## S3 semantics
 
-What clients rely on, from the S3 lifecycle documentation. Points marked
-**(verify)** need checking against AWS before implementation, as listed under
-"Open questions" below.
+What clients rely on, from the S3 lifecycle documentation ("Lifecycle
+configuration elements", "Examples of S3 Lifecycle configurations" and the
+`NoncurrentVersionExpiration` API reference). Where the documentation is
+silent, "Resolved questions" below records what fs chose.
 
 **`NoncurrentVersionExpiration`**
 - **`NoncurrentDays` (N ≥ 1):** a noncurrent version is removed permanently
@@ -47,18 +48,27 @@ What clients rely on, from the S3 lifecycle documentation. Points marked
   up to the following UTC midnight.
 - **`NewerNoncurrentVersions` (1–100, optional):** the N newest noncurrent
   versions are kept whatever their age. Only older ones are removed, and only
-  once `NoncurrentDays` has also passed.
-- **Delete markers (verify):** a noncurrent delete marker counts as a
-  noncurrent version.
+  once `NoncurrentDays` has also passed. A rule that sets it must have a
+  `<Filter>` element (the legacy rule-level `<Prefix>` will not do); without
+  one S3 answers `InvalidRequest`.
+- Both elements are optional in the API reference; a rule needs at least one.
+  With `NewerNoncurrentVersions` alone, age is no condition.
+- **Delete markers:** a noncurrent delete marker is a noncurrent version. The
+  documentation's example of expiring "noncurrent objects that have no data"
+  expires "noncurrent delete marker objects" with this action, so it also
+  counts toward `NewerNoncurrentVersions`.
 
 **`Expiration.ExpiredObjectDeleteMarker: true`**
 - Removes a delete marker that is the key's current version *and* its only
   version: an "expired object delete marker". Such a marker hides nothing,
   but still takes a row and shows up in version listings.
-- It may not appear with `Days` or `Date` in the same `Expiration` element
-  (**verify:** the error is `MalformedXML` or `InvalidArgument`).
-- **(verify)** With `Expiration.Days` on a versioned bucket, S3 also removes
-  expired object delete markers on its own.
+- It may not appear with `Days` or `Date` in the same `Expiration` element.
+  The documentation names no error; fs answers `MalformedXML`, as it already
+  does for `Days` with `Date`.
+- With `Expiration.Days` on a versioned bucket, S3 also removes expired object
+  delete markers on its own, "when the delete markers are old enough to
+  satisfy the age criteria". The sweep does the same: under such a rule, an
+  expired object delete marker older than `Days` is removed.
 
 **Suspended versioning:** a noncurrent version may be a `null` version (an
 object written before versioning was enabled), and the same rules apply to
@@ -73,10 +83,10 @@ Three fields are added to `fs.LifecycleRule`:
 
 ```go
 // NoncurrentDays removes a noncurrent version this many days after it
-// became noncurrent. Zero means the rule removes no noncurrent version.
+// became noncurrent. Zero puts no age condition on removal.
 NoncurrentDays int
 // NewerNoncurrentVersions keeps this many of a key's newest noncurrent
-// versions whatever their age. Zero keeps none beyond NoncurrentDays.
+// versions whatever their age. Zero keeps none.
 NewerNoncurrentVersions int
 // ExpiredObjectDeleteMarker removes a key's delete marker once it is the
 // key's only version.
@@ -100,9 +110,12 @@ worse error.
 are parsed and validated:
 
 - `NoncurrentDays` must be ≥ 1, and `NewerNoncurrentVersions` in 1–100. Out
-  of range is `InvalidArgument`.
-- `ExpiredObjectDeleteMarker` together with `Days` or `Date` is refused with
-  the error AWS uses (verify).
+  of range is `InvalidArgument`. An empty `NoncurrentVersionExpiration` is
+  `MalformedXML`.
+- `NewerNoncurrentVersions` in a rule without a `<Filter>` element is
+  `InvalidRequest`.
+- `ExpiredObjectDeleteMarker` together with `Days` or `Date` is
+  `MalformedXML`.
 - A rule with no action at all is refused, as today.
 - `GET ?lifecycle` returns the new elements as they were sent.
 
@@ -143,8 +156,9 @@ For each entry:
    sweep cannot be the version being removed.
 3. **Current delete marker:** decided once the key's next entry, or the end
    of the listing, shows whether it was the only version. If it was, and a
-   rule with `ExpiredObjectDeleteMarker` matches, remove it by its version
-   ID. If a write lands in between, the marker is noncurrent by the time it's
+   rule with `ExpiredObjectDeleteMarker` matches, or a rule with
+   `Expiration.Days` whose age the marker has passed, remove it by its
+   version ID. If a write lands in between, the marker is noncurrent by the time it's
    removed; removing a noncurrent marker changes nothing a reader sees.
 
 Removing noncurrent versions first and then the marker within one pass needs
@@ -234,20 +248,25 @@ upstream ones depend on Ceph's lifecycle debug clock. Coverage comes from:
 - **Docs:** `COMPATIBILITY.md` (lifecycle row and the "Planned" list), and
   `docs/DEPLOYMENT.md` for the metrics.
 
-## Open questions
+## Resolved questions
 
-To be checked against AWS before implementation (docs and, where they are
-silent, a real bucket):
+Checked against the AWS documentation before implementation:
 
-1. Do noncurrent delete markers count toward `NoncurrentVersionExpiration`
-   and `NewerNoncurrentVersions`? The design assumes yes.
-2. Which error does `ExpiredObjectDeleteMarker` with `Days` or `Date` get:
-   `MalformedXML` or `InvalidArgument`?
-3. Does `Expiration.Days` on a versioned bucket also remove expired object
-   delete markers without `ExpiredObjectDeleteMarker`? If yes, the sweep does
-   it under such a rule as well.
-4. Is `NoncurrentVersionExpiration` with only `NewerNoncurrentVersions` (no
-   `NoncurrentDays`) valid? The design assumes `NoncurrentDays` is required.
+1. **Noncurrent delete markers** count toward `NoncurrentVersionExpiration`
+   and `NewerNoncurrentVersions`: the documentation expires them with this
+   action.
+2. **`ExpiredObjectDeleteMarker` with `Days` or `Date`** is documented as not
+   allowed, without naming the error. fs answers `MalformedXML`, matching its
+   `Days`-with-`Date` refusal.
+3. **`Expiration.Days` on a versioned bucket** removes expired object delete
+   markers old enough to satisfy it, without `ExpiredObjectDeleteMarker`. The
+   sweep does the same.
+4. **`NewerNoncurrentVersions` without `NoncurrentDays`** is accepted: both are
+   optional in the API reference, and accepting a rule AWS might refuse
+   breaks no client. Age is then no condition.
+
+Found while checking: `NewerNoncurrentVersions` needs a `<Filter>` element,
+or the rule is `InvalidRequest`.
 
 ## Not in this design
 
