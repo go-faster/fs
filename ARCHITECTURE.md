@@ -130,10 +130,16 @@ message), maps the `fs.Err*` sentinels to codes, and writes the standard
 HEAD; non-panicking fallback if encoding fails).
 
 `handler.New(store, opts...)` composes middleware around the router, outermost
-first: **request-id → CORS → auth → router**. So every response (including
-errors) carries an `x-amz-request-id`, CORS preflight is answered before auth
-can reject it, and only authenticated (or public-read) requests reach the
-router. Auth and CORS are opt-in via `WithAuthenticator` / `WithCORS`; without
+first: **request-id → body drain → OPTIONS guard → CORS → Content-Length check
+→ auth → router**. So every response (including errors) carries an
+`x-amz-request-id`, CORS preflight is answered before auth can reject it, and
+only authenticated (or public-read) requests reach the router. The body drain
+reads what a handler left of the request body (up to 64 MiB) after flushing the
+response: a write refused before its body was read — a quota, a missing
+bucket, a bad signature — would otherwise end in a connection reset for
+clients that send the body without waiting for `100 Continue`
+(aws-sdk-go-v2), not in the error. S3 error responses declare their
+`Content-Length` so the flushed response is complete while the drain waits. Auth and CORS are opt-in via `WithAuthenticator` / `WithCORS`; without
 them the handler serves anonymously (the library default).
 
 ### `internal/sigv4` — SigV4 verification

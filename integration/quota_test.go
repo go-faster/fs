@@ -86,17 +86,16 @@ func TestQuotaExceeded(t *testing.T) {
 		require.NoError(t, err)
 
 		// A multipart upload is refused at the part that cannot fit. The part
-		// stays under the SDK's 2 MiB Expect: 100-continue threshold: the SDK
+		// is over the SDK's 2 MiB Expect: 100-continue threshold: the SDK
 		// sends that header but never waits for the 100 (smithy-go leaves the
-		// request's Proto unset), so a refusal before the body is read races
-		// the connection reset. Smaller bodies the server drains, and the
-		// error reaches the client.
+		// request's Proto unset), so the body arrives though the server
+		// refused it before reading; the error still reaches the client.
 		up, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: aws.String("quota-bucket"), Key: aws.String("big")})
 		require.NoError(t, err)
 
 		_, err = client.UploadPart(ctx, &s3.UploadPartInput{
 			Bucket: aws.String("quota-bucket"), Key: aws.String("big"), UploadId: up.UploadId, PartNumber: aws.Int32(1),
-			Body: bytes.NewReader(make([]byte, 128<<10)),
+			Body: bytes.NewReader(make([]byte, 8<<20)),
 		})
 		assert.Equal(t, "QuotaExceeded", s3ErrorCode(t, err))
 	})

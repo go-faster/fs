@@ -123,7 +123,7 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 
 	inner = corsMiddleware(o.cors, s, inner)
 
-	return withRequestID(optionsGuard(inner))
+	return withRequestID(drainBody(optionsGuard(inner)))
 }
 
 // optionsGuard rejects an OPTIONS request that carries no Origin.
