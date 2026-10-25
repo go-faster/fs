@@ -51,8 +51,9 @@ silent, "Resolved questions" below records what fs chose.
   once `NoncurrentDays` has also passed. A rule that sets it must have a
   `<Filter>` element (the legacy rule-level `<Prefix>` will not do); without
   one S3 answers `InvalidRequest`.
-- Both elements are optional in the API reference; a rule needs at least one.
-  With `NewerNoncurrentVersions` alone, age is no condition.
+- `NoncurrentDays` is required: `NewerNoncurrentVersions` only adds a
+  condition to it ("both values must be exceeded"). Ceph RGW 20.2 refuses
+  `NewerNoncurrentVersions` alone, and an empty element, with `MalformedXML`.
 - **Delete markers:** a noncurrent delete marker is a noncurrent version. The
   documentation's example of expiring "noncurrent objects that have no data"
   expires "noncurrent delete marker objects" with this action, so it also
@@ -63,8 +64,8 @@ silent, "Resolved questions" below records what fs chose.
   version: an "expired object delete marker". Such a marker hides nothing,
   but still takes a row and shows up in version listings.
 - It may not appear with `Days` or `Date` in the same `Expiration` element.
-  The documentation names no error; fs answers `MalformedXML`, as it already
-  does for `Days` with `Date`.
+  The documentation names no error; Ceph RGW 20.2 answers `MalformedXML`
+  (for `Days` and for `Date`), as it and fs do for `Days` with `Date`.
 - With `Expiration.Days` on a versioned bucket, S3 also removes expired object
   delete markers on its own, "when the delete markers are old enough to
   satisfy the age criteria". The sweep does the same: under such a rule, an
@@ -83,7 +84,7 @@ Three fields are added to `fs.LifecycleRule`:
 
 ```go
 // NoncurrentDays removes a noncurrent version this many days after it
-// became noncurrent. Zero puts no age condition on removal.
+// became noncurrent. Zero means the rule removes no noncurrent version.
 NoncurrentDays int
 // NewerNoncurrentVersions keeps this many of a key's newest noncurrent
 // versions whatever their age. Zero keeps none.
@@ -110,10 +111,12 @@ worse error.
 are parsed and validated:
 
 - `NoncurrentDays` must be ≥ 1, and `NewerNoncurrentVersions` in 1–100. Out
-  of range is `InvalidArgument`. An empty `NoncurrentVersionExpiration` is
-  `MalformedXML`.
+  of range is `InvalidArgument` (RGW 20.2 agrees for `NoncurrentDays` 0; it
+  does not range-check `NewerNoncurrentVersions` at all). A
+  `NoncurrentVersionExpiration` without `NoncurrentDays` is `MalformedXML`.
 - `NewerNoncurrentVersions` in a rule without a `<Filter>` element is
-  `InvalidRequest`.
+  `InvalidRequest`, as AWS documents. RGW 20.2 accepts it with the legacy
+  `<Prefix>`; fs follows AWS.
 - `ExpiredObjectDeleteMarker` together with `Days` or `Date` is
   `MalformedXML`.
 - A rule with no action at all is refused, as today.
@@ -250,20 +253,21 @@ upstream ones depend on Ceph's lifecycle debug clock. Coverage comes from:
 
 ## Resolved questions
 
-Checked against the AWS documentation before implementation:
+Checked against the AWS documentation and, where it is silent, against Ceph
+RGW 20.2.4 (tentacle):
 
 1. **Noncurrent delete markers** count toward `NoncurrentVersionExpiration`
    and `NewerNoncurrentVersions`: the documentation expires them with this
    action.
 2. **`ExpiredObjectDeleteMarker` with `Days` or `Date`** is documented as not
-   allowed, without naming the error. fs answers `MalformedXML`, matching its
-   `Days`-with-`Date` refusal.
+   allowed, without naming the error. RGW answers `MalformedXML` for both, so
+   fs does too.
 3. **`Expiration.Days` on a versioned bucket** removes expired object delete
    markers old enough to satisfy it, without `ExpiredObjectDeleteMarker`. The
    sweep does the same.
-4. **`NewerNoncurrentVersions` without `NoncurrentDays`** is accepted: both are
-   optional in the API reference, and accepting a rule AWS might refuse
-   breaks no client. Age is then no condition.
+4. **`NewerNoncurrentVersions` without `NoncurrentDays`** is refused with
+   `MalformedXML`, as RGW does. The API reference marks both optional, but
+   the user guide makes it a condition on `NoncurrentDays`.
 
 Found while checking: `NewerNoncurrentVersions` needs a `<Filter>` element,
 or the rule is `InvalidRequest`.
