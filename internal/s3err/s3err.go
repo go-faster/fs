@@ -8,6 +8,7 @@ package s3err
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
 	"github.com/go-faster/errors"
 
@@ -200,7 +201,16 @@ func WriteAPI(w http.ResponseWriter, r *http.Request, api APIError) {
 		RequestID: requestID,
 	})
 
+	n := 0
+	if marshalErr == nil {
+		n = len(xml.Header) + len(body)
+	}
+
+	// The length is declared so the response is complete as soon as it is
+	// written: drainBody sends it before reading a refused body, and a client
+	// that waits for the response before sending must not wait on its end.
 	header.Set("Content-Type", "application/xml")
+	header.Set("Content-Length", strconv.Itoa(n))
 	w.WriteHeader(api.HTTPStatus)
 
 	if marshalErr != nil {
