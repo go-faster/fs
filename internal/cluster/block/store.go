@@ -104,13 +104,11 @@ type Store struct {
 	// GC: whichever comes second sees the first. Striped by the name's first
 	// byte, so unrelated blocks rarely wait on each other.
 	stripes [256]sync.Mutex
+
+	idx index
 }
 
-func (s *Store) stripe(name string) *sync.Mutex {
-	b, _ := hex.DecodeString(name[:2])
-
-	return &s.stripes[b[0]]
-}
+func (s *Store) stripe(name string) *sync.Mutex { return &s.stripes[stripeOf(name)] }
 
 // NewStore returns the store rooted at dir, creating it.
 func NewStore(dir string) (*Store, error) {
@@ -212,7 +210,12 @@ func (s *Store) put(name string, data []byte) error {
 	}
 
 	mu.Lock()
+	_, statErr := os.Lstat(p)
 	err = os.Rename(f.Name(), p)
+
+	if err == nil && statErr != nil {
+		s.note(name, true)
+	}
 	mu.Unlock()
 
 	if err != nil {
@@ -260,7 +263,7 @@ func (s *Store) get(name string) ([]byte, error) {
 	if n < 0 || crc32.Checksum(data[:n], castagnoli) != binary.BigEndian.Uint32(data[n:]) {
 		// A copy that fails its checksum is worse than none: drop it so the
 		// replica reads as missing and is resynced.
-		_ = os.Remove(p)
+		_ = s.remove(name)
 
 		return nil, ErrCorrupt
 	}
@@ -302,7 +305,7 @@ func (s *Store) GetInto(h Hash, buf []byte) ([]byte, error) {
 
 	n := size - crc32.Size
 	if n < 0 || crc32.Checksum(data[:n], castagnoli) != binary.BigEndian.Uint32(data[n:]) {
-		_ = os.Remove(p)
+		_ = s.remove(h.String())
 
 		return nil, ErrCorrupt
 	}
@@ -336,11 +339,38 @@ func (s *Store) deleteIfOlder(name string, cutoff time.Time) (bool, error) {
 		return false, nil
 	}
 
-	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	err = os.Remove(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+
+	if err != nil {
 		return false, errors.Wrap(err, "delete block")
 	}
 
+	s.note(name, false)
+
 	return true, nil
+}
+
+// remove deletes the named file; removing one that is absent is not an error.
+func (s *Store) remove(name string) error {
+	mu := s.stripe(name)
+	mu.Lock()
+	defer mu.Unlock()
+
+	err := os.Remove(s.pathOf(name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	s.note(name, false)
+
+	return nil
 }
 
 // Has reports whether the block is present, without verifying it.
@@ -352,7 +382,7 @@ func (s *Store) Has(h Hash) bool {
 
 // Delete removes the block; removing one that is absent is not an error.
 func (s *Store) Delete(h Hash) error {
-	if err := os.Remove(s.path(h)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := s.remove(h.String()); err != nil {
 		return errors.Wrap(err, "delete block")
 	}
 
@@ -454,7 +484,7 @@ func (s *Store) HasShard(sh Shard) bool {
 
 // DeleteShard removes a shard; removing one that is absent is not an error.
 func (s *Store) DeleteShard(sh Shard) error {
-	if err := os.Remove(s.pathOf(sh.String())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := s.remove(sh.String()); err != nil {
 		return errors.Wrap(err, "delete shard")
 	}
 
