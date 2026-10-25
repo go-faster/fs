@@ -322,8 +322,16 @@ write, merge, compaction and handover, so a sweep and a peer's request read
 32 bytes per slot rather than every row, and a sweep scans rows to hand over
 only when a partition the node no longer replicates still has some. The
 bucket is stamped with the partition count; one without the stamp, or
-stamped for another, is rebuilt from the rows when first read. Blocks and
-erasure-coded shards still walk their whole store each sweep (#321).
+stamped for another, is rebuilt from the rows when first read.
+
+The block store keeps the same digests for its blocks, and for its shards
+per slot, scheme and shard index, in memory: blocks are files, with no
+transaction to move a stored digest in. The first sweep after a start builds
+them by walking the store, one top-level directory at a time under that
+directory's write lock, and every file placed or removed afterwards moves
+them under the same lock. A sweep walks the store only to list the slots that
+differ from a peer's, or to hand over blocks and shards when the kept counts
+show some held for a partition or slot the node no longer has.
 
 **Layout changes are transitions** (as in Garage). Quorums intersect within
 one layout, not across two: right after a change, the new replicas of a
@@ -371,9 +379,10 @@ so the layout's spread over zones and racks for width K+M is the shards'
 spread. Writes return at K+1 shards; a healthy read joins the data shards
 with no decode, and rebuilds from parity only when one is missing. Shards are
 files beside blocks with the same CRC trailer, collected with their block's
-references. Repair runs with block anti-entropy: each node lists the shards
-its partitions' other slot nodes hold, rebuilds its own missing ones of live
-blocks from K others, and hands shards of slots the layout moved to their new
+references. Repair runs with block anti-entropy: each node compares shard
+digests with its partitions' other slot nodes, lists the shards they hold in
+the slots that differ, rebuilds its own missing ones of live blocks from K
+others, and hands shards of slots the layout moved to their new
 node. Blocks under 256 KiB stay replicated. A layout narrower than any
 bucket's code is refused (`Engine.CheckLayout`).
 

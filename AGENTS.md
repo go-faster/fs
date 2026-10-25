@@ -158,7 +158,9 @@ automated resumable migration and the public API becomes additive-only.
   compare per-(partition, slot) digests with the other replicas, pull what
   differs, and hand over data of partitions the layout moved away. Tables
   keep their digests (`digest.go`), moved in the transaction of every
-  change; blocks compute theirs by walking the store.
+  change; the block store keeps its blocks' and shards' in memory
+  (`block/digest.go`), built by one walk and moved by every file placed or
+  removed.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

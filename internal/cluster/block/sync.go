@@ -26,7 +26,8 @@ import (
 //
 // The digest covers which blocks a replica holds, not their bytes: rot is
 // caught when a block is read, which drops the bad copy and so shows here as
-// a missing block.
+// a missing block. The store keeps the digests (digest.go), so a sweep walks
+// the store only to list the slots that differ or to hand blocks over.
 
 // Slot is a partition's subdivision that digests are kept for.
 type Slot struct {
@@ -62,6 +63,7 @@ func (m *Manager) registerSync() {
 	m.member.Handle("POST /v1/block/list", handle(m.serveList))
 	m.member.Handle("HEAD /v1/block/{hash}", http.HandlerFunc(m.serveHead))
 	m.member.Handle("POST /v1/shard/list", handle(m.serveShards))
+	m.member.Handle("POST /v1/shard/digests", handle(m.serveShardDigests))
 }
 
 // SyncStats returns the anti-entropy counters.
@@ -245,6 +247,19 @@ func (m *Manager) handOver(ctx context.Context, l *layout.Layout) (handed int64,
 	self := m.member.ID()
 	retained := m.member.Layouts()
 
+	held, err := m.store.BlockPartitions(len(l.Slots))
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if !slices.ContainsFunc(held, func(p int) bool {
+		slots := l.Slots[p]
+
+		return !slices.Contains(slots[:min(Replicas, len(slots))], self)
+	}) {
+		return 0, 0, nil // Every block here is one this node replicates.
+	}
+
 	var moving []Hash
 
 	err = m.store.Walk(func(h Hash, tmp bool, _ time.Time, _ string) error {
@@ -343,42 +358,21 @@ func (m *Manager) pushTo(ctx context.Context, h Hash, owners []layout.NodeID) bo
 	return true
 }
 
-// digests fingerprints the local blocks per slot, for the given partitions or
-// all of them when partitions is nil.
+// digests returns the local blocks' digests per slot, for the given
+// partitions or all of them when partitions is nil.
 func (m *Manager) digests(l *layout.Layout, partitions []int) (map[Slot][32]byte, error) {
-	var want map[int]bool
+	var want func(int) bool
+
 	if partitions != nil {
-		want = make(map[int]bool, len(partitions))
+		set := make(map[int]bool, len(partitions))
 		for _, p := range partitions {
-			want[p] = true
+			set[p] = true
 		}
+
+		want = func(p int) bool { return set[p] }
 	}
 
-	out := map[Slot][32]byte{}
-
-	err := m.store.Walk(func(h Hash, tmp bool, _ time.Time, _ string) error {
-		if tmp {
-			return nil
-		}
-
-		slot := slotOf(l, h)
-		if want != nil && !want[slot.P] {
-			return nil
-		}
-
-		// XOR of hashes: the same set of blocks gives the same digest,
-		// whatever order it was written in.
-		d := out[slot]
-		for i, b := range h {
-			d[i] ^= b
-		}
-
-		out[slot] = d
-
-		return nil
-	})
-
-	return out, err
+	return m.store.BlockDigests(len(l.Slots), want)
 }
 
 // slotOf subdivides by a hash byte the partition function does not decide

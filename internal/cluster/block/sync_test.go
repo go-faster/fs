@@ -26,6 +26,12 @@ func TestSyncPullsMissingBlocks(t *testing.T) {
 		hashes = append(hashes, h)
 	}
 
+	// A Put returns at quorum; let the third copy land, or the sweep pulls
+	// it too.
+	require.Eventually(t, func() bool {
+		return !slices.ContainsFunc(hashes, func(h Hash) bool { return !nodes[2].store.Has(h) })
+	}, 5*time.Second, time.Millisecond)
+
 	// n2 lost half of them, and the resync queue that would have noticed is
 	// gone, as after a restart.
 	for _, h := range hashes[:10] {
