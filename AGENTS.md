@@ -116,7 +116,9 @@ automated resumable migration and the public API becomes additive-only.
   (SHA-256 names; a CRC-32C trailer per file checked on every local read,
   peers' blocks checked against their name; corrupt copies dropped), replicated
   put/get over the hash's partition at quorum, an in-memory resync queue, and
-  GC of unreferenced blocks after a grace period. Erasure coding (`ec.go`,
+  GC of unreferenced blocks after a grace period: hourly over the candidates
+  a release names to the blocks' holders (`candidates.go`, kept in
+  `meta.db`), weekly over every block held (`GCWalk`). Erasure coding (`ec.go`,
   #287, Reed-Solomon via `klauspost/reedsolomon`): `PutCoded`/`GetCoded`
   store a block as K data + M parity shards, shard i on slot i of the block's
   partition (the layout must be spread for width K+M), acknowledged at K+1;

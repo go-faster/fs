@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -272,6 +273,60 @@ func TestTwoNodesDown(t *testing.T) {
 	require.ErrorIs(t, err, fs.ErrUnavailable, "list")
 
 	require.ErrorIs(t, e.DeleteObject(ctx, "b", "k"), fs.ErrUnavailable, "delete")
+}
+
+// TestGCCollectsReleasedBlocks checks that the blocks an overwrite and a
+// delete release are collected on every replica by the candidate pass alone,
+// without walking the store, and that blocks still referenced are kept.
+func TestGCCollectsReleasedBlocks(t *testing.T) {
+	nodes := cluster(t, 3, small)
+	ctx := context.Background()
+	e := nodes[0].engine
+
+	require.NoError(t, e.CreateBucket(ctx, "b"))
+
+	// Distinct bytes, so no block is shared between the objects.
+	content := func(c byte) []byte { return bytes.Repeat([]byte{c}, 300) }
+
+	put(t, e, "overwritten", content('o'))
+	put(t, e, "deleted", content('d'))
+	put(t, e, "kept", content('k'))
+
+	released := append(blocksOf(t, e, "overwritten"), blocksOf(t, e, "deleted")...)
+	kept := blocksOf(t, e, "kept")
+
+	put(t, e, "overwritten", []byte("now inline"))
+	require.NoError(t, e.DeleteObject(ctx, "b", "deleted"))
+
+	// Every replica of every released block, and nothing else. Blocks of
+	// one object that repeat are one block.
+	unique := map[block.Hash]bool{}
+	for _, h := range released {
+		unique[h] = true
+	}
+
+	want := len(unique) * block.Replicas
+	removed := 0
+
+	require.Eventually(t, func() bool {
+		for _, n := range nodes {
+			got, err := n.engine.blocks.GC(ctx, 0, n.engine.BlockLive)
+			require.NoError(t, err)
+
+			removed += got
+		}
+
+		return removed == want
+	}, 5*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, allTrue(len(kept)), live(t, e, kept))
+
+	resp, err := e.GetObject(ctx, "b", "kept")
+	require.NoError(t, err)
+
+	body, err := io.ReadAll(resp.Reader)
+	require.NoError(t, err)
+	assert.Equal(t, content('k'), body)
 }
 
 func TestListObjectsAcrossPages(t *testing.T) {

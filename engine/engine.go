@@ -292,7 +292,28 @@ func (e *Engine) release(ctx context.Context, owner string, blocks []blockLoc) {
 		return
 	}
 
-	_ = table.Write(ctx, e.member, rows...)
+	if table.Write(ctx, e.member, rows...) == nil {
+		e.unreferenced(ctx, blocks)
+	}
+}
+
+// unreferenced tells the holders of blocks, whose references a write just
+// released, to check them at their next collection.
+func (e *Engine) unreferenced(ctx context.Context, blocks []blockLoc) {
+	cs := make([]block.Candidate, 0, len(blocks))
+
+	for _, b := range blocks {
+		s, err := block.ParseScheme(b.Scheme)
+		if err != nil {
+			continue // Not a block we could have stored.
+		}
+
+		cs = append(cs, block.Candidate{Hash: b.Hash, Scheme: s})
+	}
+
+	if len(cs) > 0 {
+		e.blocks.Unreferenced(ctx, cs)
+	}
 }
 
 // releaseBlocks are the block_refs rows releasing owner's references to
@@ -367,8 +388,11 @@ func (e *Engine) writeRows(ctx context.Context, rows ...rowOrErr) error {
 
 // releaseRows are the block_refs rows that release the blocks of the
 // versions merging after drops from before, for a Write with the change.
-func (e *Engine) releaseRows(before, after meta.Object) ([]table.Row, error) {
-	var rows []table.Row
+func (e *Engine) releaseRows(before, after meta.Object) ([]table.Row, []blockLoc, error) {
+	var (
+		rows   []table.Row
+		blocks []blockLoc
+	)
 
 	for _, v := range before.Versions {
 		if _, kept := after.Find(v.ID); kept {
@@ -382,13 +406,14 @@ func (e *Engine) releaseRows(before, after meta.Object) ([]table.Row, error) {
 
 		released, err := e.releaseBlocks(v.ID, p.Blocks)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		rows = append(rows, released...)
+		blocks = append(blocks, p.Blocks...)
 	}
 
-	return rows, nil
+	return rows, blocks, nil
 }
 
 // BlockLive reports whether any version still references h, for block GC.

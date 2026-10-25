@@ -64,7 +64,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 
 	store.NoSync = opts.NoSync
 
-	e, err := New(Config{Member: member, DB: db, Blocks: block.NewManager(store, member), Keyring: opts.Keyring, QuotaCacheTTL: opts.QuotaCacheTTL})
+	e, err := New(Config{Member: member, DB: db, Blocks: block.NewManager(store, member, db), Keyring: opts.Keyring, QuotaCacheTTL: opts.QuotaCacheTTL})
 	if err != nil {
 		_ = db.Close()
 

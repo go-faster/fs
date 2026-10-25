@@ -197,10 +197,13 @@ type BackgroundConfig struct {
 	// (default 10s).
 	ResyncInterval time.Duration `yaml:"resync_interval,omitempty"`
 	// GCInterval is the collection period (default 1h), GCGrace how long an
-	// unreferenced block is kept (default 10m), and TombstoneDelay how long
-	// a deleted row is kept before it is collected (default 24h).
+	// unreferenced block is kept (default 10m), GCWalkInterval how often
+	// collection checks every block held rather than those released since
+	// (default 168h), and TombstoneDelay how long a deleted row is kept
+	// before it is collected (default 24h).
 	GCInterval     time.Duration `yaml:"gc_interval,omitempty"`
 	GCGrace        time.Duration `yaml:"gc_grace,omitempty"`
+	GCWalkInterval time.Duration `yaml:"gc_walk_interval,omitempty"`
 	TombstoneDelay time.Duration `yaml:"tombstone_delay,omitempty"`
 }
 

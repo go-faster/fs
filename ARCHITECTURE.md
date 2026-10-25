@@ -321,7 +321,16 @@ and can lose acknowledged writes in a crash.
 
 In cluster mode writes and reads use a quorum of 2 of 3 replicas; anti-entropy
 repairs replicas that missed a write, and a block GC removes blocks nothing
-references. There is no background scrubber: verification happens on every
+references. GC checks candidates, not every block: a write that releases
+references tells the released blocks' holders (every slot under every
+retained layout; `POST /v1/gc/candidates`), which keep them in
+`block.gc.candidates` in `meta.db` until the hourly pass has checked each —
+at quorum, as before — and removed it or found it referenced again. A
+candidate too fresh to remove or whose references cannot be read waits for
+the next pass. The hints are not reliable — a crash before sending, an
+unreachable holder, a handover after — so a walk of every block held
+(`block.Manager.GCWalk`) still runs, weekly by default
+(`engine.RunConfig.GCWalk`), and finds what they missed. There is no background scrubber: verification happens on every
 read, and repair is anti-entropy's job.
 
 Anti-entropy compares per-slot digests (a partition and the first byte of a
@@ -438,7 +447,8 @@ collect the same way, with one replica.
 **Periodic-pass scheduling.** The lifecycle sweep records when it last
 completed — `<root>/.lastrun/<task>.json` — and schedules the next pass one interval
 after that rather than one interval after process start. The engine's hourly
-collection (tombstones, then blocks) does the same, recording in `meta.db`. Without the record a
+collection (tombstones, then blocks) and its weekly walk do the same,
+recording in `meta.db`. Without the record a
 periodic loop has to pick between two wrong answers: a ticker never fires on a
 node restarted more often than the interval (redeploy hourly, never sweep), and
 running on start makes a node that restarts often re-walk everything every time.

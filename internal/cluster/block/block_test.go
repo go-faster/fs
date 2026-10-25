@@ -14,6 +14,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/bbolt"
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
@@ -235,7 +236,11 @@ func clusterOf(t *testing.T, n, members int, widths ...int) []*node {
 		store, err := NewStore(t.TempDir())
 		require.NoError(t, err)
 
-		blocks := NewManager(store, m)
+		db, err := bbolt.Open(filepath.Join(t.TempDir(), "meta.db"), 0o600, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		blocks := NewManager(store, m, db)
 
 		srv.Config.Handler = m.Handler()
 		srv.Start()
@@ -440,7 +445,7 @@ func TestGC(t *testing.T) {
 	require.NoError(t, os.WriteFile(tmp, nil, 0o600))
 	require.NoError(t, os.Chtimes(tmp, old, old))
 
-	removed, err := n.blocks.GC(ctx, DefaultGrace, func(_ context.Context, h Hash) (bool, error) {
+	removed, err := n.blocks.GCWalk(ctx, DefaultGrace, func(_ context.Context, h Hash) (bool, error) {
 		switch h {
 		case referenced:
 			return true, nil
@@ -490,7 +495,7 @@ func TestGCSparesBlockTouchedDuringCheck(t *testing.T) {
 		return false, nil
 	}
 
-	removed, err := n.blocks.GC(ctx, time.Minute, live)
+	removed, err := n.blocks.GCWalk(ctx, time.Minute, live)
 	require.NoError(t, err)
 	assert.Zero(t, removed)
 	assert.True(t, n.store.Has(h), "a block touched during the check is kept")

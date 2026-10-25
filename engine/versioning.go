@@ -367,7 +367,7 @@ func (e *Engine) DeleteObjectVersionIf(
 		return fs.DeleteResult{}, err
 	}
 
-	released, err := e.releaseRows(before, meta.MergeObject(before, row))
+	released, unref, err := e.releaseRows(before, meta.MergeObject(before, row))
 	if err != nil {
 		return fs.DeleteResult{}, err
 	}
@@ -375,6 +375,8 @@ func (e *Engine) DeleteObjectVersionIf(
 	if err := table.Write(ctx, e.member, append([]table.Row{markerRow}, released...)...); err != nil {
 		return fs.DeleteResult{}, err
 	}
+
+	e.unreferenced(ctx, unref)
 
 	e.charge(inc.ID, before, row)
 
@@ -404,6 +406,8 @@ func (e *Engine) removeVersion(
 
 	rows := []table.Row{row}
 
+	var unref []blockLoc
+
 	if p, err := decodePayload(v); err == nil {
 		released, err := e.releaseBlocks(v.ID, p.Blocks)
 		if err != nil {
@@ -411,11 +415,14 @@ func (e *Engine) removeVersion(
 		}
 
 		rows = append(rows, released...)
+		unref = p.Blocks
 	}
 
 	if err := table.Write(ctx, e.member, rows...); err != nil {
 		return fs.DeleteResult{}, err
 	}
+
+	e.unreferenced(ctx, unref)
 
 	e.charge(bucketID, o, goneRow)
 
