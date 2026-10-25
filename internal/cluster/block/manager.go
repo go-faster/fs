@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
 	"github.com/go-faster/fs/internal/cluster/peer"
 )
@@ -33,8 +34,9 @@ const backgroundTimeout = 30 * time.Second
 var (
 	// ErrNoLayout is returned before the cluster has a layout.
 	ErrNoLayout = errors.New("no cluster layout")
-	// ErrQuorum is returned when too few replicas stored a block.
-	ErrQuorum = errors.New("quorum not reached")
+	// ErrQuorum is returned when too few replicas stored a block. It is
+	// fs.ErrUnavailable: the request may succeed once they are back.
+	ErrQuorum = errors.Wrap(fs.ErrUnavailable, "quorum not reached")
 )
 
 // Stats are a Manager's counters, for metrics.
@@ -247,6 +249,10 @@ func (m *Manager) Get(ctx context.Context, h Hash) ([]byte, error) {
 	if len(missing) == len(nodes) {
 		return nil, errors.Wrapf(ErrNotFound, "block %s on every replica", h)
 	}
+
+	// Some replica could not be asked, so the block may be there and a retry
+	// may find it.
+	errs = append(errs, fs.ErrUnavailable)
 
 	return nil, errors.Wrapf(errors.Join(errs...), "block %s", h)
 }

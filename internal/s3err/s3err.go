@@ -97,6 +97,7 @@ var (
 	MissingOriginHeader     = APIError{codeInvalidRequest, http.StatusBadRequest, "Insufficient information. Origin request header needed."}
 	MissingRequestMethod    = APIError{codeInvalidRequest, http.StatusBadRequest, "Insufficient information. Access-Control-Request-Method header needed."}
 	InternalError           = APIError{"InternalError", http.StatusInternalServerError, "We encountered an internal error. Please try again."}
+	ServiceUnavailable      = APIError{"ServiceUnavailable", http.StatusServiceUnavailable, "Service is unable to handle request."}
 )
 
 // errorResponse is the standard S3 <Error> document.
@@ -167,6 +168,8 @@ func FromError(err error) APIError {
 		return InternalError
 	case errors.Is(err, fs.ErrUnsupportedOperation):
 		return NotImplemented
+	case errors.Is(err, fs.ErrUnavailable):
+		return ServiceUnavailable
 	default:
 		return InternalError
 	}

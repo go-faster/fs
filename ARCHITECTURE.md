@@ -94,7 +94,10 @@ The shared vocabulary every layer speaks:
   key missing for an object encrypted with one, or sent for one that is not,
   mapped to 400 InvalidRequest; a wrong key is `ErrAccessDenied`, 403;
   `ErrQuotaExceeded` — a write past a bucket or account quota, mapped to
-  Ceph RGW's 403 QuotaExceeded, since S3 has no such code).
+  Ceph RGW's 403 QuotaExceeded, since S3 has no such code; `ErrUnavailable`
+  — a request the cluster cannot serve for now, such as one whose replicas
+  are too few to reach a quorum, mapped to 503 ServiceUnavailable so clients
+  retry it).
   These are the contract for cross-layer error signalling: backends return
   them, and `internal/s3err` maps them to S3 error codes and HTTP status.
 

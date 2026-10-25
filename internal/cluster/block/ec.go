@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/klauspost/reedsolomon"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
 )
 
@@ -225,7 +227,8 @@ func (m *Manager) PutCoded(ctx context.Context, h Hash, data []byte, s Scheme, r
 
 // GetCoded returns the size-byte block h stored under s: its data shards
 // joined, or, when any is missing or corrupt, the block rebuilt from any K
-// shards. Fewer than K reachable is ErrNotFound.
+// shards. Fewer than K found is ErrNotFound, and also fs.ErrUnavailable when
+// a holder could not be asked.
 func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]byte, error) {
 	holders, err := m.shardHolders(h, s)
 	if err != nil {
@@ -238,16 +241,24 @@ func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]b
 	}
 
 	shards := make([][]byte, len(holders))
+
+	var unreachable atomic.Bool
+
 	fetch := func(idx []int) {
 		var wg sync.WaitGroup
 
 		for _, i := range idx {
 			wg.Go(func() {
 				for _, id := range holders[i] {
-					if data, err := m.getShardFrom(ctx, id, Shard{Hash: h, K: s.K, M: s.M, I: i}); err == nil {
+					data, err := m.getShardFrom(ctx, id, Shard{Hash: h, K: s.K, M: s.M, I: i})
+					if err == nil {
 						shards[i] = data
 
 						return
+					}
+
+					if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrCorrupt) {
+						unreachable.Store(true)
 					}
 				}
 			})
@@ -297,6 +308,10 @@ func (m *Manager) GetCoded(ctx context.Context, h Hash, size int, s Scheme) ([]b
 		}
 
 		if err := enc.ReconstructData(shards); err != nil {
+			if unreachable.Load() {
+				return nil, errors.Wrapf(errors.Join(ErrNotFound, fs.ErrUnavailable), "block %s (%s): %v", h, s, err)
+			}
+
 			return nil, errors.Wrapf(ErrNotFound, "block %s (%s): %v", h, s, err)
 		}
 	}

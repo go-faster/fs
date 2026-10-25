@@ -60,4 +60,9 @@ var (
 	// ErrQuotaExceeded reports a write that would take a bucket or its
 	// owner's account past a quota the operator set. Nothing is stored.
 	ErrQuotaExceeded = errors.New("quota exceeded")
+
+	// ErrUnavailable reports a request the server could not serve for now,
+	// such as one whose replicas are too few to reach: nothing is wrong with
+	// the request, and the client may retry it.
+	ErrUnavailable = errors.New("service unavailable")
 )

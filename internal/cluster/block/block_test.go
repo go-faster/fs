@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
 	"github.com/go-faster/fs/internal/cluster/peer"
 )
@@ -349,6 +350,28 @@ func TestTwoNodesDown(t *testing.T) {
 
 	_, err := nodes[0].blocks.Put(context.Background(), []byte("no quorum"))
 	require.ErrorIs(t, err, ErrQuorum)
+	require.ErrorIs(t, err, fs.ErrUnavailable, "a client may retry it")
+}
+
+// TestGetUnreachable checks that a block missing where it was looked for, with
+// a replica that could not be asked, is unavailable rather than lost.
+func TestGetUnreachable(t *testing.T) {
+	nodes := cluster(t, 3)
+	ctx := context.Background()
+
+	h, err := nodes[0].blocks.Put(ctx, []byte("somewhere"))
+	require.NoError(t, err)
+
+	// A Put returns at quorum; let every copy land before removing two.
+	require.Eventually(t, func() bool {
+		return nodes[0].store.Has(h) && nodes[1].store.Has(h) && nodes[2].store.Has(h)
+	}, 5*time.Second, time.Millisecond)
+	require.NoError(t, nodes[0].store.Delete(h))
+	require.NoError(t, nodes[1].store.Delete(h))
+	nodes[2].srv.Close()
+
+	_, err = nodes[0].blocks.Get(ctx, h)
+	require.ErrorIs(t, err, fs.ErrUnavailable)
 }
 
 func TestResyncRepairsMissingAndCorrupt(t *testing.T) {

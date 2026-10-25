@@ -29,6 +29,7 @@ import (
 	"github.com/go-faster/errors"
 	"go.etcd.io/bbolt"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
 	"github.com/go-faster/fs/internal/cluster/peer"
 )
@@ -44,8 +45,9 @@ const backgroundTimeout = 30 * time.Second
 // ErrNoLayout is returned before the cluster has a layout.
 var ErrNoLayout = errors.New("no cluster layout")
 
-// ErrQuorum is returned when too few replicas answered.
-var ErrQuorum = errors.New("quorum not reached")
+// ErrQuorum is returned when too few replicas answered. It is
+// fs.ErrUnavailable: the request may succeed once they are back.
+var ErrQuorum = errors.Wrap(fs.ErrUnavailable, "quorum not reached")
 
 // Entry is one row with its keys.
 type Entry[R any] struct {
