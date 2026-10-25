@@ -62,7 +62,9 @@ Each requires a design document before commitment:
 
 - **Lifecycle, the rest** — transitions and storage classes; noncurrent-version
   expiration and `ExpiredObjectDeleteMarker`, which are the versioning growth
-  valve and follow versioning; tag and size filters. The `Days`/`Date` + prefix
+  valve and follow versioning (design:
+  [docs/design/noncurrent-version-expiration.md](docs/design/noncurrent-version-expiration.md));
+  tag and size filters. The `Days`/`Date` + prefix
   + abandoned-upload subset is implemented and enforced (see above).
 - **Virtual-host-style addressing** (`bucket.host`).
 - **Bucket-policy subset** — only if the per-key grant model proves
