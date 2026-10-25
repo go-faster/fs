@@ -27,8 +27,12 @@ type RunConfig struct {
 	Resync time.Duration
 	// GC is the block collection period (default an hour), and Grace how
 	// long an unreferenced block is kept (default block.DefaultGrace).
-	GC    time.Duration
-	Grace time.Duration
+	// Collection checks the blocks that lost a reference since; GCWalk is
+	// how often it checks every block held instead (default a week), for
+	// those no release named.
+	GC     time.Duration
+	Grace  time.Duration
+	GCWalk time.Duration
 	// OnSweep, when set, is told how each anti-entropy sweep ended: nil
 	// once it synced the layout, or why it has not — what an operator
 	// needs to see a layout change that does not complete.
@@ -56,6 +60,10 @@ func (c RunConfig) withDefaults() RunConfig {
 		c.Grace = block.DefaultGrace
 	}
 
+	if c.GCWalk <= 0 {
+		c.GCWalk = 7 * 24 * time.Hour
+	}
+
 	if c.Tombstones <= 0 {
 		c.Tombstones = 24 * time.Hour
 	}
@@ -75,7 +83,20 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 	}
 
 	wg.Go(func() {
-		e.gcLoop(ctx, cfg.GC, func() error {
+		e.gcLoop(ctx, cfg.GCWalk, lastGCWalkKey, func() error {
+			n, err := e.blocks.GCWalk(ctx, cfg.Grace, e.BlockLive)
+
+			e.gcMu.Lock()
+			e.gc.collected += int64(n)
+			e.gc.walk, e.gc.walkFailed = time.Now(), err != nil
+			e.gcMu.Unlock()
+
+			return err
+		})
+	})
+
+	wg.Go(func() {
+		e.gcLoop(ctx, cfg.GC, lastGCKey, func() error {
 			n, err := e.blocks.GC(ctx, cfg.Grace, e.BlockLive)
 
 			// Rows first: a block's last reference collected this pass leaves
@@ -89,7 +110,8 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 			}
 
 			e.gcMu.Lock()
-			e.gc = gcStats{last: time.Now(), collected: e.gc.collected + int64(n), failed: err != nil}
+			e.gc.collected += int64(n)
+			e.gc.last, e.gc.failed = time.Now(), err != nil
 			e.gcMu.Unlock()
 
 			return err
@@ -104,11 +126,11 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 var gcFloor = time.Minute
 
 // gcLoop runs pass every period until ctx is canceled. The first pass is
-// timed from the last one that completed, recorded in the metadata database:
-// a ticker started with the process would never fire on a node restarted more
-// often than the period.
-func (e *Engine) gcLoop(ctx context.Context, period time.Duration, pass func() error) {
-	t := time.NewTimer(lastrun.Due(e.lastGC(), time.Now(), period, gcFloor))
+// timed from the last one that completed, recorded in the metadata database
+// under key: a ticker started with the process would never fire on a node
+// restarted more often than the period.
+func (e *Engine) gcLoop(ctx context.Context, period time.Duration, key []byte, pass func() error) {
+	t := time.NewTimer(lastrun.Due(e.lastRun(key), time.Now(), period, gcFloor))
 	defer t.Stop()
 
 	for {
@@ -122,7 +144,7 @@ func (e *Engine) gcLoop(ctx context.Context, period time.Duration, pass func() e
 
 		// A failed pass is not recorded, so it is due again after a restart.
 		if pass() == nil {
-			e.setLastGC(time.Now())
+			e.setLastRun(key, time.Now())
 		}
 	}
 }
@@ -130,16 +152,20 @@ func (e *Engine) gcLoop(ctx context.Context, period time.Duration, pass func() e
 var (
 	runBucket = []byte("engine")
 	lastGCKey = []byte("gc.last")
+	// lastGCWalkKey is absent on a store from before collection kept
+	// candidates, so its first walk is due at once and finds every block
+	// released before then.
+	lastGCWalkKey = []byte("gc.walk.last")
 )
 
-// lastGC returns when collection last completed; zero if never or unreadable,
-// which makes it due.
-func (e *Engine) lastGC() time.Time {
+// lastRun returns when the pass recorded under key last completed; zero if
+// never or unreadable, which makes it due.
+func (e *Engine) lastRun(key []byte) time.Time {
 	var last time.Time
 
 	_ = e.db.View(func(tx *bbolt.Tx) error {
 		if b := tx.Bucket(runBucket); b != nil {
-			if v := b.Get(lastGCKey); len(v) == 8 {
+			if v := b.Get(key); len(v) == 8 {
 				last = time.Unix(0, int64(binary.BigEndian.Uint64(v))) //nolint:gosec // Written from a positive int64.
 			}
 		}
@@ -150,14 +176,14 @@ func (e *Engine) lastGC() time.Time {
 	return last
 }
 
-func (e *Engine) setLastGC(t time.Time) {
+func (e *Engine) setLastRun(key []byte, t time.Time) {
 	_ = e.db.Update(func(tx *bbolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists(runBucket)
 		if err != nil {
 			return err
 		}
 
-		return b.Put(lastGCKey, binary.BigEndian.AppendUint64(nil, uint64(t.UnixNano()))) //nolint:gosec // Wall clock, positive.
+		return b.Put(key, binary.BigEndian.AppendUint64(nil, uint64(t.UnixNano()))) //nolint:gosec // Wall clock, positive.
 	})
 }
 
@@ -280,9 +306,9 @@ func (e *Engine) Sweep(ctx context.Context) error {
 }
 
 type gcStats struct {
-	last      time.Time
-	collected int64
-	failed    bool
+	last, walk         time.Time
+	collected          int64
+	failed, walkFailed bool
 }
 
 // Stats are the engine's counters, for metrics and the admin API.
@@ -301,6 +327,10 @@ type Stats struct {
 	// LastGC is when block collection last finished; zero before the first.
 	LastGC   time.Time
 	GCFailed bool
+	// LastGCWalk is when collection last walked every block held; zero
+	// before the first since start.
+	LastGCWalk   time.Time
+	GCWalkFailed bool
 	// Quota counts writes checked against quotas, and refused.
 	Quota QuotaStats
 }
@@ -330,8 +360,10 @@ func (e *Engine) Stats() Stats {
 			"parts":      e.parts.GCStats(),
 			"uploads":    e.uploads.GCStats(),
 		},
-		LastGC:   gc.last,
-		GCFailed: gc.failed,
-		Quota:    e.QuotaStats(),
+		LastGC:       gc.last,
+		GCFailed:     gc.failed,
+		LastGCWalk:   gc.walk,
+		GCWalkFailed: gc.walkFailed,
+		Quota:        e.QuotaStats(),
 	}
 }

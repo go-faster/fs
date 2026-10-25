@@ -374,8 +374,11 @@ func (s *Store) remove(name string) error {
 }
 
 // Has reports whether the block is present, without verifying it.
-func (s *Store) Has(h Hash) bool {
-	_, err := os.Stat(s.path(h))
+func (s *Store) Has(h Hash) bool { return s.exists(h.String()) }
+
+// exists reports whether the named block or shard is present.
+func (s *Store) exists(name string) bool {
+	_, err := os.Stat(s.pathOf(name))
 
 	return err == nil
 }

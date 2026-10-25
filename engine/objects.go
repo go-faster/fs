@@ -434,7 +434,7 @@ func (e *Engine) commit(
 		rows = append(rows, r)
 	}
 
-	released, err := e.releaseRows(before, meta.MergeObject(before, row))
+	released, unref, err := e.releaseRows(before, meta.MergeObject(before, row))
 	if err != nil {
 		return err
 	}
@@ -442,6 +442,8 @@ func (e *Engine) commit(
 	if err := table.Write(ctx, e.member, append(rows, released...)...); err != nil {
 		return err
 	}
+
+	e.unreferenced(ctx, unref)
 
 	e.charge(bucketID, before, row)
 

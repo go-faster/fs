@@ -95,6 +95,7 @@ func storageConfig() string {
     resync_interval: 1s
     gc_interval: 10s
     gc_grace: 60s
+    gc_walk_interval: 30s
     tombstone_delay: 20s`
 }
 

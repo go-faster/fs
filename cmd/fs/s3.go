@@ -297,6 +297,7 @@ Command-line flags override YAML configuration values.`,
 						Resync:     bg.ResyncInterval,
 						GC:         bg.GCInterval,
 						Grace:      bg.GCGrace,
+						GCWalk:     bg.GCWalkInterval,
 						Tombstones: bg.TombstoneDelay,
 						OnSweep: func(err error) {
 							if err != nil {

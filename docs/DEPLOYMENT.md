@@ -145,7 +145,11 @@ If a node is gone for good and blocks a change from completing,
 
 Background work runs on defaults that rarely need changing:
 `storage.background.{sync_interval, resync_interval, gc_interval, gc_grace,
-tombstone_delay}` (10m, 10s, 1h, 10m, 24h). A layout change does not wait for
+gc_walk_interval, tombstone_delay}` (10m, 10s, 1h, 10m, 168h, 24h). Block
+collection checks the blocks released since its last pass; every
+`gc_walk_interval` it checks every block a node holds instead, for those a
+release never named (a node that crashed before telling the holders, a
+holder unreachable at the time). A layout change does not wait for
 the sync interval: a node sweeps as soon as it adopts one, and retries a
 failed sweep after 5s, backing off to the interval. Shorter intervals repair
 faster at the cost of sweeping more often; a tombstone delay shorter than the longest a
@@ -211,7 +215,9 @@ usage read that fails lets the write through
   `fs.engine.shards.{unreachable,rebuilt,handed_over,age}` for the repair
   sweep (cluster only),
   `fs.engine.sync.{out_of_sync,unreachable,age}{table}` (anti-entropy, cluster
-  only), `fs.engine.gc.age`, and
+  only), `fs.engine.gc.{age,walk_age}` — since the hourly collection and
+  the weekly walk of every block — `fs.engine.gc.candidates`, released
+  blocks left to check again (growing: references unreadable), and
   `fs.engine.tombstones.{queued,collected,deferred}{table}` — deleted rows
   wait a day, then go once every replica has them; `queued` climbing with
   `deferred` means a replica has been unreachable through collections.

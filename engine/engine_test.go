@@ -75,7 +75,7 @@ func clusterWide(t testing.TB, n int, cfg Config, widths ...int) []*node {
 		require.NoError(t, err)
 
 		c := cfg
-		c.Member, c.DB, c.Blocks = m, db, block.NewManager(store, m)
+		c.Member, c.DB, c.Blocks = m, db, block.NewManager(store, m, db)
 
 		e, err := New(c)
 		require.NoError(t, err)

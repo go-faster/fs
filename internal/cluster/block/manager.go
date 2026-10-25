@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	"go.etcd.io/bbolt"
 
 	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
@@ -53,12 +54,17 @@ type Stats struct {
 	// Degraded counts reads of coded blocks that had to rebuild from parity:
 	// a shard missing or corrupt where it should be.
 	Degraded int64
+	// Candidates is how many blocks the last collection pass left to check
+	// again: too fresh to remove, or their references unreadable.
+	Candidates int64
 }
 
 // Manager stores blocks across the cluster.
 type Manager struct {
 	store  *Store
 	member *peer.Member
+	// db keeps the collection candidates (candidates.go).
+	db *bbolt.DB
 
 	mu     sync.Mutex
 	resync map[resyncKey]resyncItem
@@ -66,6 +72,7 @@ type Manager struct {
 	sync syncState
 
 	done, failed, corrupt, collected, degraded atomic.Int64
+	candidatesPending                          atomic.Int64
 }
 
 type resyncKey struct {
@@ -81,15 +88,17 @@ type resyncItem struct {
 // maxResyncAttempts bounds retries of one copy.
 const maxResyncAttempts = 8
 
-// NewManager returns a Manager over this node's store and registers the
-// block endpoints on member; call it before serving.
-func NewManager(store *Store, member *peer.Member) *Manager {
-	m := &Manager{store: store, member: member, resync: map[resyncKey]resyncItem{}}
+// NewManager returns a Manager over this node's store, keeping its collection
+// candidates in db, and registers the block endpoints on member; call it
+// before serving.
+func NewManager(store *Store, member *peer.Member, db *bbolt.DB) *Manager {
+	m := &Manager{store: store, member: member, db: db, resync: map[resyncKey]resyncItem{}}
 
 	member.Handle("PUT /v1/block/{hash}", http.HandlerFunc(m.servePut))
 	member.Handle("GET /v1/block/{hash}", http.HandlerFunc(m.serveGet))
 	member.Handle("PUT /v1/shard/{shard}", http.HandlerFunc(m.servePutShard))
 	member.Handle("GET /v1/shard/{shard}", http.HandlerFunc(m.serveGetShard))
+	member.Handle("POST /v1/gc/candidates", http.HandlerFunc(m.serveCandidates))
 	m.registerSync()
 
 	return m
@@ -277,10 +286,18 @@ func (m *Manager) GetInto(ctx context.Context, h Hash, buf []byte) ([]byte, erro
 	return m.Get(ctx, h)
 }
 
-// GC removes this node's blocks that live reports unreferenced and that have
-// not been written or touched within grace, and temporary files a crash left
-// behind. It returns how many blocks it removed.
+// GC removes this node's candidate blocks and shards (candidates.go) that
+// live reports unreferenced and that have not been written or touched within
+// grace. It returns how many it removed.
 func (m *Manager) GC(ctx context.Context, grace time.Duration, live func(context.Context, Hash) (bool, error)) (int, error) {
+	return m.collectCandidates(ctx, time.Now().Add(-grace), live)
+}
+
+// GCWalk is GC over every block and shard this node holds, not only the
+// candidates, and removes temporary files a crash left behind: it finds the
+// garbage no candidate named, at a reference check per block held. It
+// returns how many it removed.
+func (m *Manager) GCWalk(ctx context.Context, grace time.Duration, live func(context.Context, Hash) (bool, error)) (int, error) {
 	cutoff := time.Now().Add(-grace)
 	removed := 0
 
@@ -401,6 +418,7 @@ func (m *Manager) Stats() Stats {
 		Corrupt:       m.corrupt.Load(),
 		Collected:     m.collected.Load(),
 		Degraded:      m.degraded.Load(),
+		Candidates:    m.candidatesPending.Load(),
 	}
 }
 

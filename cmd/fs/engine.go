@@ -47,6 +47,8 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		"fs.engine.sync.unreachable":      "Replicas that could not be compared in the last sweep, by table.",
 		"fs.engine.sync.age":              "Seconds since the last anti-entropy sweep finished, by table.",
 		"fs.engine.gc.age":                "Seconds since block collection last finished.",
+		"fs.engine.gc.candidates":         "Released blocks the last collection left to check again: too fresh, or their references unreadable.",
+		"fs.engine.gc.walk_age":           "Seconds since block collection last walked every block held, since start.",
 		"fs.engine.shards.lost":           "Erasure-coded blocks with fewer than K shards: unreadable. Counted by each partition's first node at the last repair sweep.",
 		"fs.engine.shards.critical":       "Erasure-coded blocks down to K shards: one more loss from unreadable.",
 		"fs.engine.shards.degraded":       "Erasure-coded blocks short of a shard, above K.",
@@ -91,6 +93,8 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		o.ObserveInt64(obs["fs.engine.blocks.collected"], s.Blocks.Collected)
 		o.ObserveInt64(obs["fs.engine.blocks.degraded"], s.Blocks.Degraded)
 		o.ObserveInt64(obs["fs.engine.gc.age"], age(s.LastGC))
+		o.ObserveInt64(obs["fs.engine.gc.candidates"], s.Blocks.Candidates)
+		o.ObserveInt64(obs["fs.engine.gc.walk_age"], age(s.LastGCWalk))
 		o.ObserveInt64(obs["fs.engine.shards.lost"], int64(s.Shards.Lost))
 		o.ObserveInt64(obs["fs.engine.shards.critical"], int64(s.Shards.Critical))
 		o.ObserveInt64(obs["fs.engine.shards.degraded"], int64(s.Shards.Degraded))

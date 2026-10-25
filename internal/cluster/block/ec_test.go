@@ -208,7 +208,7 @@ func TestCodedGC(t *testing.T) {
 	dead := func(context.Context, Hash) (bool, error) { return false, nil }
 
 	for i, id := range slots {
-		n, err := byID(nodes, id).blocks.GC(ctx, 0, dead)
+		n, err := byID(nodes, id).blocks.GCWalk(ctx, 0, dead)
 		require.NoError(t, err)
 		assert.Equal(t, 1, n)
 		assert.False(t, byID(nodes, id).store.HasShard(Shard{Hash: h, K: 2, M: 1, I: i}))
