@@ -60,6 +60,9 @@ type Config struct {
 	// Keyring seals the data keys of encrypted objects. Without one, a
 	// request to encrypt is refused rather than stored in the clear.
 	Keyring *sse.Keyring
+	// QuotaCacheTTL is how long usage read for quota checks is trusted;
+	// defaults to DefaultQuotaCacheTTL.
+	QuotaCacheTTL time.Duration
 }
 
 // Engine implements fs.Storage.
@@ -71,6 +74,7 @@ type Engine struct {
 	parts   *table.Table[meta.LWW[json.RawMessage]]
 	uploads *table.Table[meta.LWW[json.RawMessage]]
 	keys    *table.Table[meta.LWW[json.RawMessage]]
+	quotas  *table.Table[meta.LWW[json.RawMessage]]
 	blocks  *block.Manager
 	member  *peer.Member
 
@@ -78,6 +82,7 @@ type Engine struct {
 	inlineLimit int
 	codedMin    int
 	keyring     *sse.Keyring
+	quota       *quotaCache
 
 	locks [256]sync.Mutex
 	now   func() time.Time
@@ -108,6 +113,7 @@ func New(cfg Config) (*Engine, error) {
 		member:      cfg.Member,
 		keyring:     cfg.Keyring,
 		db:          cfg.DB,
+		quota:       newQuotaCache(cmp.Or(cfg.QuotaCacheTTL, DefaultQuotaCacheTTL)),
 		now:         time.Now,
 	}
 
@@ -125,6 +131,10 @@ func New(cfg Config) (*Engine, error) {
 		return nil, err
 	}
 
+	if err := e.objects.CountUsage(objectUsage); err != nil {
+		return nil, err
+	}
+
 	if e.refs, err = table.New(meta.BlockRefs, cfg.DB, cfg.Member, meta.MergeBlockRef, meta.CompactBlockRef); err != nil {
 		return nil, err
 	}
@@ -138,6 +148,10 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	if e.keys, err = table.New(meta.AccessKeys, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], nil); err != nil {
+		return nil, err
+	}
+
+	if e.quotas, err = table.New(meta.Quotas, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], nil); err != nil {
 		return nil, err
 	}
 

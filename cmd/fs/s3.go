@@ -163,7 +163,7 @@ Command-line flags override YAML configuration values.`,
 				// outlives the process.
 				state := lastrun.NewFile(absRoot)
 
-				eng, err := buildEngine(absRoot, member, keyring, cfg.Storage.Fsync == fsyncNone)
+				eng, err := buildEngine(absRoot, member, keyring, cfg.Storage)
 				if err != nil {
 					return errors.Wrap(err, "storage engine")
 				}

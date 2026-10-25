@@ -9,6 +9,8 @@ const (
 	ApplyLayoutOperation          OperationName = "ApplyLayout"
 	CreateAccessKeyOperation      OperationName = "CreateAccessKey"
 	DeleteAccessKeyOperation      OperationName = "DeleteAccessKey"
+	GetAccountQuotaOperation      OperationName = "GetAccountQuota"
+	GetBucketQuotaOperation       OperationName = "GetBucketQuota"
 	GetBucketSchemeOperation      OperationName = "GetBucketScheme"
 	GetInfoOperation              OperationName = "GetInfo"
 	GetLayoutOperation            OperationName = "GetLayout"
@@ -16,6 +18,8 @@ const (
 	ListClusterNodesOperation     OperationName = "ListClusterNodes"
 	ReloadConfigOperation         OperationName = "ReloadConfig"
 	RotateEncryptionKeysOperation OperationName = "RotateEncryptionKeys"
+	SetAccountQuotaOperation      OperationName = "SetAccountQuota"
+	SetBucketQuotaOperation       OperationName = "SetBucketQuota"
 	SetBucketSchemeOperation      OperationName = "SetBucketScheme"
 	SkipClusterNodeOperation      OperationName = "SkipClusterNode"
 )

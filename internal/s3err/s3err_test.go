@@ -23,6 +23,7 @@ func TestFromError(t *testing.T) {
 		{fs.ErrUploadNotFound, "NoSuchUpload"},
 		{fs.ErrBucketAlreadyExists, "BucketAlreadyOwnedByYou"},
 		{fs.ErrBucketNotEmpty, "BucketNotEmpty"},
+		{fs.ErrQuotaExceeded, "QuotaExceeded"},
 		{fs.ErrInvalidBucketName, "InvalidBucketName"},
 		{fs.ErrPreconditionFailed, "PreconditionFailed"},
 		{fs.ErrUnsupportedOperation, "NotImplemented"},

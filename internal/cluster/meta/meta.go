@@ -19,6 +19,8 @@
 //   - parts: an upload's parts, keyed by its ID (see Parts).
 //   - uploads: a bucket's uploads in flight, keyed by its ID (see Uploads), so
 //     listing them costs the uploads, not the keys.
+//   - access_keys, quotas: one partition each, keyed by access key ID and by
+//     account.
 //
 // Two limits follow from that and are by design, as in Garage: one bucket's
 // objects live on one partition's replicas, so a bucket is bounded by what one
@@ -57,6 +59,9 @@ const (
 	// record, or null once deleted — a tombstone a later create of the same
 	// ID supersedes.
 	AccessKeys = "access_keys"
+	// Quotas holds account quotas: one partition, sort key the account (an
+	// owner ID), an LWW register holding the engine's quota.
+	Quotas = "quotas"
 )
 
 // LWW is a last-writer-wins register.

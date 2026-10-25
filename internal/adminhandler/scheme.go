@@ -18,7 +18,7 @@ func (a *AdminAPI) GetBucketScheme(ctx context.Context, params adminapi.GetBucke
 
 	s, err := a.opts.Engine.BucketScheme(ctx, params.Bucket)
 	if err != nil {
-		return nil, schemeErr(err)
+		return nil, settingErr(err)
 	}
 
 	return &adminapi.BucketScheme{Scheme: s}, nil
@@ -33,13 +33,13 @@ func (a *AdminAPI) SetBucketScheme(
 	}
 
 	if err := a.opts.Engine.SetBucketScheme(ctx, params.Bucket, req.Scheme); err != nil {
-		return nil, schemeErr(err)
+		return nil, settingErr(err)
 	}
 
 	return a.GetBucketScheme(ctx, adminapi.GetBucketSchemeParams(params))
 }
 
-func schemeErr(err error) error {
+func settingErr(err error) error {
 	switch {
 	case errors.Is(err, fs.ErrBucketNotFound):
 		return apiErr(http.StatusNotFound, err)

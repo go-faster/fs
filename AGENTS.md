@@ -98,7 +98,10 @@ automated resumable migration and the public API becomes additive-only.
   key, stored locally in bbolt, written and read at quorum over the layout's
   first three slots, with read repair. `table.Write` (`write.go`) merges rows
   of several tables in one transaction per node, each row at its own quorum;
-  the engine writes a PUT's or delete's rows with it. Tombstone collection (`gc.go`) queues
+  the engine writes a PUT's or delete's rows with it. `CountUsage`
+  (`usage.go`) keeps a per-partition-key tally of a table's rows on each
+  replica, moved in the transaction of every change, and `Table.Usage` reads
+  it at quorum — what bucket quotas count. Tombstone collection (`gc.go`) queues
   rows a table's compaction would shrink and, a day later, compacts them on
   every replica only where the row is still exactly the queued one.
 - `internal/cluster/meta` — the metadata rows and their merges: buckets
@@ -106,7 +109,7 @@ automated resumable migration and the public API becomes additive-only.
   versions, delete markers, null versions; Uploading → Complete → Gone),
   block refs, multipart parts and the index of uploads in flight (both
   overwritten by `Done` once the upload finishes), access keys created
-  through the admin API, and each
+  through the admin API, account quotas, and each
   table's compaction (what a tombstone reduces to). Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
 - `internal/cluster/block` — content-addressed blocks: a local disk store
@@ -135,7 +138,13 @@ automated resumable migration and the public API becomes additive-only.
   `fs.engine.*` metrics);
   `engine.Run` drives anti-entropy, resync, tombstone collection and block GC;
   `Engine.RotateKeys` rewraps data keys (kept in `meta.Version.Key`) onto
-  the current master key, for `fs encrypt rotate`. Versioning is a view over the
+  the current master key, for `fs encrypt rotate`. Quotas (`quota.go`,
+  Ceph RGW-style): per bucket (its `quota` setting) and per account (owner
+  ID, the `quotas` table), `max_size`/`max_objects`, checked on PUT,
+  UploadPart and completion against the objects table's usage tallies
+  through a short-lived cache, refused with `fs.ErrQuotaExceeded` (403
+  QuotaExceeded); admin API `/api/v1/{buckets/{bucket},accounts/{account}}/quota`,
+  CLI `fs quota`. Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 and SSE-C seal
   data through `internal/sse` (an SSE-C key arrives on the context,
   `fs.CustomerKeyFrom`, and is never stored); multipart parts are sealed as they arrive and not

@@ -149,6 +149,138 @@ func decodeDeleteAccessKeyParams(args [1]string, argsEscaped bool, r *http.Reque
 	return params, nil
 }
 
+// GetAccountQuotaParams is parameters of getAccountQuota operation.
+type GetAccountQuotaParams struct {
+	// The owner ID buckets record: the canonical user ID of the access key that created them (auth key
+	// user_id, defaulting to the access key).
+	Account string
+}
+
+func unpackGetAccountQuotaParams(packed middleware.Parameters) (params GetAccountQuotaParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "account",
+			In:   "path",
+		}
+		params.Account = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetAccountQuotaParams(args [1]string, argsEscaped bool, r *http.Request) (params GetAccountQuotaParams, _ error) {
+	// Decode path: account.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "account",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Account = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "account",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// GetBucketQuotaParams is parameters of getBucketQuota operation.
+type GetBucketQuotaParams struct {
+	Bucket string
+}
+
+func unpackGetBucketQuotaParams(packed middleware.Parameters) (params GetBucketQuotaParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetBucketQuotaParams(args [1]string, argsEscaped bool, r *http.Request) (params GetBucketQuotaParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetBucketSchemeParams is parameters of getBucketScheme operation.
 type GetBucketSchemeParams struct {
 	Bucket string
@@ -166,6 +298,138 @@ func unpackGetBucketSchemeParams(packed middleware.Parameters) (params GetBucket
 }
 
 func decodeGetBucketSchemeParams(args [1]string, argsEscaped bool, r *http.Request) (params GetBucketSchemeParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// SetAccountQuotaParams is parameters of setAccountQuota operation.
+type SetAccountQuotaParams struct {
+	// The owner ID buckets record: the canonical user ID of the access key that created them (auth key
+	// user_id, defaulting to the access key).
+	Account string
+}
+
+func unpackSetAccountQuotaParams(packed middleware.Parameters) (params SetAccountQuotaParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "account",
+			In:   "path",
+		}
+		params.Account = packed[key].(string)
+	}
+	return params
+}
+
+func decodeSetAccountQuotaParams(args [1]string, argsEscaped bool, r *http.Request) (params SetAccountQuotaParams, _ error) {
+	// Decode path: account.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "account",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Account = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "account",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// SetBucketQuotaParams is parameters of setBucketQuota operation.
+type SetBucketQuotaParams struct {
+	Bucket string
+}
+
+func unpackSetBucketQuotaParams(packed middleware.Parameters) (params SetBucketQuotaParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeSetBucketQuotaParams(args [1]string, argsEscaped bool, r *http.Request) (params SetBucketQuotaParams, _ error) {
 	// Decode path: bucket.
 	if err := func() error {
 		param := args[0]

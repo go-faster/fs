@@ -287,6 +287,17 @@ func (t *Table[R]) dropIfUnchanged(entries []wireEntry) (int64, error) {
 				return errors.Wrap(err, "delete")
 			}
 
+			if t.usage != nil {
+				row, err := t.decode(e.Row)
+				if err != nil {
+					return err
+				}
+
+				if err := t.tally(tx, e.PK, &row, nil); err != nil {
+					return err
+				}
+			}
+
 			n++
 		}
 

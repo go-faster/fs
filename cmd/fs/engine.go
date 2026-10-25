@@ -18,15 +18,16 @@ import (
 
 // buildEngine opens the engine under root/.engine. member is the cluster
 // membership, nil for a single node.
-func buildEngine(root string, member *peer.Member, keyring *sse.Keyring, noSync bool) (*engine.Engine, error) {
+func buildEngine(root string, member *peer.Member, keyring *sse.Keyring, cfg StorageConfig) (*engine.Engine, error) {
 	if err := refuseLegacyLayout(root); err != nil {
 		return nil, err
 	}
 
 	return engine.Open(filepath.Join(root, ".engine"), engine.Options{
-		Keyring: keyring,
-		NoSync:  noSync,
-		Member:  member,
+		Keyring:       keyring,
+		NoSync:        cfg.Fsync == fsyncNone,
+		Member:        member,
+		QuotaCacheTTL: cfg.QuotaCacheTTL,
 	})
 }
 
@@ -56,6 +57,9 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		"fs.engine.tombstones.queued":     "Deleted rows waiting to be collected at the last pass, by table.",
 		"fs.engine.tombstones.collected":  "Deleted rows removed from every replica since start, by table.",
 		"fs.engine.tombstones.deferred":   "Deleted rows left for a later pass, a replica unreachable, since start, by table.",
+		"fs.engine.quota.checks":          "Writes checked against a bucket or account quota since start.",
+		"fs.engine.quota.rejected":        "Writes refused with QuotaExceeded since start, by scope (bucket, account).",
+		"fs.engine.quota.lookup_failures": "Usage reads for quota checks that failed since start: writes let through on a stale reading or none.",
 	}
 
 	obs := map[string]metric.Int64ObservableGauge{}
@@ -94,6 +98,10 @@ func registerEngineMetrics(mp metric.MeterProvider, e *engine.Engine) error {
 		o.ObserveInt64(obs["fs.engine.shards.rebuilt"], s.Shards.Rebuilt)
 		o.ObserveInt64(obs["fs.engine.shards.handed_over"], s.Shards.HandedOver)
 		o.ObserveInt64(obs["fs.engine.shards.age"], age(s.Shards.LastSweep))
+		o.ObserveInt64(obs["fs.engine.quota.checks"], s.Quota.Checks)
+		o.ObserveInt64(obs["fs.engine.quota.rejected"], s.Quota.RejectedBucket, metric.WithAttributes(attribute.String("scope", "bucket")))
+		o.ObserveInt64(obs["fs.engine.quota.rejected"], s.Quota.RejectedAccount, metric.WithAttributes(attribute.String("scope", "account")))
+		o.ObserveInt64(obs["fs.engine.quota.lookup_failures"], s.Quota.LookupFailures)
 
 		sweeps := map[string]struct {
 			last             time.Time

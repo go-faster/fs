@@ -14,7 +14,13 @@ var (
 	rn3AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn8AllowedHeaders = map[string]string{
+	rn9AllowedHeaders = map[string]string{
+		"PUT": "Content-Type",
+	}
+	rn12AllowedHeaders = map[string]string{
+		"PUT": "Content-Type",
+	}
+	rn14AllowedHeaders = map[string]string{
 		"PUT": "Content-Type",
 	}
 	rn1AllowedHeaders = map[string]string{
@@ -73,66 +79,134 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			switch elem[0] {
-			case 'a': // Prefix: "access-keys"
+			case 'a': // Prefix: "acc"
 
-				if l := len("access-keys"); len(elem) >= l && elem[0:l] == "access-keys" {
+				if l := len("acc"); len(elem) >= l && elem[0:l] == "acc" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
 				if len(elem) == 0 {
-					switch r.Method {
-					case "GET":
-						s.handleListAccessKeysRequest([0]string{}, elemIsEscaped, w, r)
-					case "POST":
-						s.handleCreateAccessKeyRequest([0]string{}, elemIsEscaped, w, r)
-					default:
-						s.notAllowed(w, r, notAllowedParams{
-							allowedMethods: "GET,POST",
-							allowedHeaders: rn3AllowedHeaders,
-							acceptPost:     "application/json",
-							acceptPatch:    "",
-						})
-					}
-
-					return
+					break
 				}
 				switch elem[0] {
-				case '/': // Prefix: "/"
+				case 'e': // Prefix: "ess-keys"
 
-					if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
+					if l := len("ess-keys"); len(elem) >= l && elem[0:l] == "ess-keys" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
-					// Param: "accessKey"
-					// Leaf parameter, slashes are prohibited
-					idx := strings.IndexByte(elem, '/')
-					if idx >= 0 {
-						break
-					}
-					args[0] = elem
-					elem = ""
-
 					if len(elem) == 0 {
-						// Leaf node.
 						switch r.Method {
-						case "DELETE":
-							s.handleDeleteAccessKeyRequest([1]string{
-								args[0],
-							}, elemIsEscaped, w, r)
+						case "GET":
+							s.handleListAccessKeysRequest([0]string{}, elemIsEscaped, w, r)
+						case "POST":
+							s.handleCreateAccessKeyRequest([0]string{}, elemIsEscaped, w, r)
 						default:
 							s.notAllowed(w, r, notAllowedParams{
-								allowedMethods: "DELETE",
-								allowedHeaders: nil,
-								acceptPost:     "",
+								allowedMethods: "GET,POST",
+								allowedHeaders: rn3AllowedHeaders,
+								acceptPost:     "application/json",
 								acceptPatch:    "",
 							})
 						}
 
 						return
+					}
+					switch elem[0] {
+					case '/': // Prefix: "/"
+
+						if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						// Param: "accessKey"
+						// Leaf parameter, slashes are prohibited
+						idx := strings.IndexByte(elem, '/')
+						if idx >= 0 {
+							break
+						}
+						args[0] = elem
+						elem = ""
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "DELETE":
+								s.handleDeleteAccessKeyRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "DELETE",
+									allowedHeaders: nil,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					}
+
+				case 'o': // Prefix: "ounts/"
+
+					if l := len("ounts/"); len(elem) >= l && elem[0:l] == "ounts/" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					// Param: "account"
+					// Match until "/"
+					idx := strings.IndexByte(elem, '/')
+					if idx < 0 {
+						idx = len(elem)
+					}
+					args[0] = elem[:idx]
+					elem = elem[idx:]
+
+					if len(elem) == 0 {
+						break
+					}
+					switch elem[0] {
+					case '/': // Prefix: "/quota"
+
+						if l := len("/quota"); len(elem) >= l && elem[0:l] == "/quota" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleGetAccountQuotaRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							case "PUT":
+								s.handleSetAccountQuotaRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET,PUT",
+									allowedHeaders: rn9AllowedHeaders,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
 					}
 
 				}
@@ -158,35 +232,80 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				switch elem[0] {
-				case '/': // Prefix: "/scheme"
+				case '/': // Prefix: "/"
 
-					if l := len("/scheme"); len(elem) >= l && elem[0:l] == "/scheme" {
+					if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch r.Method {
-						case "GET":
-							s.handleGetBucketSchemeRequest([1]string{
-								args[0],
-							}, elemIsEscaped, w, r)
-						case "PUT":
-							s.handleSetBucketSchemeRequest([1]string{
-								args[0],
-							}, elemIsEscaped, w, r)
-						default:
-							s.notAllowed(w, r, notAllowedParams{
-								allowedMethods: "GET,PUT",
-								allowedHeaders: rn8AllowedHeaders,
-								acceptPost:     "",
-								acceptPatch:    "",
-							})
+						break
+					}
+					switch elem[0] {
+					case 'q': // Prefix: "quota"
+
+						if l := len("quota"); len(elem) >= l && elem[0:l] == "quota" {
+							elem = elem[l:]
+						} else {
+							break
 						}
 
-						return
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleGetBucketQuotaRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							case "PUT":
+								s.handleSetBucketQuotaRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET,PUT",
+									allowedHeaders: rn12AllowedHeaders,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					case 's': // Prefix: "scheme"
+
+						if l := len("scheme"); len(elem) >= l && elem[0:l] == "scheme" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleGetBucketSchemeRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							case "PUT":
+								s.handleSetBucketSchemeRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET,PUT",
+									allowedHeaders: rn14AllowedHeaders,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
 					}
 
 				}
@@ -483,71 +602,142 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 				break
 			}
 			switch elem[0] {
-			case 'a': // Prefix: "access-keys"
+			case 'a': // Prefix: "acc"
 
-				if l := len("access-keys"); len(elem) >= l && elem[0:l] == "access-keys" {
+				if l := len("acc"); len(elem) >= l && elem[0:l] == "acc" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
 				if len(elem) == 0 {
-					switch method {
-					case "GET":
-						r.name = ListAccessKeysOperation
-						r.summary = "List access keys"
-						r.operationID = "listAccessKeys"
-						r.operationGroup = ""
-						r.pathPattern = "/api/v1/access-keys"
-						r.args = args
-						r.count = 0
-						return r, true
-					case "POST":
-						r.name = CreateAccessKeyOperation
-						r.summary = "Create an access key"
-						r.operationID = "createAccessKey"
-						r.operationGroup = ""
-						r.pathPattern = "/api/v1/access-keys"
-						r.args = args
-						r.count = 0
-						return r, true
-					default:
-						return
-					}
+					break
 				}
 				switch elem[0] {
-				case '/': // Prefix: "/"
+				case 'e': // Prefix: "ess-keys"
 
-					if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
+					if l := len("ess-keys"); len(elem) >= l && elem[0:l] == "ess-keys" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
-					// Param: "accessKey"
-					// Leaf parameter, slashes are prohibited
-					idx := strings.IndexByte(elem, '/')
-					if idx >= 0 {
-						break
-					}
-					args[0] = elem
-					elem = ""
-
 					if len(elem) == 0 {
-						// Leaf node.
 						switch method {
-						case "DELETE":
-							r.name = DeleteAccessKeyOperation
-							r.summary = "Delete an access key"
-							r.operationID = "deleteAccessKey"
+						case "GET":
+							r.name = ListAccessKeysOperation
+							r.summary = "List access keys"
+							r.operationID = "listAccessKeys"
 							r.operationGroup = ""
-							r.pathPattern = "/api/v1/access-keys/{accessKey}"
+							r.pathPattern = "/api/v1/access-keys"
 							r.args = args
-							r.count = 1
+							r.count = 0
+							return r, true
+						case "POST":
+							r.name = CreateAccessKeyOperation
+							r.summary = "Create an access key"
+							r.operationID = "createAccessKey"
+							r.operationGroup = ""
+							r.pathPattern = "/api/v1/access-keys"
+							r.args = args
+							r.count = 0
 							return r, true
 						default:
 							return
 						}
+					}
+					switch elem[0] {
+					case '/': // Prefix: "/"
+
+						if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						// Param: "accessKey"
+						// Leaf parameter, slashes are prohibited
+						idx := strings.IndexByte(elem, '/')
+						if idx >= 0 {
+							break
+						}
+						args[0] = elem
+						elem = ""
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "DELETE":
+								r.name = DeleteAccessKeyOperation
+								r.summary = "Delete an access key"
+								r.operationID = "deleteAccessKey"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/access-keys/{accessKey}"
+								r.args = args
+								r.count = 1
+								return r, true
+							default:
+								return
+							}
+						}
+
+					}
+
+				case 'o': // Prefix: "ounts/"
+
+					if l := len("ounts/"); len(elem) >= l && elem[0:l] == "ounts/" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					// Param: "account"
+					// Match until "/"
+					idx := strings.IndexByte(elem, '/')
+					if idx < 0 {
+						idx = len(elem)
+					}
+					args[0] = elem[:idx]
+					elem = elem[idx:]
+
+					if len(elem) == 0 {
+						break
+					}
+					switch elem[0] {
+					case '/': // Prefix: "/quota"
+
+						if l := len("/quota"); len(elem) >= l && elem[0:l] == "/quota" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = GetAccountQuotaOperation
+								r.summary = "An account's quota and usage"
+								r.operationID = "getAccountQuota"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/accounts/{account}/quota"
+								r.args = args
+								r.count = 1
+								return r, true
+							case "PUT":
+								r.name = SetAccountQuotaOperation
+								r.summary = "Set an account's quota"
+								r.operationID = "setAccountQuota"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/accounts/{account}/quota"
+								r.args = args
+								r.count = 1
+								return r, true
+							default:
+								return
+							}
+						}
+
 					}
 
 				}
@@ -573,38 +763,86 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 					break
 				}
 				switch elem[0] {
-				case '/': // Prefix: "/scheme"
+				case '/': // Prefix: "/"
 
-					if l := len("/scheme"); len(elem) >= l && elem[0:l] == "/scheme" {
+					if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch method {
-						case "GET":
-							r.name = GetBucketSchemeOperation
-							r.summary = "How a bucket's new blocks are stored"
-							r.operationID = "getBucketScheme"
-							r.operationGroup = ""
-							r.pathPattern = "/api/v1/buckets/{bucket}/scheme"
-							r.args = args
-							r.count = 1
-							return r, true
-						case "PUT":
-							r.name = SetBucketSchemeOperation
-							r.summary = "Set how a bucket's new blocks are stored"
-							r.operationID = "setBucketScheme"
-							r.operationGroup = ""
-							r.pathPattern = "/api/v1/buckets/{bucket}/scheme"
-							r.args = args
-							r.count = 1
-							return r, true
-						default:
-							return
+						break
+					}
+					switch elem[0] {
+					case 'q': // Prefix: "quota"
+
+						if l := len("quota"); len(elem) >= l && elem[0:l] == "quota" {
+							elem = elem[l:]
+						} else {
+							break
 						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = GetBucketQuotaOperation
+								r.summary = "A bucket's quota and usage"
+								r.operationID = "getBucketQuota"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/quota"
+								r.args = args
+								r.count = 1
+								return r, true
+							case "PUT":
+								r.name = SetBucketQuotaOperation
+								r.summary = "Set a bucket's quota"
+								r.operationID = "setBucketQuota"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/quota"
+								r.args = args
+								r.count = 1
+								return r, true
+							default:
+								return
+							}
+						}
+
+					case 's': // Prefix: "scheme"
+
+						if l := len("scheme"); len(elem) >= l && elem[0:l] == "scheme" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = GetBucketSchemeOperation
+								r.summary = "How a bucket's new blocks are stored"
+								r.operationID = "getBucketScheme"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/scheme"
+								r.args = args
+								r.count = 1
+								return r, true
+							case "PUT":
+								r.name = SetBucketSchemeOperation
+								r.summary = "Set how a bucket's new blocks are stored"
+								r.operationID = "setBucketScheme"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/scheme"
+								r.args = args
+								r.count = 1
+								return r, true
+							default:
+								return
+							}
+						}
+
 					}
 
 				}

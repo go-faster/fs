@@ -30,6 +30,9 @@ storage:
   # acknowledged writes).
   # fsync: "file"
 
+  # How long a node trusts bucket usage it read for quota checks (fs quota).
+  # quota_cache_ttl: 10s
+
   # Pre-create these buckets on startup (optional)
   # Useful for Kubernetes deployments or development environments
   # buckets:

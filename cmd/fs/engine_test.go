@@ -18,7 +18,7 @@ func TestBuildEngineSingleNode(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()
 
-	e, err := buildEngine(root, nil, nil, false)
+	e, err := buildEngine(root, nil, nil, StorageConfig{})
 	require.NoError(t, err)
 
 	require.NoError(t, e.CreateBucket(ctx, "b"))
@@ -32,7 +32,7 @@ func TestBuildEngineSingleNode(t *testing.T) {
 	// A restart over the same root finds the object.
 	require.NoError(t, e.Close())
 
-	again, err := buildEngine(root, nil, nil, false)
+	again, err := buildEngine(root, nil, nil, StorageConfig{})
 	require.NoError(t, err)
 
 	// Windows cannot remove the temp dir while the database is open.
@@ -70,7 +70,7 @@ func TestRefuseLegacyLayout(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Join(root, p), 0o750))
 			}
 
-			_, err := buildEngine(root, nil, nil, true)
+			_, err := buildEngine(root, nil, nil, StorageConfig{Fsync: fsyncNone})
 			require.ErrorContains(t, err, "filesystem backend")
 		})
 	}
@@ -81,7 +81,7 @@ func TestRefuseLegacyLayout(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, p), 0o750))
 	}
 
-	e, err := buildEngine(root, nil, nil, true)
+	e, err := buildEngine(root, nil, nil, StorageConfig{Fsync: fsyncNone})
 	require.NoError(t, err)
 	require.NoError(t, e.Close())
 }

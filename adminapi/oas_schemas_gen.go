@@ -908,6 +908,52 @@ func (o OptInt) Or(d int) int {
 	return d
 }
 
+// NewOptInt64 returns new OptInt64 with value set to v.
+func NewOptInt64(v int64) OptInt64 {
+	return OptInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt64 is optional int64.
+type OptInt64 struct {
+	Value int64
+	Set   bool
+}
+
+// IsSet returns true if OptInt64 was set.
+func (o OptInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt64) SetTo(v int64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt64) Get() (v int64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -1048,6 +1094,100 @@ func (s *Permission) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/Quota
+type Quota struct {
+	// Whether the limits are enforced. A disabled quota keeps them.
+	Enabled bool `json:"enabled"`
+	// Bytes the bucket or account may store; -1 for no limit.
+	MaxSize OptInt64 `json:"max_size"`
+	// Objects the bucket or account may store; -1 for no limit.
+	MaxObjects OptInt64 `json:"max_objects"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *Quota) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetMaxSize returns the value of MaxSize.
+func (s *Quota) GetMaxSize() OptInt64 {
+	return s.MaxSize
+}
+
+// GetMaxObjects returns the value of MaxObjects.
+func (s *Quota) GetMaxObjects() OptInt64 {
+	return s.MaxObjects
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *Quota) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetMaxSize sets the value of MaxSize.
+func (s *Quota) SetMaxSize(val OptInt64) {
+	s.MaxSize = val
+}
+
+// SetMaxObjects sets the value of MaxObjects.
+func (s *Quota) SetMaxObjects(val OptInt64) {
+	s.MaxObjects = val
+}
+
+// Ref: #/components/schemas/QuotaStatus
+type QuotaStatus struct {
+	Quota Quota      `json:"quota"`
+	Usage QuotaUsage `json:"usage"`
+}
+
+// GetQuota returns the value of Quota.
+func (s *QuotaStatus) GetQuota() Quota {
+	return s.Quota
+}
+
+// GetUsage returns the value of Usage.
+func (s *QuotaStatus) GetUsage() QuotaUsage {
+	return s.Usage
+}
+
+// SetQuota sets the value of Quota.
+func (s *QuotaStatus) SetQuota(val Quota) {
+	s.Quota = val
+}
+
+// SetUsage sets the value of Usage.
+func (s *QuotaStatus) SetUsage(val QuotaUsage) {
+	s.Usage = val
+}
+
+// Ref: #/components/schemas/QuotaUsage
+type QuotaUsage struct {
+	// Object versions holding content.
+	Objects int64 `json:"objects"`
+	// Their size, as written by clients.
+	Bytes int64 `json:"bytes"`
+}
+
+// GetObjects returns the value of Objects.
+func (s *QuotaUsage) GetObjects() int64 {
+	return s.Objects
+}
+
+// GetBytes returns the value of Bytes.
+func (s *QuotaUsage) GetBytes() int64 {
+	return s.Bytes
+}
+
+// SetObjects sets the value of Objects.
+func (s *QuotaUsage) SetObjects(val int64) {
+	s.Objects = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *QuotaUsage) SetBytes(val int64) {
+	s.Bytes = val
 }
 
 // Ref: #/components/schemas/ReloadResult

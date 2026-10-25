@@ -155,14 +155,29 @@ func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs
 
 	owner := partOwner(req.UploadID, newID())
 
-	b, _, err := e.bucket(ctx, req.Bucket)
+	b, inc, err := e.bucket(ctx, req.Bucket)
 	if err != nil {
+		return nil, err
+	}
+
+	// A part is not stored usage until its upload completes, which checks
+	// again; refusing it here spares storing what cannot complete.
+	limits := e.limits(ctx, b, inc)
+	if err := e.enforce(limits, Usage{Bytes: max(req.Size, 0)}); err != nil {
 		return nil, err
 	}
 
 	w, err := e.write(ctx, req.Reader, owner, c, cks, bucketScheme(b), false)
 	if err != nil {
 		return nil, err
+	}
+
+	if w.size != req.Size {
+		if err := e.enforce(limits, Usage{Bytes: w.size}); err != nil {
+			e.release(ctx, owner, w.blocks)
+
+			return nil, err
+		}
 	}
 
 	if err := cks.verify(req.Checksum); err != nil {
@@ -397,6 +412,19 @@ func (e *Engine) CompleteMultipartUpload(
 		return nil, err
 	}
 
+	// The object's size is its parts': checked against quotas before any
+	// of them is referenced by it.
+	var size int64
+
+	for _, cp := range requested {
+		size += stored[cp.PartNumber].Size
+	}
+
+	null := versioning(b) != fs.VersioningEnabled
+	if err := e.enforce(e.limits(ctx, b, inc), growth(before, e.probe(before, null, size))); err != nil {
+		return nil, err
+	}
+
 	h := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility.
 
 	var (
@@ -472,17 +500,20 @@ func (e *Engine) CompleteMultipartUpload(
 
 	done := v
 	done.TS = e.nextTS(before)
-	done.Null = versioning(b) != fs.VersioningEnabled
+	done.Null = null
 	done.State = meta.Complete
 	done.Payload = mustJSON(p)
 
 	completedRow := meta.Object{Versions: []meta.Version{done}}
+
 	if err := e.writeRows(ctx,
 		row(e.objects, inc.ID, req.Key, completedRow),
 		row(e.uploads, inc.ID, uploadSK(req.Key, req.UploadID), meta.Done),
 	); err != nil {
 		return nil, err
 	}
+
+	e.charge(inc.ID, before, completedRow)
 
 	e.releaseReplaced(ctx, before, meta.MergeObject(before, completedRow))
 

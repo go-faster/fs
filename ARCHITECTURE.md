@@ -92,7 +92,9 @@ The shared vocabulary every layer speaks:
   `ErrInvalidPart`, `ErrInvalidPartOrder`, `ErrInvalidPartNumber`,
   `ErrEntityTooSmall`, `ErrInvalidTag`, `ErrCustomerKeyMismatch` — an SSE-C
   key missing for an object encrypted with one, or sent for one that is not,
-  mapped to 400 InvalidRequest; a wrong key is `ErrAccessDenied`, 403).
+  mapped to 400 InvalidRequest; a wrong key is `ErrAccessDenied`, 403;
+  `ErrQuotaExceeded` — a write past a bucket or account quota, mapped to
+  Ceph RGW's 403 QuotaExceeded, since S3 has no such code).
   These are the contract for cross-layer error signalling: backends return
   them, and `internal/s3err` maps them to S3 error codes and HTTP status.
 
@@ -364,6 +366,32 @@ its partitions' other slot nodes hold, rebuilds its own missing ones of live
 blocks from K others, and hands shards of slots the layout moved to their new
 node. Blocks under 256 KiB stay replicated. A layout narrower than any
 bucket's code is refused (`Engine.CheckLayout`).
+
+**Quotas.** As in Ceph RGW, a bucket and an account (an owner ID: every
+bucket it owns, together) may each have a quota — `max_size` bytes,
+`max_objects` objects, `-1` for none, enforced only when `enabled`. A bucket's
+is its `quota` setting; an account's is a row of the replicated `quotas`
+table. Usage is every completed version holding content (current or not;
+delete markers and uploads in flight excluded) and its client-visible size.
+The objects table tallies it per bucket ID (`table.CountUsage`): each replica
+keeps a `<table>.usage` bucket in `meta.db`, moved by the difference every
+merge, compaction and handover makes, in the same transaction, so it is exact
+for that replica; `Table.Usage` takes the largest of a quorum's answers.
+A replica that starts with rows but no `usage` bucket counts them first, in
+the transaction that creates it, so upgrading a node with data needs no
+rebuild.
+Writes (`PutObject` — so CopyObject —
+`UploadPart`, `CompleteMultipartUpload`) are checked under the key's lock
+against the growth the write itself makes — an overwrite that does not grow
+the bucket, and every delete, passes even past a limit — using usage cached
+for `storage.quota_cache_ttl` (10s) that this node's own writes and deletes
+keep current. A PUT is also checked before its body is stored, by declared
+size; a multipart part by its own size (parts are not usage until
+completion). Enforcement is soft, as RGW's is: writes through several nodes
+can together overshoot by what they store within one TTL, and a usage read
+that fails enforces nothing (`fs.engine.quota.lookup_failures`). Admin
+`/api/v1/buckets/{bucket}/quota` and `/api/v1/accounts/{account}/quota`, CLI
+`fs quota bucket|account`.
 
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays
