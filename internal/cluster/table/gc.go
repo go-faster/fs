@@ -293,11 +293,20 @@ func (t *Table[R]) localReplace(entries []replaceEntry) error {
 				continue
 			}
 
+			var row []byte
+			if len(e.Row) > 0 {
+				row = e.Row
+			}
+
+			if err := t.moveDigest(tx, k, e.PK, v, row); err != nil {
+				return err
+			}
+
 			var err error
-			if len(e.Row) == 0 {
+			if row == nil {
 				err = b.Delete(k)
 			} else {
-				err = b.Put(k, e.Row)
+				err = b.Put(k, row)
 			}
 
 			if err != nil {

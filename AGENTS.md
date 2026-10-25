@@ -156,7 +156,9 @@ automated resumable migration and the public API becomes additive-only.
   (`scripts/s3tests-cluster.sh`).
 - Anti-entropy lives with what it repairs: `table.Sync` and `block.Manager.Sync`
   compare per-(partition, slot) digests with the other replicas, pull what
-  differs, and hand over data of partitions the layout moved away.
+  differs, and hand over data of partitions the layout moved away. Tables
+  keep their digests (`digest.go`), moved in the transaction of every
+  change; blocks compute theirs by walking the store.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

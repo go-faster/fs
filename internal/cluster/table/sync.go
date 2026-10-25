@@ -3,7 +3,6 @@ package table
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"slices"
 	"sync"
@@ -123,7 +122,7 @@ func (t *Table[R]) Sync(ctx context.Context) error {
 		}
 	}
 
-	handed, pending, err := t.handOver(ctx, l)
+	handed, pending, err := t.handOver(ctx, l, local)
 
 	t.sync.mu.Lock()
 	t.sync.stats.LastSweep = time.Now()
@@ -203,13 +202,31 @@ func (t *Table[R]) syncWith(
 // handOver copies rows of partitions this node no longer replicates to their
 // replicas, and drops them here once no retained layout version gives them to
 // this node any more: until then reads may still come to it. It reports rows
-// handed over and rows that could not be.
-func (t *Table[R]) handOver(ctx context.Context, l *layout.Layout) (handed int64, pending int, err error) {
+// handed over and rows that could not be. local are this node's digests: a
+// slot without one holds no rows, so the rows are scanned only when a
+// partition this node does not replicate has some.
+func (t *Table[R]) handOver(
+	ctx context.Context, l *layout.Layout, local map[Slot][32]byte,
+) (handed int64, pending int, err error) {
 	self := t.member.ID()
 	retained := t.member.Layouts()
 
 	holds := func(lv *layout.Layout, p int) bool {
 		return slices.Contains(lv.Slots[p][:min(Replicas, len(lv.Slots[p]))], self)
+	}
+
+	foreign := false
+
+	for slot := range local {
+		if !holds(l, slot.P) {
+			foreign = true
+
+			break
+		}
+	}
+
+	if !foreign {
+		return 0, 0, nil
 	}
 
 	byOwners := map[int][]wireEntry{}
@@ -283,6 +300,10 @@ func (t *Table[R]) dropIfUnchanged(entries []wireEntry) (int64, error) {
 				continue
 			}
 
+			if err := t.moveDigest(tx, k, e.PK, e.Row, nil); err != nil {
+				return err
+			}
+
 			if err := b.Delete(k); err != nil {
 				return errors.Wrap(err, "delete")
 			}
@@ -307,53 +328,12 @@ func (t *Table[R]) dropIfUnchanged(entries []wireEntry) (int64, error) {
 	return n, err
 }
 
-// digests fingerprints the local rows per slot, for the given partitions or
-// all of them when partitions is nil.
-func (t *Table[R]) digests(l *layout.Layout, partitions []int) (map[Slot][32]byte, error) {
-	var want map[int]bool
-	if partitions != nil {
-		want = make(map[int]bool, len(partitions))
-		for _, p := range partitions {
-			want[p] = true
-		}
-	}
-
-	out := map[Slot][32]byte{}
-
-	err := t.scan(func(k, v []byte, pk string) error {
-		slot, ok := slotOf(l, k, pk)
-		if !ok || want != nil && !want[slot.P] {
-			return nil
-		}
-
-		// XOR of per-row hashes: independent of order, so two replicas
-		// holding the same rows agree however they got them.
-		h := sha256.New()
-		h.Write(k)
-		h.Write([]byte{0})
-		h.Write(v)
-
-		d := out[slot]
-		for i, b := range h.Sum(nil) {
-			d[i] ^= b
-		}
-
-		out[slot] = d
-
-		return nil
-	})
-
-	return out, err
-}
-
 func slotOf(l *layout.Layout, k []byte, pk string) (Slot, bool) {
 	if len(l.Slots) == 0 {
 		return Slot{}, false
 	}
 
-	sum := sha256.Sum256(k)
-
-	return Slot{P: l.Partition([]byte(pk)), S: sum[0]}, true
+	return rowSlot(k, pk, len(l.Slots)), true
 }
 
 // scan calls fn for every stored row with its decoded partition key.

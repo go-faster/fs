@@ -315,6 +315,16 @@ repairs replicas that missed a write, and a block GC removes blocks nothing
 references. There is no background scrubber: verification happens on every
 read, and repair is anti-entropy's job.
 
+Anti-entropy compares per-slot digests (a partition and the first byte of a
+row's key hash; the XOR of the slot's row hashes). A table keeps them in a
+`<table>.digests` bucket of `meta.db`, moved in the transaction of every
+write, merge, compaction and handover, so a sweep and a peer's request read
+32 bytes per slot rather than every row, and a sweep scans rows to hand over
+only when a partition the node no longer replicates still has some. The
+bucket is stamped with the partition count; one without the stamp, or
+stamped for another, is rebuilt from the rows when first read. Blocks and
+erasure-coded shards still walk their whole store each sweep (#321).
+
 **Layout changes are transitions** (as in Garage). Quorums intersect within
 one layout, not across two: right after a change, the new replicas of a
 partition may not hold a row yet, so reading them could miss an acknowledged
