@@ -27,6 +27,7 @@ func TestFromError(t *testing.T) {
 		{fs.ErrInvalidBucketName, "InvalidBucketName"},
 		{fs.ErrPreconditionFailed, "PreconditionFailed"},
 		{fs.ErrUnsupportedOperation, "NotImplemented"},
+		{fs.ErrUnavailable, "ServiceUnavailable"},
 		{errors.Wrap(fs.ErrObjectNotFound, "wrapped"), "NoSuchKey"},
 		{errors.New("something else"), "InternalError"},
 		{nil, "InternalError"},

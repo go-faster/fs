@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
 )
 
@@ -163,6 +164,7 @@ func TestCodedSurvivesM(t *testing.T) {
 
 	_, err = reader.blocks.GetCoded(ctx, h, len(data), s)
 	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, fs.ErrUnavailable, "the shards may be on the nodes down")
 
 	// Writes: one node down of six still reaches K+1 = 5; two down do not.
 	fresh := clusterOf(t, 6, 6, 3, 6)

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-faster/fs"
 	"github.com/go-faster/fs/internal/cluster/layout"
 	"github.com/go-faster/fs/internal/cluster/peer"
 )
@@ -211,6 +212,7 @@ func TestTwoNodesDown(t *testing.T) {
 
 	_, _, err := nodes[0].table.Get(ctx, "bucket", "key")
 	require.ErrorIs(t, err, ErrQuorum)
+	require.ErrorIs(t, err, fs.ErrUnavailable, "a client may retry it")
 }
 
 func TestReadRepair(t *testing.T) {

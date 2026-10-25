@@ -246,6 +246,34 @@ func TestOneNodeDown(t *testing.T) {
 	require.NoError(t, e.DeleteObject(ctx, "b", "k"))
 }
 
+// TestTwoNodesDown checks that requests the cluster cannot serve for want of
+// a quorum fail as fs.ErrUnavailable, which clients may retry, not as an
+// internal error.
+func TestTwoNodesDown(t *testing.T) {
+	nodes := cluster(t, 3, small)
+	ctx := context.Background()
+	e := nodes[0].engine
+
+	require.NoError(t, e.CreateBucket(ctx, "b"))
+	put(t, e, "k", pattern(700))
+
+	nodes[1].srv.Close()
+	nodes[2].srv.Close()
+
+	_, err := e.PutObject(ctx, &fs.PutObjectRequest{
+		Bucket: "b", Key: "new", Reader: bytes.NewReader(pattern(700)), Size: 700,
+	})
+	require.ErrorIs(t, err, fs.ErrUnavailable, "put")
+
+	_, err = e.GetObject(ctx, "b", "k")
+	require.ErrorIs(t, err, fs.ErrUnavailable, "get")
+
+	_, err = e.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: "b"})
+	require.ErrorIs(t, err, fs.ErrUnavailable, "list")
+
+	require.ErrorIs(t, e.DeleteObject(ctx, "b", "k"), fs.ErrUnavailable, "delete")
+}
+
 func TestListObjectsAcrossPages(t *testing.T) {
 	// More keys than one table page, folded and paged, must match FoldPage.
 	e := newEngine(t, 1)
