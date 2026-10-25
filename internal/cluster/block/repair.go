@@ -15,10 +15,12 @@ import (
 )
 
 // Shard repair: every node holding slot i of a partition should hold shard i
-// of every coded block in it. A node learns which coded blocks exist by
-// asking the partition's other slot nodes what shards they hold, rebuilds any
-// of its own that is missing from K of the others, and hands shards of slots
-// it no longer holds to the node that does.
+// of every coded block in it. A node compares digests with the partition's
+// other slot nodes — per slot and scheme, of the shards each holds at its own
+// index — and, where they differ, learns which coded blocks exist by asking
+// them what shards they hold there. It rebuilds any of its own that is
+// missing from K of the others, and hands shards of slots it no longer holds
+// to the node that does.
 
 // ShardStats describe the last shard repair sweep and the totals since start.
 type ShardStats struct {
@@ -46,11 +48,24 @@ type shardsReq struct {
 	Partitions []int `json:"partitions"`
 }
 
+type shardDigest struct {
+	Slot ShardSlot `json:"slot"`
+	Sum  [32]byte  `json:"sum"`
+}
+
+type shardDigestsResp struct {
+	Digests []shardDigest `json:"digests"`
+}
+
+type shardListReq struct {
+	Slots []Slot `json:"slots"`
+}
+
 type shardsResp struct {
 	Shards []string `json:"shards"`
 }
 
-func (m *Manager) serveShards(req shardsReq) (any, error) {
+func (m *Manager) serveShardDigests(req shardsReq) (any, error) {
 	l := m.member.Layout()
 	if l == nil {
 		return nil, ErrNoLayout
@@ -61,10 +76,34 @@ func (m *Manager) serveShards(req shardsReq) (any, error) {
 		want[p] = true
 	}
 
+	d, err := m.store.ShardDigests(len(l.Slots), func(p int) bool { return want[p] })
+	if err != nil {
+		return nil, err
+	}
+
+	resp := shardDigestsResp{Digests: make([]shardDigest, 0, len(d))}
+	for slot, sum := range d {
+		resp.Digests = append(resp.Digests, shardDigest{Slot: slot, Sum: sum})
+	}
+
+	return resp, nil
+}
+
+func (m *Manager) serveShards(req shardListReq) (any, error) {
+	l := m.member.Layout()
+	if l == nil {
+		return nil, ErrNoLayout
+	}
+
+	want := map[Slot]bool{}
+	for _, s := range req.Slots {
+		want[s] = true
+	}
+
 	resp := shardsResp{Shards: []string{}}
 
 	err := m.store.WalkShards(func(sh Shard, _ time.Time) error {
-		if want[l.Partition(sh.Hash[:])] {
+		if want[slotOf(l, sh.Hash)] {
 			resp.Shards = append(resp.Shards, sh.String())
 		}
 
@@ -92,28 +131,10 @@ func (m *Manager) RepairShards(ctx context.Context, live func(context.Context, H
 
 	self := m.member.ID()
 
-	// What this node holds, by partition, and what it holds for someone else.
-	held := map[int]map[codedBlock][]int{}
-
-	var misplaced []Shard
-
-	err := m.store.WalkShards(func(sh Shard, _ time.Time) error {
-		p := l.Partition(sh.Hash[:])
-		if sh.I >= len(l.Slots[p]) || l.Slots[p][sh.I] != self {
-			misplaced = append(misplaced, sh)
-
-			return nil
-		}
-
-		add(held, p, sh)
-
-		return nil
-	})
+	handed, err := m.handOverMisplaced(ctx, l)
 	if err != nil {
 		return err
 	}
-
-	handed := m.handOverShards(ctx, l, misplaced)
 
 	// The partitions this node has a slot in, and the peers it shares each
 	// with.
@@ -135,19 +156,21 @@ func (m *Manager) RepairShards(ctx context.Context, live func(context.Context, H
 		}
 	}
 
-	present := map[int]map[codedBlock][]int{}
-	for p := range mine {
-		present[p] = map[codedBlock][]int{}
-		for b, idx := range held[p] {
-			present[p][b] = slices.Clone(idx)
-		}
+	local, err := m.store.ShardDigests(len(l.Slots), func(p int) bool {
+		_, ok := mine[p]
+
+		return ok
+	})
+	if err != nil {
+		return err
 	}
 
 	unknown := map[int]bool{}
+	differ := map[Slot]bool{}
 
 	for id, parts := range byPeer {
-		var resp shardsResp
-		if err := m.member.Call(ctx, id, http.MethodPost, "/v1/shard/list", shardsReq{Partitions: parts}, &resp); err != nil {
+		var resp shardDigestsResp
+		if err := m.member.Call(ctx, id, http.MethodPost, "/v1/shard/digests", shardsReq{Partitions: parts}, &resp); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -159,13 +182,65 @@ func (m *Manager) RepairShards(ctx context.Context, live func(context.Context, H
 			continue
 		}
 
+		theirs := make(map[ShardSlot][32]byte, len(resp.Digests))
+		for _, d := range resp.Digests {
+			theirs[d.Slot] = d.Sum
+		}
+
+		compareShards(l, id, mine, local, theirs, differ)
+	}
+
+	// Where digests agree, every slot node holds its shard of the same
+	// blocks: nothing to rebuild or count. Elsewhere, list what each holds.
+	present := map[int]map[codedBlock][]int{}
+
+	if len(differ) > 0 {
+		err := m.store.WalkShards(func(sh Shard, _ time.Time) error {
+			p := l.Partition(sh.Hash[:])
+			if j, ok := mine[p]; ok && j == sh.I && differ[slotOf(l, sh.Hash)] {
+				add(present, p, sh)
+			}
+
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	for id, parts := range byPeer {
+		var slots []Slot
+
+		for slot := range differ {
+			if slices.Contains(parts, slot.P) {
+				slots = append(slots, slot)
+			}
+		}
+
+		if len(slots) == 0 {
+			continue
+		}
+
+		var resp shardsResp
+		if err := m.member.Call(ctx, id, http.MethodPost, "/v1/shard/list", shardListReq{Slots: slots}, &resp); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			for _, s := range slots {
+				unknown[s.P] = true
+			}
+
+			continue
+		}
+
 		for _, name := range resp.Shards {
 			sh, err := ParseShard(name)
 			if err != nil {
 				continue
 			}
 
-			if p := l.Partition(sh.Hash[:]); present[p] != nil {
+			if p := l.Partition(sh.Hash[:]); differ[slotOf(l, sh.Hash)] {
 				add(present, p, sh)
 			}
 		}
@@ -223,6 +298,80 @@ func (m *Manager) RepairShards(ctx context.Context, live func(context.Context, H
 	m.sync.mu.Unlock()
 
 	return nil
+}
+
+// compareShards marks in differ the slots where this node and peer id
+// disagree on the coded blocks they hold at their own index, scheme by
+// scheme; a scheme counts only where it is wide enough to give both a shard.
+func compareShards(
+	l *layout.Layout, id layout.NodeID, mine map[int]int, local, theirs map[ShardSlot][32]byte, differ map[Slot]bool,
+) {
+	at := func(p int) (i, j int, ok bool) {
+		j, ok = mine[p]
+		if !ok {
+			return 0, 0, false
+		}
+
+		i = slices.Index(l.Slots[p], id)
+
+		return i, j, i >= 0
+	}
+
+	// Each side's digests, compared with the other's at its index.
+	check := func(own, other map[ShardSlot][32]byte, ownIndex func(i, j int) (int, int)) {
+		for k, sum := range own {
+			i, j, ok := at(k.P)
+			if !ok {
+				continue
+			}
+
+			from, to := ownIndex(i, j)
+			if k.I != from || to >= k.K+k.M {
+				continue
+			}
+
+			peer := k
+			peer.I = to
+
+			if other[peer] != sum {
+				differ[k.Slot] = true
+			}
+		}
+	}
+
+	check(local, theirs, func(i, j int) (int, int) { return j, i })
+	check(theirs, local, func(i, j int) (int, int) { return i, j })
+}
+
+// handOverMisplaced hands over the shards held here for a slot this node does
+// not hold, walking the store only when the digests' counts show some.
+func (m *Manager) handOverMisplaced(ctx context.Context, l *layout.Layout) (int64, error) {
+	self := m.member.ID()
+	misplacedAt := func(p, i int) bool { return i >= len(l.Slots[p]) || l.Slots[p][i] != self }
+
+	places, err := m.store.shardPlaces(len(l.Slots))
+	if err != nil {
+		return 0, err
+	}
+
+	if !slices.ContainsFunc(places, func(pl shardPlace) bool { return misplacedAt(pl.P, pl.I) }) {
+		return 0, nil
+	}
+
+	var misplaced []Shard
+
+	err = m.store.WalkShards(func(sh Shard, _ time.Time) error {
+		if misplacedAt(l.Partition(sh.Hash[:]), sh.I) {
+			misplaced = append(misplaced, sh)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return m.handOverShards(ctx, l, misplaced), nil
 }
 
 func add(to map[int]map[codedBlock][]int, p int, sh Shard) {
