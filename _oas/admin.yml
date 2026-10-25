@@ -215,6 +215,105 @@ paths:
                 $ref: "#/components/schemas/BucketScheme"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/buckets/{bucket}/quota:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: "getBucketQuota"
+      summary: "A bucket's quota and usage"
+      description: >
+        The bucket's quota (unlimited and disabled until one is set) and what
+        it stores: every object version holding content, delete markers and
+        uploads in flight excluded. Returns 404 for a missing bucket, 501
+        without a storage engine.
+      responses:
+        200:
+          description: The quota and usage.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/QuotaStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: "setBucketQuota"
+      summary: "Set a bucket's quota"
+      description: >
+        Replaces the bucket's quota. A write that would take the bucket past
+        an enabled limit is refused with the S3 error QuotaExceeded (403);
+        deletes and writes that do not grow the bucket never are. Applies to
+        writes from now on and removes nothing already stored. Enforcement is
+        soft, as in Ceph RGW: each node trusts usage it read for a few seconds
+        (storage.quota_cache_ttl), so writes through several nodes at once can
+        overshoot a limit by what they store in that time.
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/Quota"
+      responses:
+        200:
+          description: The quota now in effect, and usage.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/QuotaStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/accounts/{account}/quota:
+    parameters:
+      - name: account
+        in: path
+        required: true
+        description: >
+          The owner ID buckets record: the canonical user ID of the access key
+          that created them (auth key user_id, defaulting to the access key).
+        schema:
+          type: string
+    get:
+      operationId: "getAccountQuota"
+      summary: "An account's quota and usage"
+      description: >
+        The account's quota (unlimited and disabled until one is set) and what
+        every bucket it owns stores together. Returns 501 without a storage
+        engine.
+      responses:
+        200:
+          description: The quota and usage.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/QuotaStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: "setAccountQuota"
+      summary: "Set an account's quota"
+      description: >
+        Replaces the account's quota, which every bucket the account owns
+        counts against together, alongside each bucket's own. Enforced as a
+        bucket quota is; buckets created without auth have no owner and no
+        account quota.
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/Quota"
+      responses:
+        200:
+          description: The quota now in effect, and usage.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/QuotaStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/cluster/nodes/{id}/skip:
     parameters:
       - name: id
@@ -260,6 +359,48 @@ paths:
           $ref: "#/components/responses/Error"
 components:
   schemas:
+    Quota:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: "Whether the limits are enforced. A disabled quota keeps them."
+        max_size:
+          type: integer
+          format: int64
+          default: -1
+          description: "Bytes the bucket or account may store; -1 for no limit."
+        max_objects:
+          type: integer
+          format: int64
+          default: -1
+          description: "Objects the bucket or account may store; -1 for no limit."
+    QuotaUsage:
+      type: object
+      required:
+        - objects
+        - bytes
+      properties:
+        objects:
+          type: integer
+          format: int64
+          description: "Object versions holding content."
+        bytes:
+          type: integer
+          format: int64
+          description: "Their size, as written by clients."
+    QuotaStatus:
+      type: object
+      required:
+        - quota
+        - usage
+      properties:
+        quota:
+          $ref: "#/components/schemas/Quota"
+        usage:
+          $ref: "#/components/schemas/QuotaUsage"
     BucketScheme:
       type: object
       required:

@@ -83,10 +83,17 @@ func (e *Engine) CreateBucketOwned(ctx context.Context, name string, owner fs.Ow
 		return errors.Wrapf(fs.ErrBucketAlreadyExists, "bucket %q", name)
 	}
 
-	return e.buckets.Insert(ctx, bucketsPK, name, meta.Bucket{Incarnation: meta.LWW[meta.Incarnation]{
+	if err := e.buckets.Insert(ctx, bucketsPK, name, meta.Bucket{Incarnation: meta.LWW[meta.Incarnation]{
 		TS: meta.NextTS(e.ts(), b.Incarnation.TS),
 		V:  meta.Incarnation{ID: newID(), Owner: ownerString(owner)},
-	}})
+	}}); err != nil {
+		return err
+	}
+
+	// The owner's account now counts one bucket more.
+	e.quota.forgetAccount(owner.ID)
+
+	return nil
 }
 
 // BucketOwner implements fs.BucketOwnership.

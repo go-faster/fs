@@ -56,4 +56,8 @@ var (
 	// one for one that is not. A key that is present but wrong is
 	// ErrAccessDenied.
 	ErrCustomerKeyMismatch = errors.New("customer encryption key mismatch")
+
+	// ErrQuotaExceeded reports a write that would take a bucket or its
+	// owner's account past a quota the operator set. Nothing is stored.
+	ErrQuotaExceeded = errors.New("quota exceeded")
 )

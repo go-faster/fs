@@ -175,6 +175,11 @@ type StorageConfig struct {
 	// acknowledged writes).
 	Fsync string `yaml:"fsync,omitempty"`
 
+	// QuotaCacheTTL is how long a node trusts bucket usage it read for quota
+	// checks (default 10s). Shorter tightens enforcement across nodes at the
+	// cost of a quorum read per bucket that often.
+	QuotaCacheTTL time.Duration `yaml:"quota_cache_ttl,omitempty"`
+
 	// Buckets to pre-create on startup (optional)
 	Buckets []string `yaml:"buckets,omitempty"`
 
@@ -292,6 +297,10 @@ func (c *Config) Validate() error {
 	case "", fsyncNone, fsyncFile:
 	default:
 		return fmt.Errorf("invalid storage.fsync %q (want \"file\" or \"none\")", c.Storage.Fsync)
+	}
+
+	if c.Storage.QuotaCacheTTL < 0 {
+		return errors.New("storage.quota_cache_ttl must not be negative")
 	}
 
 	if c.Server.ReadTimeout <= 0 {

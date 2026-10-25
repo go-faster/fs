@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -22,6 +23,8 @@ type Options struct {
 	// NoSync skips fsync of metadata and blocks: an acknowledged write can be
 	// lost in a crash. For tests and development only.
 	NoSync bool
+	// QuotaCacheTTL is Config.QuotaCacheTTL.
+	QuotaCacheTTL time.Duration
 	// Member is the cluster membership the engine replicates over. The fs
 	// binary sets it in cluster mode; nil runs a single node, with a private
 	// one-node layout kept under dir.
@@ -61,7 +64,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 
 	store.NoSync = opts.NoSync
 
-	e, err := New(Config{Member: member, DB: db, Blocks: block.NewManager(store, member), Keyring: opts.Keyring})
+	e, err := New(Config{Member: member, DB: db, Blocks: block.NewManager(store, member), Keyring: opts.Keyring, QuotaCacheTTL: opts.QuotaCacheTTL})
 	if err != nil {
 		_ = db.Close()
 

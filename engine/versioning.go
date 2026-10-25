@@ -376,6 +376,8 @@ func (e *Engine) DeleteObjectVersionIf(
 		return fs.DeleteResult{}, err
 	}
 
+	e.charge(inc.ID, before, row)
+
 	return fs.DeleteResult{VersionID: s3ID(marker), DeleteMarker: true}, nil
 }
 
@@ -392,9 +394,10 @@ func (e *Engine) removeVersion(
 	gone := v
 	gone.State = meta.Gone
 	gone.Completed = true
+	goneRow := meta.Object{Versions: []meta.Version{gone}}
 
 	// The tombstone and the release of the version's blocks, in one commit.
-	row, err := e.objects.Row(bucketID, key, meta.Object{Versions: []meta.Version{gone}})
+	row, err := e.objects.Row(bucketID, key, goneRow)
 	if err != nil {
 		return fs.DeleteResult{}, err
 	}
@@ -413,6 +416,8 @@ func (e *Engine) removeVersion(
 	if err := table.Write(ctx, e.member, rows...); err != nil {
 		return fs.DeleteResult{}, err
 	}
+
+	e.charge(bucketID, o, goneRow)
 
 	return fs.DeleteResult{VersionID: versionID, DeleteMarker: v.DeleteMarker}, nil
 }

@@ -54,6 +54,21 @@ type Invoker interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// GetAccountQuota invokes getAccountQuota operation.
+	//
+	// The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
+	// together. Returns 501 without a storage engine.
+	//
+	// GET /api/v1/accounts/{account}/quota
+	GetAccountQuota(ctx context.Context, params GetAccountQuotaParams) (*QuotaStatus, error)
+	// GetBucketQuota invokes getBucketQuota operation.
+	//
+	// The bucket's quota (unlimited and disabled until one is set) and what it stores: every object
+	// version holding content, delete markers and uploads in flight excluded. Returns 404 for a missing
+	// bucket, 501 without a storage engine.
+	//
+	// GET /api/v1/buckets/{bucket}/quota
+	GetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (*QuotaStatus, error)
 	// GetBucketScheme invokes getBucketScheme operation.
 	//
 	// "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
@@ -109,6 +124,24 @@ type Invoker interface {
 	//
 	// POST /api/v1/encryption/rotate
 	RotateEncryptionKeys(ctx context.Context) (*RotateResult, error)
+	// SetAccountQuota invokes setAccountQuota operation.
+	//
+	// Replaces the account's quota, which every bucket the account owns counts against together, alongside
+	// each bucket's own. Enforced as a bucket quota is; buckets created without auth have no owner and no
+	// account quota.
+	//
+	// PUT /api/v1/accounts/{account}/quota
+	SetAccountQuota(ctx context.Context, request *Quota, params SetAccountQuotaParams) (*QuotaStatus, error)
+	// SetBucketQuota invokes setBucketQuota operation.
+	//
+	// Replaces the bucket's quota. A write that would take the bucket past an enabled limit is refused
+	// with the S3 error QuotaExceeded (403); deletes and writes that do not grow the bucket never are.
+	// Applies to writes from now on and removes nothing already stored. Enforcement is soft, as in Ceph
+	// RGW: each node trusts usage it read for a few seconds (storage.quota_cache_ttl), so writes through
+	// several nodes at once can overshoot a limit by what they store in that time.
+	//
+	// PUT /api/v1/buckets/{bucket}/quota
+	SetBucketQuota(ctx context.Context, request *Quota, params SetBucketQuotaParams) (*QuotaStatus, error)
 	// SetBucketScheme invokes setBucketScheme operation.
 	//
 	// Applies to blocks written from now on; existing ones keep the scheme they were written with. Blocks
@@ -453,6 +486,207 @@ func (c *Client) sendDeleteAccessKey(ctx context.Context, params DeleteAccessKey
 
 	stage = "DecodeResponse"
 	result, err := decodeDeleteAccessKeyResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetAccountQuota invokes getAccountQuota operation.
+//
+// The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
+// together. Returns 501 without a storage engine.
+//
+// GET /api/v1/accounts/{account}/quota
+func (c *Client) GetAccountQuota(ctx context.Context, params GetAccountQuotaParams) (*QuotaStatus, error) {
+	res, err := c.sendGetAccountQuota(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetAccountQuota(ctx context.Context, params GetAccountQuotaParams) (res *QuotaStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getAccountQuota"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/accounts/{account}/quota"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetAccountQuotaOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/accounts/"
+	{
+		// Encode "account" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "account",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Account))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/quota"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetAccountQuotaResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetBucketQuota invokes getBucketQuota operation.
+//
+// The bucket's quota (unlimited and disabled until one is set) and what it stores: every object
+// version holding content, delete markers and uploads in flight excluded. Returns 404 for a missing
+// bucket, 501 without a storage engine.
+//
+// GET /api/v1/buckets/{bucket}/quota
+func (c *Client) GetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (*QuotaStatus, error) {
+	res, err := c.sendGetBucketQuota(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (res *QuotaStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getBucketQuota"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/quota"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetBucketQuotaOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/quota"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetBucketQuotaResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1045,6 +1279,216 @@ func (c *Client) sendRotateEncryptionKeys(ctx context.Context) (res *RotateResul
 
 	stage = "DecodeResponse"
 	result, err := decodeRotateEncryptionKeysResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetAccountQuota invokes setAccountQuota operation.
+//
+// Replaces the account's quota, which every bucket the account owns counts against together, alongside
+// each bucket's own. Enforced as a bucket quota is; buckets created without auth have no owner and no
+// account quota.
+//
+// PUT /api/v1/accounts/{account}/quota
+func (c *Client) SetAccountQuota(ctx context.Context, request *Quota, params SetAccountQuotaParams) (*QuotaStatus, error) {
+	res, err := c.sendSetAccountQuota(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetAccountQuota(ctx context.Context, request *Quota, params SetAccountQuotaParams) (res *QuotaStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setAccountQuota"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/api/v1/accounts/{account}/quota"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetAccountQuotaOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/accounts/"
+	{
+		// Encode "account" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "account",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Account))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/quota"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetAccountQuotaRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetAccountQuotaResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetBucketQuota invokes setBucketQuota operation.
+//
+// Replaces the bucket's quota. A write that would take the bucket past an enabled limit is refused
+// with the S3 error QuotaExceeded (403); deletes and writes that do not grow the bucket never are.
+// Applies to writes from now on and removes nothing already stored. Enforcement is soft, as in Ceph
+// RGW: each node trusts usage it read for a few seconds (storage.quota_cache_ttl), so writes through
+// several nodes at once can overshoot a limit by what they store in that time.
+//
+// PUT /api/v1/buckets/{bucket}/quota
+func (c *Client) SetBucketQuota(ctx context.Context, request *Quota, params SetBucketQuotaParams) (*QuotaStatus, error) {
+	res, err := c.sendSetBucketQuota(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetBucketQuota(ctx context.Context, request *Quota, params SetBucketQuotaParams) (res *QuotaStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setBucketQuota"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/quota"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetBucketQuotaOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/quota"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetBucketQuotaRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetBucketQuotaResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

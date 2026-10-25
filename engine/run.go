@@ -255,7 +255,7 @@ func (e *Engine) Sweep(ctx context.Context) error {
 	var errs []error
 
 	for _, sync := range []func(context.Context) error{
-		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.keys.Sync, e.blocks.Sync,
+		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.keys.Sync, e.quotas.Sync, e.blocks.Sync,
 	} {
 		if err := sync(ctx); err != nil {
 			errs = append(errs, err)
@@ -301,6 +301,8 @@ type Stats struct {
 	// LastGC is when block collection last finished; zero before the first.
 	LastGC   time.Time
 	GCFailed bool
+	// Quota counts writes checked against quotas, and refused.
+	Quota QuotaStats
 }
 
 // Stats returns the engine's counters.
@@ -320,6 +322,7 @@ func (e *Engine) Stats() Stats {
 			"parts":       e.parts.SyncStats(),
 			"uploads":     e.uploads.SyncStats(),
 			"access_keys": e.keys.SyncStats(),
+			"quotas":      e.quotas.SyncStats(),
 		},
 		Tombstones: map[string]table.GCStats{
 			"objects":    e.objects.GCStats(),
@@ -329,5 +332,6 @@ func (e *Engine) Stats() Stats {
 		},
 		LastGC:   gc.last,
 		GCFailed: gc.failed,
+		Quota:    e.QuotaStats(),
 	}
 }

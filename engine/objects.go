@@ -283,9 +283,11 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 
 	versioned := versioning(b) == fs.VersioningEnabled
 	cond := req.Conditions()
+	limits := e.limits(ctx, b, inc)
 
-	// A condition that already fails is refused before the body is stored.
-	if !cond.IsZero() {
+	// A condition that already fails, or a quota the body would break as
+	// declared, is refused before the body is stored.
+	if !cond.IsZero() || len(limits) > 0 {
 		o, err := e.object(ctx, inc.ID, req.Key)
 		if err != nil {
 			return nil, err
@@ -297,6 +299,10 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		}
 
 		if err := cond.CheckWrite(st); err != nil {
+			return nil, err
+		}
+
+		if err := e.enforce(limits, growth(o, e.probe(o, !versioned, max(req.Size, 0)))); err != nil {
 			return nil, err
 		}
 	}
@@ -347,7 +353,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		refs = w.blocks
 	}
 
-	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, p, attrs{Tags: req.Tags, ACL: req.ACL}, refs); err != nil {
+	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, limits, p, attrs{Tags: req.Tags, ACL: req.ACL}, refs); err != nil {
 		e.release(ctx, id, w.blocks)
 
 		return nil, err
@@ -367,10 +373,12 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 }
 
 // commit makes the version current: under the key's lock, it checks cond
-// against the row as a quorum has it and writes the completed version — a null
-// one, replacing the key's older null versions, unless versioning is enabled.
+// and limits against the row as a quorum has it and writes the completed
+// version — a null one, replacing the key's older null versions, unless
+// versioning is enabled.
 func (e *Engine) commit(
-	ctx context.Context, bucketID, key, id string, null bool, cond fs.Conditions, p payload, a attrs, refs []blockLoc,
+	ctx context.Context, bucketID, key, id string, null bool, cond fs.Conditions, limits []limit,
+	p payload, a attrs, refs []blockLoc,
 ) error {
 	defer e.lock(bucketID, key)()
 
@@ -403,6 +411,10 @@ func (e *Engine) commit(
 
 	row := meta.Object{Versions: []meta.Version{v}}
 
+	if err := e.enforce(limits, growth(before, row)); err != nil {
+		return err
+	}
+
 	// One commit per node for everything this write changes: the version,
 	// the references of blocks stored without them, and the release of the
 	// blocks of the versions it replaces.
@@ -427,7 +439,21 @@ func (e *Engine) commit(
 		return err
 	}
 
-	return table.Write(ctx, e.member, append(rows, released...)...)
+	if err := table.Write(ctx, e.member, append(rows, released...)...); err != nil {
+		return err
+	}
+
+	e.charge(bucketID, before, row)
+
+	return nil
+}
+
+// probe is a row of one completed version of size bytes written over
+// before, for what a write would change before it is made.
+func (e *Engine) probe(before meta.Object, null bool, size int64) meta.Object {
+	return meta.Object{Versions: []meta.Version{{
+		ID: newID(), TS: e.nextTS(before), Null: null, State: meta.Complete, Payload: mustJSON(payload{Size: size}),
+	}}}
 }
 
 // current returns the key's current version and its payload.

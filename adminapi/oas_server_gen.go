@@ -34,6 +34,21 @@ type Handler interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// GetAccountQuota implements getAccountQuota operation.
+	//
+	// The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
+	// together. Returns 501 without a storage engine.
+	//
+	// GET /api/v1/accounts/{account}/quota
+	GetAccountQuota(ctx context.Context, params GetAccountQuotaParams) (*QuotaStatus, error)
+	// GetBucketQuota implements getBucketQuota operation.
+	//
+	// The bucket's quota (unlimited and disabled until one is set) and what it stores: every object
+	// version holding content, delete markers and uploads in flight excluded. Returns 404 for a missing
+	// bucket, 501 without a storage engine.
+	//
+	// GET /api/v1/buckets/{bucket}/quota
+	GetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (*QuotaStatus, error)
 	// GetBucketScheme implements getBucketScheme operation.
 	//
 	// "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
@@ -89,6 +104,24 @@ type Handler interface {
 	//
 	// POST /api/v1/encryption/rotate
 	RotateEncryptionKeys(ctx context.Context) (*RotateResult, error)
+	// SetAccountQuota implements setAccountQuota operation.
+	//
+	// Replaces the account's quota, which every bucket the account owns counts against together, alongside
+	// each bucket's own. Enforced as a bucket quota is; buckets created without auth have no owner and no
+	// account quota.
+	//
+	// PUT /api/v1/accounts/{account}/quota
+	SetAccountQuota(ctx context.Context, req *Quota, params SetAccountQuotaParams) (*QuotaStatus, error)
+	// SetBucketQuota implements setBucketQuota operation.
+	//
+	// Replaces the bucket's quota. A write that would take the bucket past an enabled limit is refused
+	// with the S3 error QuotaExceeded (403); deletes and writes that do not grow the bucket never are.
+	// Applies to writes from now on and removes nothing already stored. Enforcement is soft, as in Ceph
+	// RGW: each node trusts usage it read for a few seconds (storage.quota_cache_ttl), so writes through
+	// several nodes at once can overshoot a limit by what they store in that time.
+	//
+	// PUT /api/v1/buckets/{bucket}/quota
+	SetBucketQuota(ctx context.Context, req *Quota, params SetBucketQuotaParams) (*QuotaStatus, error)
 	// SetBucketScheme implements setBucketScheme operation.
 	//
 	// Applies to blocks written from now on; existing ones keep the scheme they were written with. Blocks

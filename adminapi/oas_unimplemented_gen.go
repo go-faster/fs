@@ -48,6 +48,27 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 	return ht.ErrNotImplemented
 }
 
+// GetAccountQuota implements getAccountQuota operation.
+//
+// The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
+// together. Returns 501 without a storage engine.
+//
+// GET /api/v1/accounts/{account}/quota
+func (UnimplementedHandler) GetAccountQuota(ctx context.Context, params GetAccountQuotaParams) (r *QuotaStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetBucketQuota implements getBucketQuota operation.
+//
+// The bucket's quota (unlimited and disabled until one is set) and what it stores: every object
+// version holding content, delete markers and uploads in flight excluded. Returns 404 for a missing
+// bucket, 501 without a storage engine.
+//
+// GET /api/v1/buckets/{bucket}/quota
+func (UnimplementedHandler) GetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (r *QuotaStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetBucketScheme implements getBucketScheme operation.
 //
 // "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
@@ -121,6 +142,30 @@ func (UnimplementedHandler) ReloadConfig(ctx context.Context) (r *ReloadResult, 
 //
 // POST /api/v1/encryption/rotate
 func (UnimplementedHandler) RotateEncryptionKeys(ctx context.Context) (r *RotateResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetAccountQuota implements setAccountQuota operation.
+//
+// Replaces the account's quota, which every bucket the account owns counts against together, alongside
+// each bucket's own. Enforced as a bucket quota is; buckets created without auth have no owner and no
+// account quota.
+//
+// PUT /api/v1/accounts/{account}/quota
+func (UnimplementedHandler) SetAccountQuota(ctx context.Context, req *Quota, params SetAccountQuotaParams) (r *QuotaStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetBucketQuota implements setBucketQuota operation.
+//
+// Replaces the bucket's quota. A write that would take the bucket past an enabled limit is refused
+// with the S3 error QuotaExceeded (403); deletes and writes that do not grow the bucket never are.
+// Applies to writes from now on and removes nothing already stored. Enforcement is soft, as in Ceph
+// RGW: each node trusts usage it read for a few seconds (storage.quota_cache_ttl), so writes through
+// several nodes at once can overshoot a limit by what they store in that time.
+//
+// PUT /api/v1/buckets/{bucket}/quota
+func (UnimplementedHandler) SetBucketQuota(ctx context.Context, req *Quota, params SetBucketQuotaParams) (r *QuotaStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

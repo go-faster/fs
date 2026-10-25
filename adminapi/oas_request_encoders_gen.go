@@ -38,6 +38,34 @@ func encodeCreateAccessKeyRequest(
 	return nil
 }
 
+func encodeSetAccountQuotaRequest(
+	req *Quota,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeSetBucketQuotaRequest(
+	req *Quota,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeSetBucketSchemeRequest(
 	req *BucketScheme,
 	r *http.Request,

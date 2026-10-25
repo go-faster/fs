@@ -163,6 +163,34 @@ scheme they were written with. A write needs K+1 shard holders up, a read
 any K. A layout narrower than a bucket's code — current, or any it had
 before, since its coded blocks stay — is refused.
 
+## Quotas
+
+Ceph RGW-style quotas limit what a bucket, or an account — every bucket one
+owner owns, together — stores, in bytes and objects:
+
+```sh
+fs quota bucket photos --max-size 100GiB --max-objects 1000000 --enable
+fs quota account alice --max-size 1TiB --enable   # alice: the owner's user ID
+fs quota bucket photos                            # limits and current usage
+```
+
+(or `PUT /api/v1/buckets/{bucket}/quota` and
+`PUT /api/v1/accounts/{account}/quota` with
+`{"enabled": true, "max_size": 107374182400, "max_objects": -1}`; `-1` is no
+limit.) An account is the owner ID buckets record: the `user_id` of the key
+that created them, defaulting to its access key; with auth off buckets have no
+owner and only bucket quotas apply. A write that would pass an enabled limit
+fails with `QuotaExceeded` (403); deletes and overwrites that do not grow
+usage always succeed, so a bucket over a lowered limit can be cleaned up.
+Usage counts every stored object version, noncurrent ones included, but not
+delete markers or uploads in flight.
+
+Enforcement is soft, as in RGW: each node trusts usage it read for
+`storage.quota_cache_ttl` (default `10s`), so clients writing through several
+nodes at once can overshoot a limit by what they store in that window. A
+usage read that fails lets the write through
+(`fs.engine.quota.lookup_failures`).
+
 ## Observability
 
 - **Health**: `/health` (liveness, always 200 once serving) and `/ready`
@@ -187,6 +215,10 @@ before, since its coded blocks stay — is refused.
   `fs.engine.tombstones.{queued,collected,deferred}{table}` — deleted rows
   wait a day, then go once every replica has them; `queued` climbing with
   `deferred` means a replica has been unreachable through collections.
+  Quotas: `fs.engine.quota.checks` and `fs.engine.quota.rejected{scope}`
+  (bucket, account) — their ratio is how often clients hit a limit — and
+  `fs.engine.quota.lookup_failures`, writes let through because usage could
+  not be read.
 - **Cluster** (when `cluster.node_id` is set): `fs.cluster.layout.version` —
   compare across nodes; one lagging means gossip is not reaching it —
   `fs.cluster.layout.retained` (layout versions in use: above 1 while a change

@@ -84,6 +84,7 @@ var (
 	PreconditionFailed      = APIError{"PreconditionFailed", http.StatusPreconditionFailed, "At least one of the preconditions you specified did not hold."}
 	NotModified             = APIError{"NotModified", http.StatusNotModified, ""}
 	AccessDenied            = APIError{"AccessDenied", http.StatusForbidden, "Access Denied."}
+	QuotaExceeded           = APIError{"QuotaExceeded", http.StatusForbidden, "The quota of the bucket or its owner would be exceeded."}
 	SignatureDoesNotMatch   = APIError{"SignatureDoesNotMatch", http.StatusForbidden, "The request signature we calculated does not match the signature you provided."}
 	InvalidAccessKeyID      = APIError{"InvalidAccessKeyId", http.StatusForbidden, "The AWS access key Id you provided does not exist in our records."}
 	RequestTimeTooSkewed    = APIError{"RequestTimeTooSkewed", http.StatusForbidden, "The difference between the request time and the current time is too large."}
@@ -148,6 +149,10 @@ func FromError(err error) APIError {
 		return MethodNotAllowed
 	case errors.Is(err, fs.ErrAccessDenied):
 		return AccessDenied
+	case errors.Is(err, fs.ErrQuotaExceeded):
+		// S3 has no quotas; this is Ceph RGW's code, which clients that
+		// know RGW recognize.
+		return QuotaExceeded
 	case errors.Is(err, fs.ErrCustomerKeyMismatch):
 		return CustomerKeyMismatch
 	case errors.Is(err, fs.ErrInvalidTag):

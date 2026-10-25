@@ -304,6 +304,10 @@ func (t *Table[R]) localReplace(entries []replaceEntry) error {
 				return errors.Wrap(err, "replace")
 			}
 
+			if err := t.tallyReplace(tx, e.PK, v, e.Row); err != nil {
+				return err
+			}
+
 			// The queued entry is about the row just replaced.
 			if q != nil {
 				if err := q.Delete(k); err != nil {
@@ -314,4 +318,28 @@ func (t *Table[R]) localReplace(entries []replaceEntry) error {
 
 		return nil
 	})
+}
+
+// tallyReplace tallies replacing the stored row old with row, empty for a
+// deleted one.
+func (t *Table[R]) tallyReplace(tx *bbolt.Tx, pk string, old, row []byte) error {
+	if t.usage == nil {
+		return nil
+	}
+
+	prev, err := t.decode(old)
+	if err != nil {
+		return err
+	}
+
+	if len(row) == 0 {
+		return t.tally(tx, pk, &prev, nil)
+	}
+
+	next, err := t.decode(row)
+	if err != nil {
+		return err
+	}
+
+	return t.tally(tx, pk, &prev, &next)
 }

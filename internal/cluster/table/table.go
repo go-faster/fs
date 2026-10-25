@@ -61,6 +61,8 @@ type Table[R any] struct {
 	db      *bbolt.DB
 	member  *peer.Member
 	sync    syncState
+	// usage, when not nil, is tallied per partition key; see CountUsage.
+	usage func(R) Usage
 }
 
 // New returns the table name stored in db and replicated through member.
@@ -426,11 +428,14 @@ func (t *Table[R]) insertTx(tx *bbolt.Tx, entries []wireEntry) error {
 		v := []byte(e.Row)
 		old := b.Get(k)
 
-		// A row is decoded only to merge it or to see whether it
-		// compacts.
-		var row R
+		// A row is decoded only to merge it, to see whether it compacts or
+		// to tally it.
+		var (
+			row  R
+			prev *R
+		)
 
-		if old != nil || q != nil {
+		if old != nil || q != nil || t.usage != nil {
 			var err error
 			if row, err = t.decode(e.Row); err != nil {
 				return err
@@ -438,12 +443,13 @@ func (t *Table[R]) insertTx(tx *bbolt.Tx, entries []wireEntry) error {
 		}
 
 		if old != nil {
-			prev, err := t.decode(old)
+			p, err := t.decode(old)
 			if err != nil {
 				return err
 			}
 
-			row = t.merge(prev, row)
+			prev = &p
+			row = t.merge(p, row)
 
 			if v, err = json.Marshal(row); err != nil {
 				return errors.Wrap(err, "encode row")
@@ -459,6 +465,10 @@ func (t *Table[R]) insertTx(tx *bbolt.Tx, entries []wireEntry) error {
 		}
 
 		if err := t.enqueue(q, k, v, row); err != nil {
+			return err
+		}
+
+		if err := t.tally(tx, e.PK, prev, &row); err != nil {
 			return err
 		}
 	}
