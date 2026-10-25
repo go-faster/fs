@@ -362,7 +362,10 @@ func TestGetUnreachable(t *testing.T) {
 	h, err := nodes[0].blocks.Put(ctx, []byte("somewhere"))
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return nodes[2].store.Has(h) }, 5*time.Second, time.Millisecond)
+	// A Put returns at quorum; let every copy land before removing two.
+	require.Eventually(t, func() bool {
+		return nodes[0].store.Has(h) && nodes[1].store.Has(h) && nodes[2].store.Has(h)
+	}, 5*time.Second, time.Millisecond)
 	require.NoError(t, nodes[0].store.Delete(h))
 	require.NoError(t, nodes[1].store.Delete(h))
 	nodes[2].srv.Close()
