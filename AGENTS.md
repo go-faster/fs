@@ -185,8 +185,11 @@ about HTTP or S3; don't import upward.
 - `make chaos` — soak a six-node cluster of real processes (`scripts/chaos`)
   under a mixed workload while killing, freezing and re-laying-out nodes;
   fails on any read outside what the acknowledged writes allow (lost, torn or
-  resurrected objects), that layout changes complete, and that access keys
-  created through one node are accepted and revoked on every node. About a
+  resurrected objects), that layout changes complete, that access keys
+  created through one node are accepted and revoked on every node, that
+  bucket usage matches a listing after every round, and that lifecycle
+  sweeps (their clock moved ahead by the test-only `lifecycle.clock_offset`)
+  bring every versioned key down to what its rule keeps. About a
   minute per round; `ROUNDS=n`, `ARGS=-actions 4,5`. `ARGS=-realistic` runs
   the nodes at fs's defaults (fsync on, production background cadence) —
   slower, and data accumulates (~6 GB a round), so give it a `-dir` on a disk
