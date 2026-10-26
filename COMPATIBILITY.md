@@ -72,9 +72,9 @@ Each requires a design document before commitment:
 - **Bucket-policy subset** — only if the per-key grant model proves
   insufficient.
 - **Static website hosting**, **ACME / automatic TLS**.
-- **Geo-replication** — asynchronous, bucket-level replication between
-  independent deployments; gated on cluster mode
-  ([#279](https://github.com/go-faster/fs/issues/279)).
+- **Geo-replication** — asynchronous, bucket-level replication of versions
+  between independent fs deployments
+  ([design](docs/design/geo-replication.md), proposed).
 
 ## Out of scope
 
