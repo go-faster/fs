@@ -73,7 +73,9 @@ The shared vocabulary every layer speaks:
 - Domain types: `Bucket`, `Object`, `PutObjectRequest`/`PutObjectResponse`
   (the response carries the stored ETag), `GetObjectResponse`,
   `ListObjectsRequest`/`ListObjectsResponse` (one page of a listing: prefix,
-  delimiter, start-after and limit in, folded entries and truncation out),
+  delimiter, start-after and limit in, folded entries and truncation out;
+  each entry's tags too when `Tags` asks, which only the lifecycle sweep
+  does),
   `ObjectMetadata` (representation headers + `x-amz-meta-*` pairs), `Tag`,
   `MultipartUpload`, `Part`, and the multipart request/response structs
   (`CreateMultipartUploadRequest` carries metadata/tags/ACL/owner applied at
@@ -460,7 +462,11 @@ A bucket that has ever been versioned is swept over `ListObjectVersions`
 rather than `ListObjects`: one walk that expires current versions (fenced on
 the ETag, as before), removes noncurrent versions by ID and, once nothing is
 left under it, the key's delete marker
-([design](docs/design/noncurrent-version-expiration.md)). The sweep exports
+([design](docs/design/noncurrent-version-expiration.md)). Rules filter by
+prefix, tags and size; a bucket with an enabled tag rule is listed with
+`Tags: true`, which makes the listing return each version's tags from the
+rows it reads anyway, so judging tags costs no read per object
+([design](docs/design/lifecycle-filters.md)). The sweep exports
 `fs.lifecycle.*` (`Sweeper.Stats`).
 
 In a cluster every node runs the lifecycle sweep, but each bucket is swept by

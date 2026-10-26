@@ -1,6 +1,6 @@
 # Design: lifecycle tag and size filters
 
-**Status:** proposed. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** the rest of the lifecycle `<Filter>` grammar:
