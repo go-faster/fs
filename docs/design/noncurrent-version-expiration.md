@@ -1,6 +1,6 @@
 # Design: noncurrent-version expiration
 
-**Status:** proposed. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** the lifecycle actions that bound a versioned bucket's growth:

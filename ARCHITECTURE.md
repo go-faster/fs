@@ -456,6 +456,13 @@ A pass is recorded only once it finishes, so an interrupted one is still due,
 and a short floor keeps a crashlooping node from repeating an overdue pass on
 every restart.
 
+A bucket that has ever been versioned is swept over `ListObjectVersions`
+rather than `ListObjects`: one walk that expires current versions (fenced on
+the ETag, as before), removes noncurrent versions by ID and, once nothing is
+left under it, the key's delete marker
+([design](docs/design/noncurrent-version-expiration.md)). The sweep exports
+`fs.lifecycle.*` (`Sweeper.Stats`).
+
 In a cluster every node runs the lifecycle sweep, but each bucket is swept by
 one node: the first node of the partition the bucket's name maps to that
 gossip last reached (`sweepsBucket` in `cmd/fs`). Buckets spread over the

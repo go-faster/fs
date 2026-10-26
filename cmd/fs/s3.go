@@ -178,7 +178,12 @@ Command-line flags override YAML configuration values.`,
 
 				// Bucket lifecycle rules: the sweep that makes a stored expiry
 				// rule actually delete something.
-				go runLifecycle(ctx, lg, storage, cfg.Lifecycle, state, member)
+				sweeper := newSweeper(lg, storage, state, member)
+				if err := registerLifecycleMetrics(t.MeterProvider(), sweeper); err != nil {
+					return err
+				}
+
+				go runLifecycle(ctx, lg, sweeper, cfg.Lifecycle)
 
 				lg.Info("Durability", zap.String("fsync", cmp.Or(cfg.Storage.Fsync, fsyncFile)))
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -282,6 +283,12 @@ func listVersions(key string, o meta.Object) ([]fs.ObjectVersion, error) {
 		p, err := decodePayload(v)
 		if err != nil {
 			return nil, err
+		}
+
+		// A delete marker has no payload; when it was written is its
+		// timestamp, which is wall-clock nanoseconds.
+		if v.DeleteMarker && p.LastModified.IsZero() {
+			p.LastModified = time.Unix(0, v.TS).UTC()
 		}
 
 		out = append(out, fs.ObjectVersion{

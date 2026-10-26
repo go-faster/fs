@@ -225,6 +225,13 @@ usage read that fails lets the write through
   (bucket, account) — their ratio is how often clients hit a limit — and
   `fs.engine.quota.lookup_failures`, writes let through because usage could
   not be read.
+- **Lifecycle**: `fs.lifecycle.age` — seconds since a pass last completed,
+  the number to alert on (-1: none yet; a cluster's buckets are spread over
+  its nodes, so each node reports its own) — `fs.lifecycle.failed_buckets`,
+  buckets the last pass could not finish, and, counted since start,
+  `fs.lifecycle.removed{action}` (`expired`, `noncurrent`, `marker`,
+  `aborted`) and `fs.lifecycle.raced`, expired objects left alone because
+  they changed before the delete.
 - **Cluster** (when `cluster.node_id` is set): `fs.cluster.layout.version` —
   compare across nodes; one lagging means gossip is not reaching it —
   `fs.cluster.layout.retained` (layout versions in use: above 1 while a change

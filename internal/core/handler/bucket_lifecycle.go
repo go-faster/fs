@@ -35,14 +35,14 @@ type LifecycleRuleXML struct {
 	Status string `xml:"Status"`
 	// Prefix is the pre-Filter spelling. S3 still accepts it and SDKs still
 	// emit it, so both forms are read; Filter wins when a rule carries both.
-	Prefix                         *string                 `xml:"Prefix"`
-	Filter                         *LifecycleFilterXML     `xml:"Filter"`
-	Expiration                     *LifecycleExpirationXML `xml:"Expiration"`
-	AbortIncompleteMultipartUpload *LifecycleAbortXML      `xml:"AbortIncompleteMultipartUpload"`
+	Prefix                         *string                           `xml:"Prefix"`
+	Filter                         *LifecycleFilterXML               `xml:"Filter"`
+	Expiration                     *LifecycleExpirationXML           `xml:"Expiration"`
+	NoncurrentVersionExpiration    *LifecycleNoncurrentExpirationXML `xml:"NoncurrentVersionExpiration"`
+	AbortIncompleteMultipartUpload *LifecycleAbortXML                `xml:"AbortIncompleteMultipartUpload"`
 
 	// Not enforced; present so PUT can refuse them.
 	Transition                  []struct{} `xml:"Transition"`
-	NoncurrentVersionExpiration *struct{}  `xml:"NoncurrentVersionExpiration"`
 	NoncurrentVersionTransition []struct{} `xml:"NoncurrentVersionTransition"`
 }
 
@@ -59,11 +59,16 @@ type LifecycleFilterXML struct {
 
 // LifecycleExpirationXML is a rule's object expiration.
 type LifecycleExpirationXML struct {
-	Days int    `xml:"Days,omitempty"`
-	Date string `xml:"Date,omitempty"`
+	Days                      int    `xml:"Days,omitempty"`
+	Date                      string `xml:"Date,omitempty"`
+	ExpiredObjectDeleteMarker *bool  `xml:"ExpiredObjectDeleteMarker,omitempty"`
+}
 
-	// Not enforced; present so PUT can refuse it.
-	ExpiredObjectDeleteMarker *bool `xml:"ExpiredObjectDeleteMarker,omitempty"`
+// LifecycleNoncurrentExpirationXML is a rule's removal of noncurrent
+// versions. Both elements are pointers, so an absent one is told from a zero.
+type LifecycleNoncurrentExpirationXML struct {
+	NoncurrentDays          *int `xml:"NoncurrentDays"`
+	NewerNoncurrentVersions *int `xml:"NewerNoncurrentVersions,omitempty"`
 }
 
 // LifecycleAbortXML is a rule's abandoned-upload cleanup.
@@ -112,6 +117,18 @@ func (h *handler) GetBucketLifecycle(w http.ResponseWriter, r *http.Request) {
 			out.Expiration = &LifecycleExpirationXML{Days: rule.ExpirationDays}
 		case !rule.ExpirationDate.IsZero():
 			out.Expiration = &LifecycleExpirationXML{Date: rule.ExpirationDate.UTC().Format(lifecycleDateLayout)}
+		case rule.ExpiredObjectDeleteMarker:
+			marker := true
+			out.Expiration = &LifecycleExpirationXML{ExpiredObjectDeleteMarker: &marker}
+		}
+
+		if days := rule.NoncurrentDays; days > 0 {
+			nve := &LifecycleNoncurrentExpirationXML{NoncurrentDays: &days}
+			if newer := rule.NewerNoncurrentVersions; newer > 0 {
+				nve.NewerNoncurrentVersions = &newer
+			}
+
+			out.NoncurrentVersionExpiration = nve
 		}
 
 		if days := rule.AbortIncompleteMultipartUploadDays; days > 0 {
@@ -214,9 +231,16 @@ func parseLifecycleRules(in []LifecycleRuleXML) ([]fs.LifecycleRule, s3err.APIEr
 		out := fs.LifecycleRule{ID: rule.ID, Status: rule.Status, Prefix: lifecyclePrefix(rule)}
 
 		if exp := rule.Expiration; exp != nil {
+			marker := exp.ExpiredObjectDeleteMarker != nil
+
 			switch {
 			case exp.Days > 0 && exp.Date != "":
 				return nil, s3err.MalformedXML, errors.New("expiration takes Days or Date, not both")
+			case marker && (exp.Days > 0 || exp.Date != ""):
+				// AWS names no error for this; Ceph RGW answers MalformedXML.
+				return nil, s3err.MalformedXML, errors.New("expiration takes ExpiredObjectDeleteMarker or Days or Date, not two")
+			case marker:
+				out.ExpiredObjectDeleteMarker = *exp.ExpiredObjectDeleteMarker
 			case exp.Days < 0:
 				return nil, s3err.InvalidArgument, errors.New("expiration Days must be a positive integer")
 			case exp.Days > 0:
@@ -239,7 +263,15 @@ func parseLifecycleRules(in []LifecycleRuleXML) ([]fs.LifecycleRule, s3err.APIEr
 			out.AbortIncompleteMultipartUploadDays = abort.DaysAfterInitiation
 		}
 
-		if out.ExpirationDays == 0 && out.ExpirationDate.IsZero() && out.AbortIncompleteMultipartUploadDays == 0 {
+		if nve := rule.NoncurrentVersionExpiration; nve != nil {
+			apiErr, err := parseNoncurrentExpiration(rule, nve, &out)
+			if err != nil {
+				return nil, apiErr, err
+			}
+		}
+
+		if out.ExpirationDays == 0 && out.ExpirationDate.IsZero() && out.AbortIncompleteMultipartUploadDays == 0 &&
+			out.NoncurrentDays == 0 && !out.ExpiredObjectDeleteMarker {
 			return nil, s3err.MalformedXML, errors.New("a rule must carry at least one action")
 		}
 
@@ -247,6 +279,42 @@ func parseLifecycleRules(in []LifecycleRuleXML) ([]fs.LifecycleRule, s3err.APIEr
 	}
 
 	return rules, s3err.APIError{}, nil
+}
+
+// maxNewerNoncurrentVersions is the most noncurrent versions a rule may keep.
+const maxNewerNoncurrentVersions = 100
+
+// parseNoncurrentExpiration validates a rule's NoncurrentVersionExpiration into
+// out.
+func parseNoncurrentExpiration(rule LifecycleRuleXML, nve *LifecycleNoncurrentExpirationXML, out *fs.LifecycleRule) (s3err.APIError, error) {
+	// NewerNoncurrentVersions only narrows NoncurrentDays ("both values must
+	// be exceeded"), so a rule without the days is malformed, as Ceph RGW
+	// answers.
+	if nve.NoncurrentDays == nil {
+		return s3err.MalformedXML, errors.New("NoncurrentVersionExpiration needs NoncurrentDays")
+	}
+
+	if *nve.NoncurrentDays <= 0 {
+		return s3err.InvalidArgument, errors.New("NoncurrentDays must be a positive integer")
+	}
+
+	out.NoncurrentDays = *nve.NoncurrentDays
+
+	if newer := nve.NewerNoncurrentVersions; newer != nil {
+		if *newer < 1 || *newer > maxNewerNoncurrentVersions {
+			return s3err.InvalidArgument, errors.Errorf("NewerNoncurrentVersions must be between 1 and %d", maxNewerNoncurrentVersions)
+		}
+
+		// AWS documents this refusal; the legacy rule-level Prefix does not
+		// count as a filter.
+		if rule.Filter == nil {
+			return s3err.InvalidRequest, errors.New("NewerNoncurrentVersions needs a Filter element")
+		}
+
+		out.NewerNoncurrentVersions = *newer
+	}
+
+	return s3err.APIError{}, nil
 }
 
 // lifecyclePrefix resolves the rule's prefix from either spelling; Filter wins
@@ -269,12 +337,8 @@ func unsupportedLifecycleElement(rule LifecycleRuleXML) string {
 	switch {
 	case len(rule.Transition) > 0:
 		return "Transition"
-	case rule.NoncurrentVersionExpiration != nil:
-		return "NoncurrentVersionExpiration"
 	case len(rule.NoncurrentVersionTransition) > 0:
 		return "NoncurrentVersionTransition"
-	case rule.Expiration != nil && rule.Expiration.ExpiredObjectDeleteMarker != nil:
-		return "ExpiredObjectDeleteMarker"
 	}
 
 	if f := rule.Filter; f != nil {
