@@ -121,10 +121,14 @@ alone.** This was the plan in `findings/DESIGN.md` §6.4.
 **Other users of the original path:**
 - **Request log:** the line gains `host` and the path as sent, so an
   operator sees what the client asked for.
-- **`<Resource>` in error bodies:** fs shows the rewritten path, which
-  names the bucket and the key. What AWS shows for a virtual-host request is
-  not documented. No client is known to parse `<Resource>`, so it stays the
-  rewritten path.
+- **`<Resource>` in error bodies:** AWS's `NoSuchKey` body carries no
+  `<Resource>` at all, only `<Key>`, and it is the same for a path-style and
+  a virtual-host request (checked on AWS S3, 2026-10-26). fs does put
+  `<Resource>` in its error bodies, and with the rewrite it shows the
+  path-style form, naming bucket and key. No client is known to parse it.
+  Whether fs should drop `<Resource>` where AWS omits it is a separate
+  question about error bodies, and both addressing styles answer it the
+  same way.
 
 ### Health and readiness
 
