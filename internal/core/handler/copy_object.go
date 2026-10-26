@@ -65,7 +65,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 
 	srcObj, err := h.getObjectVersion(copySourceContext(r), srcBucket, srcKey, src.VersionID)
 	if err != nil {
-		renderError(ctx, w, r, err)
+		renderError(ctx, w, r, copySourceError(err, src))
 		return
 	}
 
@@ -189,6 +189,19 @@ func parseDirective(value string) (string, bool) {
 		return directiveReplace, true
 	default:
 		return "", false
+	}
+}
+
+// copySourceError names the copy's source, not the request's target, in the
+// body of a missing bucket or key, as S3 does.
+func copySourceError(err error, src copySource) error {
+	switch {
+	case errors.Is(err, fs.ErrObjectNotFound):
+		return s3err.WithDetail(err, s3err.Detail{Key: src.Key})
+	case errors.Is(err, fs.ErrBucketNotFound):
+		return s3err.WithDetail(err, s3err.Detail{BucketName: src.Bucket})
+	default:
+		return err
 	}
 }
 

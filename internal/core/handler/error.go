@@ -24,7 +24,7 @@ func renderError(ctx context.Context, w http.ResponseWriter, r *http.Request, er
 func renderAPIError(ctx context.Context, w http.ResponseWriter, r *http.Request, api s3err.APIError, err error) {
 	logRequestError(ctx, r, api.Code, err)
 
-	s3err.WriteAPI(w, r, api)
+	s3err.WriteAPI(w, r, api, s3err.DetailOf(err))
 }
 
 // logRequestError records a failed request at the level the failure deserves,

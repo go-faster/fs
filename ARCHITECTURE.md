@@ -128,8 +128,11 @@ Successful responses are marshalled to S3 XML (`writeXML`). Errors go through
 `renderError`/`renderAPIError`, which delegate to the `internal/s3err` package:
 it holds the S3 error-code table (`APIError` = wire code + HTTP status +
 message), maps the `fs.Err*` sentinels to codes, and writes the standard
-`<Error><Code><Message><Resource><RequestId></Error>` XML document (no body for
-HEAD; non-panicking fallback if encoding fails).
+`<Error>` XML document as AWS S3 does: `<Code>`, `<Message>`, the elements
+the code carries (`<BucketName>`, `<Key>`, `<UploadId>`, `<Condition>`,
+`<RangeRequested>`/`<ActualObjectSize>`, `<ArgumentName>`/`<ArgumentValue>`,
+`<Method>`/`<ResourceType>`), then `<RequestId>`; no `<Resource>`. No body
+for HEAD; non-panicking fallback if encoding fails.
 
 `handler.New(store, opts...)` composes middleware around the router, outermost
 first: **request-id → body drain → OPTIONS guard → CORS → Content-Length check
@@ -208,6 +211,10 @@ subresource.
 The S3 error-code table and XML `<Error>` writer. `APIError` bundles a stable
 wire code, HTTP status, and default message; `FromError` resolves the `fs.Err*`
 sentinels; `Write`/`WriteAPI` emit the response (skipping the body for HEAD).
+A body's elements beyond the code come from the request where it tells them
+(bucket, key, upload ID, method), and otherwise from a `Detail` the handler
+attaches to the error (`WithDetail`): a copy's source key, a range and the
+object's size, a refused argument.
 This is the single place that owns the error wire format.
 
 ### `internal/core/service` — validation layer
