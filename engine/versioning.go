@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +41,19 @@ func versioning(b meta.Bucket) fs.VersioningState {
 func (e *Engine) SetBucketVersioning(ctx context.Context, bucket string, state fs.VersioningState) error {
 	if state == fs.VersioningUnset {
 		return errors.Wrap(fs.ErrUnsupportedOperation, "a bucket cannot return to never-versioned")
+	}
+
+	if state != fs.VersioningEnabled {
+		b, _, err := e.bucket(ctx, bucket)
+		if err != nil {
+			return err
+		}
+
+		// As S3: replication is of versions, and suspending versioning
+		// would leave it nothing to ship.
+		if len(replicationTargets(b)) > 0 {
+			return errors.Wrap(fs.ErrInvalidBucketState, "the bucket has replication targets")
+		}
 	}
 
 	return e.setSetting(ctx, bucket, settingVersioning, state)
@@ -374,8 +388,14 @@ func (e *Engine) DeleteObjectVersionIf(
 
 	row := meta.Object{Versions: []meta.Version{marker}}
 
-	// The marker and the release of what it replaces, in one commit.
+	// The marker, its outbox row and the release of what it replaces, in one
+	// commit.
 	markerRow, err := e.objects.Row(inc.ID, key, row)
+	if err != nil {
+		return fs.DeleteResult{}, err
+	}
+
+	outbox, err := e.outboxRow(ctx, b, inc.ID, key, marker, true, marker.TS)
 	if err != nil {
 		return fs.DeleteResult{}, err
 	}
@@ -385,7 +405,7 @@ func (e *Engine) DeleteObjectVersionIf(
 		return fs.DeleteResult{}, err
 	}
 
-	if err := table.Write(ctx, e.member, append([]table.Row{markerRow}, released...)...); err != nil {
+	if err := table.Write(ctx, e.member, slices.Concat([]table.Row{markerRow}, outbox, released)...); err != nil {
 		return fs.DeleteResult{}, err
 	}
 

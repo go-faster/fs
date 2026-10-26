@@ -69,4 +69,8 @@ var (
 	// such as one whose replicas are too few to reach: nothing is wrong with
 	// the request, and the client may retry it.
 	ErrUnavailable = errors.New("service unavailable")
+
+	// ErrInvalidBucketState reports a request the bucket's configuration
+	// rules out, such as suspending versioning on a bucket that replicates.
+	ErrInvalidBucketState = errors.New("invalid bucket state")
 )

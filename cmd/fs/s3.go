@@ -179,6 +179,10 @@ Command-line flags override YAML configuration values.`,
 					return err
 				}
 
+				if err := registerReplicationMetrics(t.MeterProvider(), eng, member); err != nil {
+					return err
+				}
+
 				var storage fs.Storage = eng
 
 				// Bucket lifecycle rules: the sweep that makes a stored expiry

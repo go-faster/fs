@@ -506,10 +506,21 @@ func (e *Engine) CompleteMultipartUpload(
 
 	completedRow := meta.Object{Versions: []meta.Version{done}}
 
-	if err := e.writeRows(ctx,
+	outbox, err := e.outboxRow(ctx, b, inc.ID, req.Key, done, true, done.TS)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []rowOrErr{
 		row(e.objects, inc.ID, req.Key, completedRow),
 		row(e.uploads, inc.ID, uploadSK(req.Key, req.UploadID), meta.Done),
-	); err != nil {
+	}
+
+	for _, r := range outbox {
+		rows = append(rows, rowOrErr{row: r})
+	}
+
+	if err := e.writeRows(ctx, rows...); err != nil {
 		return nil, err
 	}
 

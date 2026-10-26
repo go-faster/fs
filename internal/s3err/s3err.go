@@ -173,6 +173,7 @@ var (
 	PreconditionFailed      = APIError{"PreconditionFailed", http.StatusPreconditionFailed, "At least one of the pre-conditions you specified did not hold"}
 	NotModified             = APIError{"NotModified", http.StatusNotModified, ""}
 	AccessDenied            = APIError{"AccessDenied", http.StatusForbidden, "Access Denied"}
+	InvalidBucketState      = APIError{"InvalidBucketState", http.StatusConflict, "The request is not valid with the current state of the bucket."}
 	QuotaExceeded           = APIError{"QuotaExceeded", http.StatusForbidden, "The quota of the bucket or its owner would be exceeded."}
 	SignatureDoesNotMatch   = APIError{"SignatureDoesNotMatch", http.StatusForbidden, "The request signature we calculated does not match the signature you provided."}
 	InvalidAccessKeyID      = APIError{"InvalidAccessKeyId", http.StatusForbidden, "The AWS access key Id you provided does not exist in our records."}
@@ -249,6 +250,8 @@ func FromError(err error) APIError {
 		return QuotaExceeded
 	case errors.Is(err, fs.ErrCustomerKeyMismatch):
 		return CustomerKeyMismatch
+	case errors.Is(err, fs.ErrInvalidBucketState):
+		return InvalidBucketState
 	case errors.Is(err, fs.ErrInvalidTag):
 		return InvalidTag
 	case errors.Is(err, fs.ErrInvalidDigest):

@@ -75,6 +75,7 @@ type Engine struct {
 	uploads *table.Table[meta.LWW[json.RawMessage]]
 	keys    *table.Table[meta.LWW[json.RawMessage]]
 	quotas  *table.Table[meta.LWW[json.RawMessage]]
+	outbox  *table.Table[meta.Outbox]
 	blocks  *block.Manager
 	member  *peer.Member
 
@@ -152,6 +153,14 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	if e.quotas, err = table.New(meta.Quotas, cfg.DB, cfg.Member, meta.MergeLWW[json.RawMessage], nil); err != nil {
+		return nil, err
+	}
+
+	if e.outbox, err = table.New(meta.Replication, cfg.DB, cfg.Member, meta.MergeOutbox, meta.CompactOutbox); err != nil {
+		return nil, err
+	}
+
+	if err := e.outbox.CountUsage(outboxUsage); err != nil {
 		return nil, err
 	}
 

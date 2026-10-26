@@ -353,7 +353,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		refs = w.blocks
 	}
 
-	if err := e.commit(ctx, inc.ID, req.Key, id, !versioned, cond, limits, p, attrs{Tags: req.Tags, ACL: req.ACL}, refs); err != nil {
+	if err := e.commit(ctx, b, inc.ID, req.Key, id, !versioned, cond, limits, p, attrs{Tags: req.Tags, ACL: req.ACL}, refs); err != nil {
 		e.release(ctx, id, w.blocks)
 
 		return nil, err
@@ -377,7 +377,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 // version — a null one, replacing the key's older null versions, unless
 // versioning is enabled.
 func (e *Engine) commit(
-	ctx context.Context, bucketID, key, id string, null bool, cond fs.Conditions, limits []limit,
+	ctx context.Context, b meta.Bucket, bucketID, key, id string, null bool, cond fs.Conditions, limits []limit,
 	p payload, a attrs, refs []blockLoc,
 ) error {
 	defer e.lock(bucketID, key)()
@@ -416,7 +416,7 @@ func (e *Engine) commit(
 	}
 
 	// One commit per node for everything this write changes: the version,
-	// the references of blocks stored without them, and the release of the
+	// its outbox row, the references of blocks stored without them, and the release of the
 	// blocks of the versions it replaces.
 	version, err := e.objects.Row(bucketID, key, row)
 	if err != nil {
@@ -425,8 +425,15 @@ func (e *Engine) commit(
 
 	rows := []table.Row{version}
 
-	for _, b := range refs {
-		r, err := e.refs.Row(b.Hash.String(), id, meta.BlockRef{})
+	outbox, err := e.outboxRow(ctx, b, bucketID, key, v, true, ts)
+	if err != nil {
+		return err
+	}
+
+	rows = append(rows, outbox...)
+
+	for _, ref := range refs {
+		r, err := e.refs.Row(ref.Hash.String(), id, meta.BlockRef{})
 		if err != nil {
 			return err
 		}
@@ -656,7 +663,7 @@ func prefixEnd(p string) string {
 
 // updateAttrs rewrites the current version's mutable attributes.
 func (e *Engine) updateAttrs(ctx context.Context, bucket, key string, fn func(*attrs)) error {
-	_, inc, err := e.bucket(ctx, bucket)
+	b, inc, err := e.bucket(ctx, bucket)
 	if err != nil {
 		return err
 	}
@@ -678,7 +685,18 @@ func (e *Engine) updateAttrs(ctx context.Context, bucket, key string, fn func(*a
 
 	v.Attrs = meta.LWW[json.RawMessage]{TS: meta.NextTS(e.ts(), v.Attrs.TS), V: mustJSON(a)}
 
-	return e.objects.Insert(ctx, inc.ID, key, meta.Object{Versions: []meta.Version{v}})
+	// The change and its outbox row, in one commit.
+	outbox, err := e.outboxRow(ctx, b, inc.ID, key, v, false, v.Attrs.TS)
+	if err != nil {
+		return err
+	}
+
+	r, err := e.objects.Row(inc.ID, key, meta.Object{Versions: []meta.Version{v}})
+	if err != nil {
+		return err
+	}
+
+	return table.Write(ctx, e.member, append([]table.Row{r}, outbox...)...)
 }
 
 func (e *Engine) GetObjectTagging(ctx context.Context, bucket, key string) ([]fs.Tag, error) {

@@ -256,6 +256,12 @@ usage read that fails lets the write through
   (bucket, account) — their ratio is how often clients hit a limit — and
   `fs.engine.quota.lookup_failures`, writes let through because usage could
   not be read.
+- **Replication**: `fs.replication.backlog{bucket}` and
+  `fs.replication.backlog.size{bucket}` — the versions, and their bytes,
+  that some replication target has yet to receive: what losing this
+  deployment would lose. Reported by the node that runs the bucket's
+  replication. Shipping is not built yet, so a bucket with targets only
+  accumulates a backlog for now.
 - **Lifecycle**: `fs.lifecycle.age` — seconds since a pass last completed,
   the number to alert on (-1: none yet; a cluster's buckets are spread over
   its nodes, so each node reports its own) — `fs.lifecycle.failed_buckets`,

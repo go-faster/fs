@@ -109,7 +109,8 @@ automated resumable migration and the public API becomes additive-only.
   versions, delete markers, null versions; Uploading → Complete → Gone),
   block refs, multipart parts and the index of uploads in flight (both
   overwritten by `Done` once the upload finishes), access keys created
-  through the admin API, account quotas, and each
+  through the admin API, account quotas, the geo-replication outbox (a row
+  per version still to reach a bucket's replication targets), and each
   table's compaction (what a tombstone reduces to). Pure; merge laws are property-tested. Its package doc states
   the design limits (per-bucket size, non-atomic conditional writes).
 - `internal/cluster/block` — content-addressed blocks: a local disk store
@@ -146,7 +147,12 @@ automated resumable migration and the public API becomes additive-only.
   UploadPart and completion against the objects table's usage tallies
   through a short-lived cache, refused with `fs.ErrQuotaExceeded` (403
   QuotaExceeded); admin API `/api/v1/{buckets/{bucket},accounts/{account}}/quota`,
-  CLI `fs quota`. Versioning is a view over the
+  CLI `fs quota`. Geo-replication (`replication.go`,
+  [design](docs/design/geo-replication.md)): a bucket's `replication`
+  setting names targets on other fs deployments; every change to ship writes
+  its outbox row in the same `table.Write`, version deletes and lifecycle
+  changes (`fs.WithLifecycleAction`) none; shipping is not built yet.
+  Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 and SSE-C seal
   data through `internal/sse` (an SSE-C key arrives on the context,
   `fs.CustomerKeyFrom`, and is never stored); multipart parts are sealed as they arrive and not

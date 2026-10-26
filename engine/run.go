@@ -102,7 +102,7 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) {
 			// Rows first: a block's last reference collected this pass leaves
 			// it for the block collection after the grace period.
 			for _, collect := range []func(context.Context, time.Duration) error{
-				e.objects.Collect, e.refs.Collect, e.parts.Collect, e.uploads.Collect,
+				e.objects.Collect, e.refs.Collect, e.parts.Collect, e.uploads.Collect, e.outbox.Collect,
 			} {
 				if cerr := collect(ctx, cfg.Tombstones); cerr != nil {
 					err = errors.Join(err, cerr)
@@ -281,7 +281,7 @@ func (e *Engine) Sweep(ctx context.Context) error {
 	var errs []error
 
 	for _, sync := range []func(context.Context) error{
-		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.keys.Sync, e.quotas.Sync, e.blocks.Sync,
+		e.buckets.Sync, e.objects.Sync, e.refs.Sync, e.parts.Sync, e.uploads.Sync, e.keys.Sync, e.quotas.Sync, e.outbox.Sync, e.blocks.Sync,
 	} {
 		if err := sync(ctx); err != nil {
 			errs = append(errs, err)
@@ -353,12 +353,14 @@ func (e *Engine) Stats() Stats {
 			"uploads":     e.uploads.SyncStats(),
 			"access_keys": e.keys.SyncStats(),
 			"quotas":      e.quotas.SyncStats(),
+			"replication": e.outbox.SyncStats(),
 		},
 		Tombstones: map[string]table.GCStats{
-			"objects":    e.objects.GCStats(),
-			"block_refs": e.refs.GCStats(),
-			"parts":      e.parts.GCStats(),
-			"uploads":    e.uploads.GCStats(),
+			"objects":     e.objects.GCStats(),
+			"block_refs":  e.refs.GCStats(),
+			"parts":       e.parts.GCStats(),
+			"uploads":     e.uploads.GCStats(),
+			"replication": e.outbox.GCStats(),
 		},
 		LastGC:       gc.last,
 		GCFailed:     gc.failed,
