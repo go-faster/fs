@@ -353,9 +353,16 @@ func TestTwoNodesDown(t *testing.T) {
 	nodes[1].srv.Close()
 	nodes[2].srv.Close()
 
-	_, err := nodes[0].blocks.Put(context.Background(), []byte("no quorum"))
+	data := []byte("no quorum")
+
+	_, err := nodes[0].blocks.Put(context.Background(), data)
 	require.ErrorIs(t, err, ErrQuorum)
 	require.ErrorIs(t, err, fs.ErrUnavailable, "a client may retry it")
+
+	// Put gives up once a quorum is out of reach, while this node's own copy
+	// may still be landing; let it, or the temporary directory is removed
+	// under the write (which Windows refuses).
+	require.Eventually(t, func() bool { return nodes[0].store.Has(Sum(data)) }, 5*time.Second, time.Millisecond)
 }
 
 // TestGetUnreachable checks that a block missing where it was looked for, with
