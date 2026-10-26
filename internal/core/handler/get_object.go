@@ -86,13 +86,17 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 	// deliberately ignores it instead ("some clients add a Range header to
 	// disable caching"), which would answer 200 where a client expects 416.
 	if resp.Size == 0 && isByteRangeRequest(r) {
-		renderAPIError(r.Context(), w, r, s3err.InvalidRange, errors.Errorf("range %q against an empty object", r.Header.Get("Range")))
+		renderAPIError(r.Context(), w, r, s3err.InvalidRange, s3err.WithDetail(
+			errors.Errorf("range %q against an empty object", r.Header.Get("Range")),
+			s3err.Detail{RangeRequested: r.Header.Get("Range"), ActualObjectSize: s3err.Size(0)},
+		))
+
 		return
 	}
 
 	// ServeContent reports Range and conditional failures the net/http way — a
 	// text/plain body — which carries no S3 error Code for an SDK to parse.
-	w = &s3ErrorInterceptor{ResponseWriter: w, req: r}
+	w = &s3ErrorInterceptor{ResponseWriter: w, req: r, size: resp.Size}
 
 	rs, seekable := resp.Reader.(io.ReadSeeker)
 	if !seekable {
@@ -136,6 +140,8 @@ type s3ErrorInterceptor struct {
 	http.ResponseWriter
 
 	req *http.Request
+	// size is the object's, which an InvalidRange body reports.
+	size int64
 	// replaced records that the S3 error document has been written, so
 	// ServeContent's own body is discarded rather than appended to it.
 	replaced bool
@@ -166,7 +172,23 @@ func (w *s3ErrorInterceptor) WriteHeader(code int) {
 	// ServeContent sized the response for its own body.
 	w.Header().Del("Content-Length")
 
-	s3err.WriteAPI(w.ResponseWriter, w.req, api)
+	s3err.WriteAPI(w.ResponseWriter, w.req, api, w.detail(code))
+}
+
+// detail is what the body of ServeContent's failure says: the range asked
+// for and the object's size, or the condition that failed. ServeContent
+// answers 412 only from If-Match, or from If-Unmodified-Since when there is
+// no If-Match.
+func (w *s3ErrorInterceptor) detail(code int) s3err.Detail {
+	if code == http.StatusRequestedRangeNotSatisfiable {
+		return s3err.Detail{RangeRequested: w.req.Header.Get("Range"), ActualObjectSize: s3err.Size(w.size)}
+	}
+
+	if w.req.Header.Get("If-Match") != "" {
+		return s3err.Detail{Condition: "If-Match"}
+	}
+
+	return s3err.Detail{Condition: "If-Unmodified-Since"}
 }
 
 func (w *s3ErrorInterceptor) Write(p []byte) (int, error) {

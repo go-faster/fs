@@ -77,7 +77,8 @@ func parseListQuery(r *http.Request) (*listQuery, error) {
 	if v := q.Get("max-keys"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
-			return nil, errors.Errorf("invalid max-keys %q", v)
+			return nil, s3err.WithDetail(errors.Errorf("invalid max-keys %q", v),
+				s3err.Detail{ArgumentName: "maxKeys", ArgumentValue: v})
 		}
 
 		// Values above 1000 are clamped, not rejected.

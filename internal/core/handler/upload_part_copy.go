@@ -44,7 +44,7 @@ func (h *handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 
 	src, err := h.getObjectVersion(copySourceContext(r), source.Bucket, source.Key, source.VersionID)
 	if err != nil {
-		renderError(ctx, w, r, err)
+		renderError(ctx, w, r, copySourceError(err, source))
 		return
 	}
 
@@ -60,8 +60,10 @@ func (h *handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if first >= src.Size || last >= src.Size {
-			renderAPIError(ctx, w, r, s3err.InvalidRange,
-				errors.Errorf("range %d-%d exceeds source size %d", first, last, src.Size))
+			renderAPIError(ctx, w, r, s3err.InvalidRange, s3err.WithDetail(
+				errors.Errorf("range %d-%d exceeds source size %d", first, last, src.Size),
+				s3err.Detail{RangeRequested: rangeHeader, ActualObjectSize: s3err.Size(src.Size)},
+			))
 
 			return
 		}
