@@ -341,3 +341,43 @@ func testVersioningPages(t *testing.T, storage fs.Storage) {
 
 	require.Equal(t, 3, keyVersions, "the key's history: newest, null, oldest")
 }
+
+// testVersioningListedTags guards tags in a version listing: each version
+// carries its own when asked for, and a delete marker none.
+func testVersioningListedTags(t *testing.T, storage fs.Storage) {
+	const tagGen = "gen"
+
+	v := versioner(t, storage)
+	ctx := t.Context()
+
+	require.NoError(t, v.SetBucketVersioning(ctx, testBucket, fs.VersioningEnabled))
+
+	put := func(tags ...fs.Tag) string {
+		resp, err := storage.PutObject(ctx, &fs.PutObjectRequest{
+			Bucket: testBucket, Key: testKey, Reader: bytes.NewReader([]byte("content")), Size: 7, Tags: tags,
+		})
+		require.NoError(t, err)
+
+		return resp.VersionID
+	}
+
+	first := put(fs.Tag{Key: tagGen, Value: "1"})
+	second := put(fs.Tag{Key: tagGen, Value: "2"})
+
+	// Retagging changes the current version's tags only.
+	require.NoError(t, storage.PutObjectTagging(ctx, testBucket, testKey, []fs.Tag{{Key: tagGen, Value: "2b"}}))
+
+	del, err := v.DeleteObjectVersion(ctx, testBucket, testKey, "")
+	require.NoError(t, err)
+
+	resp, err := v.ListObjectVersions(ctx, &fs.ListObjectVersionsRequest{Bucket: testBucket, Tags: true})
+	require.NoError(t, err)
+	require.Equal(t, []string{del.VersionID, second, first}, ids(resp.Versions))
+	require.Empty(t, resp.Versions[0].Tags, "a delete marker has no tags")
+	require.Equal(t, []fs.Tag{{Key: tagGen, Value: "2b"}}, resp.Versions[1].Tags)
+	require.Equal(t, []fs.Tag{{Key: tagGen, Value: "1"}}, resp.Versions[2].Tags)
+
+	for _, ver := range versionsOf(t, v) {
+		require.Nil(t, ver.Tags, "tags only when asked for")
+	}
+}

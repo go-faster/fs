@@ -138,6 +138,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Tagging/RoundTrip":                     testTaggingRoundTrip,
 	"Tagging/PutObjectTags":                 testTaggingOnPut,
 	"Tagging/NotFound":                      testTaggingNotFound,
+	"Tagging/Listed":                        testTaggingListed,
 	"Conditional/IfNoneMatch":               testConditionalIfNoneMatch,
 	"Conditional/IfMatch":                   testConditionalIfMatch,
 	"Conditional/ConcurrentSingleWinner":    testConditionalConcurrentSingleWinner,
@@ -158,6 +159,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Versioning/UnsetDeleteLeavesNoMarker":  testVersioningUnsetDeleteLeavesNoMarker,
 	"Versioning/ConditionalDelete":          testVersioningConditionalDelete,
 	"Versioning/Pages":                      testVersioningPages,
+	"Versioning/ListedTags":                 testVersioningListedTags,
 	"Settings/PublicAccessAndOwnership":     testBucketSettings,
 	"ACL/BucketRoundTrip":                   testACLBucketRoundTrip,
 	"ACL/BucketDefaultPrivate":              testACLBucketDefaultPrivate,
@@ -1155,6 +1157,35 @@ func testTaggingOnPut(t *testing.T, storage fs.Storage) {
 	tags, err := storage.GetObjectTagging(ctx, testBucket, "tagged.txt")
 	require.NoError(t, err)
 	require.Equal(t, want, tags)
+}
+
+// testTaggingListed guards tags in a listing: there when asked for, which
+// the lifecycle sweep relies on to judge tag rules, and absent otherwise.
+func testTaggingListed(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+	putObject(t, storage, "plain.txt", []byte("content"))
+	putObject(t, storage, "tagged.txt", []byte("content"))
+
+	want := []fs.Tag{{Key: tagEnv, Value: tagProd}, {Key: "team", Value: "storage"}}
+	require.NoError(t, storage.PutObjectTagging(ctx, testBucket, "tagged.txt", want))
+
+	list, err := storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket, Tags: true})
+	require.NoError(t, err)
+	require.Len(t, list.Objects, 2)
+	require.Equal(t, "plain.txt", list.Objects[0].Key)
+	require.Empty(t, list.Objects[0].Tags)
+	require.Equal(t, "tagged.txt", list.Objects[1].Key)
+	require.Equal(t, want, list.Objects[1].Tags)
+
+	list, err = storage.ListObjects(ctx, &fs.ListObjectsRequest{Bucket: testBucket})
+	require.NoError(t, err)
+	require.Len(t, list.Objects, 2)
+
+	for _, obj := range list.Objects {
+		require.Nil(t, obj.Tags, "tags only when asked for")
+	}
 }
 
 // testTaggingNotFound guards tagging error mapping for missing buckets/objects.

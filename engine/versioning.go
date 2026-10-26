@@ -184,7 +184,7 @@ func (e *Engine) ListObjectVersions(ctx context.Context, req *fs.ListObjectVersi
 				continue
 			}
 
-			versions, err := listVersions(r.SK, r.Row)
+			versions, err := listVersions(r.SK, r.Row, req.Tags)
 			if err != nil {
 				return nil, err
 			}
@@ -270,8 +270,9 @@ func afterMarker(versions []fs.ObjectVersion, marker string) []fs.ObjectVersion 
 	return out
 }
 
-// listVersions reports a key's visible versions, newest first.
-func listVersions(key string, o meta.Object) ([]fs.ObjectVersion, error) {
+// listVersions reports a key's visible versions, newest first, with their
+// tags when tags is set.
+func listVersions(key string, o meta.Object, tags bool) ([]fs.ObjectVersion, error) {
 	var out []fs.ObjectVersion
 
 	for i := len(o.Versions) - 1; i >= 0; i-- {
@@ -291,7 +292,7 @@ func listVersions(key string, o meta.Object) ([]fs.ObjectVersion, error) {
 			p.LastModified = time.Unix(0, v.TS).UTC()
 		}
 
-		out = append(out, fs.ObjectVersion{
+		ver := fs.ObjectVersion{
 			Key:          key,
 			VersionID:    s3ID(v),
 			IsLatest:     len(out) == 0,
@@ -300,7 +301,12 @@ func listVersions(key string, o meta.Object) ([]fs.ObjectVersion, error) {
 			ETag:         p.ETag,
 			LastModified: p.LastModified,
 			Owner:        p.Owner,
-		})
+		}
+		if tags && !v.DeleteMarker {
+			ver.Tags = decodeAttrs(v).Tags
+		}
+
+		out = append(out, ver)
 	}
 
 	return out, nil

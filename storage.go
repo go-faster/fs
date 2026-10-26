@@ -35,6 +35,9 @@ type ListObjectsRequest struct {
 	// callers that know the answer is small should do — an emptiness check, a
 	// test fixture. The S3 listing path always sets it.
 	Limit int
+	// Tags asks for each object's tags. S3 listings return none, so the S3
+	// path leaves it off; the lifecycle sweep sets it to judge tag rules.
+	Tags bool
 }
 
 // ListObjectsResponse is one page of a bucket listing.

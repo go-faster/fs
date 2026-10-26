@@ -615,13 +615,18 @@ func (e *Engine) ListObjects(ctx context.Context, req *fs.ListObjectsRequest) (*
 				return nil, err
 			}
 
-			out.Objects = append(out.Objects, fs.Object{
+			obj := fs.Object{
 				Key:          r.SK,
 				Size:         p.Size,
 				LastModified: p.LastModified,
 				ETag:         p.ETag,
 				Owner:        p.Owner,
-			})
+			}
+			if req.Tags {
+				obj.Tags = decodeAttrs(v).Tags
+			}
+
+			out.Objects = append(out.Objects, obj)
 		}
 
 		switch {
