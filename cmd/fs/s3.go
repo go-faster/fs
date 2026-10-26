@@ -35,6 +35,7 @@ func S3() *cobra.Command {
 		root       string
 		tlsCert    string
 		tlsKey     string
+		domains    []string
 	)
 
 	cmd := &cobra.Command{
@@ -105,6 +106,10 @@ Command-line flags override YAML configuration values.`,
 
 			if cmd.Flags().Changed("tls-key") {
 				cfg.Server.TLS.KeyFile = tlsKey
+			}
+
+			if cmd.Flags().Changed("domain") {
+				cfg.Server.Domains = domains
 			}
 
 			// Validate configuration
@@ -187,6 +192,14 @@ Command-line flags override YAML configuration values.`,
 
 				lg.Info("Durability", zap.String("fsync", cmp.Or(cfg.Storage.Fsync, fsyncFile)))
 
+				// Which hosts address a bucket is what an operator checks first
+				// when virtual-host requests come back NoSuchBucket.
+				if len(cfg.Server.Domains) > 0 {
+					lg.Info("Virtual-host addressing", zap.Strings("domains", cfg.Server.Domains))
+				} else {
+					lg.Info("Path-style addressing only; set server.domains for virtual hosts")
+				}
+
 				// Whether bodies are encrypted is the kind of thing an operator
 				// must be able to confirm from the log rather than infer.
 				lg.Info("Encryption",
@@ -240,6 +253,7 @@ Command-line flags override YAML configuration values.`,
 					IdleTimeout:    cfg.Server.IdleTimeout,
 					HealthPath:     cfg.Server.HealthPath,
 					Region:         cfg.Server.Region,
+					Domains:        cfg.Server.Domains,
 					OwnerIsolation: cfg.Auth.OwnerIsolation,
 
 					DefaultEncryption:    cfg.Encryption.DefaultAlgorithm,
@@ -357,6 +371,7 @@ Command-line flags override YAML configuration values.`,
 	cmd.Flags().StringVar(&root, "root", DefaultStorageRoot, "Root directory for S3 storage (overrides config file)")
 	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "Path to the TLS certificate (enables HTTPS with --tls-key)")
 	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "Path to the TLS private key (enables HTTPS with --tls-cert)")
+	cmd.Flags().StringSliceVar(&domains, "domain", nil, "Service domain for virtual-host-style addressing, <bucket>.<domain>; repeatable (overrides config file)")
 	cmd.Flags().Bool("insecure-no-auth", false, "Disable authentication and serve anonymously (insecure)")
 	cmd.Flags().Bool("generate-config", false, "Generate example configuration file and print to stdout")
 
@@ -393,6 +408,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		duration := time.Since(start)
 
 		zctx.From(r.Context()).Info(r.Method,
+			zap.String("host", r.Host),
 			zap.String("path", r.URL.Path),
 			zap.Int("status", ww.statusCode),
 			zap.Duration("duration", duration),

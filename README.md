@@ -370,8 +370,7 @@ authoritative, detailed list):
 - **The rest of lifecycle**: transitions.
 - **Cluster mode** — a Garage-style cluster with zone/rack-aware replication
   ([#279](https://github.com/go-faster/fs/issues/279)).
-- **Virtual-host–style addressing**, **ACME / automatic TLS**, and **static
-  website hosting**.
+- **ACME / automatic TLS** and **static website hosting**.
 - **Geo-replication** — async bucket-level replication between deployments.
 - **Bucket-policy subset** — demand-gated, when canned ACLs are not enough.
 

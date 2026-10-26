@@ -136,10 +136,16 @@ the code carries (`<BucketName>`, `<Key>`, `<UploadId>`, `<Condition>`,
 for HEAD; non-panicking fallback if encoding fails.
 
 `handler.New(store, opts...)` composes middleware around the router, outermost
-first: **request-id → body drain → OPTIONS guard → CORS → Content-Length check
-→ auth → router**. So every response (including errors) carries an
-`x-amz-request-id`, CORS preflight is answered before auth can reject it, and
-only authenticated (or public-read) requests reach the router. The body drain
+first: **request-id → virtual hosts → body drain → OPTIONS guard → CORS →
+Content-Length check → auth → router**. So every response (including errors)
+carries an `x-amz-request-id`, CORS preflight is answered before auth can
+reject it, and only authenticated (or public-read) requests reach the router.
+With `WithDomains` set, the virtual-hosts step rewrites a request whose
+`Host` is `<bucket>.<domain>` to its path-style form before anything reads
+the bucket, and records the path as sent for SigV4 (`sigv4.WithSignedPath`),
+which signs it without the bucket
+([design](docs/design/virtual-host-addressing.md)). The server answers its
+health and ready paths only on hosts that name no bucket. The body drain
 reads what a handler left of the request body (up to 64 MiB) after flushing the
 response: a write refused before its body was read — a quota, a missing
 bucket, a bad signature — would otherwise end in a connection reset for
@@ -490,7 +496,8 @@ list a bucket and race each other's deletes.
   against the mock and both backends, via `httptest`.
 - **Integration** (`integration`) — real SDK clients (`minio-go` and
   `aws-sdk-go-v2`) against an in-process server, exercising each SDK's own
-  request encoding (path-style addressing, checksum trailers, error typing).
+  request encoding (path-style and virtual-host addressing, checksum trailers,
+  error typing).
 - **S3 conformance CI** (`.github/workflows/s3tests.yml`) — the upstream
   ceph/s3-tests suite, run in full and gated on a deny-list
   (`.github/s3tests/known-failures.txt`) that may only shrink. This is the

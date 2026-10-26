@@ -1,6 +1,7 @@
 package sigv4
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -42,14 +43,29 @@ func awsURIEncode(s string, encodeSlash bool) string {
 // wire-encoded path with single encoding and without normalization, which is
 // precisely what EscapedPath reconstructs from the request line (RawPath),
 // preserving the client's exact encoding — including any encoded slashes in a
-// key. An empty path canonicalizes to "/".
+// key. A path recorded with WithSignedPath wins over the URL, which a
+// virtual-host request has had rewritten. An empty path canonicalizes to "/".
 func canonicalURI(r *http.Request) string {
-	path := r.URL.EscapedPath()
+	path, ok := r.Context().Value(signedPathKey{}).(string)
+	if !ok {
+		path = r.URL.EscapedPath()
+	}
+
 	if path == "" {
 		return "/"
 	}
 
 	return path
+}
+
+type signedPathKey struct{}
+
+// WithSignedPath records the escaped path a request was sent with, for a
+// request whose URL is rewritten before it is verified: a virtual-host
+// request is signed over its path without the bucket, and served as
+// path-style with it.
+func WithSignedPath(ctx context.Context, escapedPath string) context.Context {
+	return context.WithValue(ctx, signedPathKey{}, escapedPath)
 }
 
 // canonicalQuery builds the canonical query string: every parameter (except any
