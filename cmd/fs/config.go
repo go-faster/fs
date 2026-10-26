@@ -72,6 +72,11 @@ type LifecycleConfig struct {
 	// loudly at startup, because a lifecycle rule nobody enforces is a client
 	// told its data expires when nothing will delete it.
 	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// ClockOffset moves the sweep's clock ahead, so that a soak can see rules
+	// measured in days come due within minutes. It is for tests only: in
+	// production it expires everything early by the offset.
+	ClockOffset time.Duration `yaml:"clock_offset,omitempty"`
 }
 
 // AuthConfig configures authentication and authorization.

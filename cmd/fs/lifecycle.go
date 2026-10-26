@@ -40,6 +40,13 @@ func runLifecycle(ctx context.Context, lg *zap.Logger, sweeper *lifecycle.Sweepe
 		return
 	}
 
+	if cfg.ClockOffset != 0 {
+		lg.Warn("Lifecycle clock moved; rules will expire objects early by the offset (tests only)",
+			zap.Duration("offset", cfg.ClockOffset))
+
+		sweeper.Now = func() time.Time { return time.Now().Add(cfg.ClockOffset) }
+	}
+
 	sweeper.Run(ctx, cfg.Interval)
 }
 
