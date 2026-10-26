@@ -278,6 +278,10 @@ func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
 func (s *Sweeper) Sweep(ctx context.Context) (report Report, err error) {
 	defer func() { s.record(report) }()
 
+	// What the sweep deletes is the bucket's own lifecycle, not a change to
+	// replicate: a replica runs its own rules.
+	ctx = fs.WithLifecycleAction(ctx)
+
 	store, ok := s.Storage.(fs.BucketLifecycleStore)
 	if !ok {
 		return report, nil

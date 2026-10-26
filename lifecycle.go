@@ -258,3 +258,19 @@ type BucketLifecycleStore interface {
 	SetBucketLifecycle(ctx context.Context, bucket string, rules []LifecycleRule) error
 	DeleteBucketLifecycle(ctx context.Context, bucket string) error
 }
+
+type lifecycleActionCtx struct{}
+
+// WithLifecycleAction marks ctx as carrying a lifecycle sweep's changes. A
+// backend that replicates leaves them out: each bucket runs its own
+// lifecycle, as in S3.
+func WithLifecycleAction(ctx context.Context) context.Context {
+	return context.WithValue(ctx, lifecycleActionCtx{}, true)
+}
+
+// IsLifecycleAction reports whether ctx carries a lifecycle sweep's changes.
+func IsLifecycleAction(ctx context.Context) bool {
+	v, _ := ctx.Value(lifecycleActionCtx{}).(bool)
+
+	return v
+}

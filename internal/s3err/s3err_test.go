@@ -24,6 +24,7 @@ func TestFromError(t *testing.T) {
 		{fs.ErrBucketAlreadyExists, "BucketAlreadyOwnedByYou"},
 		{fs.ErrBucketNotEmpty, "BucketNotEmpty"},
 		{fs.ErrQuotaExceeded, "QuotaExceeded"},
+		{fs.ErrInvalidBucketState, "InvalidBucketState"},
 		{fs.ErrInvalidBucketName, "InvalidBucketName"},
 		{fs.ErrPreconditionFailed, "PreconditionFailed"},
 		{fs.ErrUnsupportedOperation, "NotImplemented"},

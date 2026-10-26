@@ -21,6 +21,8 @@
 //     listing them costs the uploads, not the keys.
 //   - access_keys, quotas: one partition each, keyed by access key ID and by
 //     account.
+//   - replication: the geo-replication outbox, partition key the bucket's ID,
+//     sort key the object key, NUL, the version ID (see Outbox).
 //
 // Two limits follow from that and are by design, as in Garage: one bucket's
 // objects live on one partition's replicas, so a bucket is bounded by what one

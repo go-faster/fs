@@ -1,6 +1,6 @@
 # Design: geo-replication
 
-**Status:** proposed. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** in progress: phase 1 (the outbox) is implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
@@ -112,15 +112,23 @@ A new table, `replication`, partition key the bucket's ID, sort key
 
 ```go
 type Outbox struct {
+	Targets []string         // the targets the version is for, sorted
 	Pending int64            // TS of the newest change to ship
+	Version bool             // the version itself ships, not only its attrs
+	Size    int64            // for the backlog's bytes
 	Shipped map[string]int64 // target name → Pending as last delivered
 }
 ```
 
-- **Merge:** `max` of `Pending`, and `max` per target of `Shipped`.
-  Commutative, associative and idempotent, so a change and a delivery can
-  land in either order on any replica.
-- **A version is pending for a target** while `Shipped[target] < Pending`.
+- **Merge:** the union of `Targets`, `or` of `Version`, and `max` of
+  `Pending`, `Size` and, per target, `Shipped`. Commutative, associative
+  and idempotent, so a change and a delivery can land in either order on
+  any replica.
+- **A version is pending for a target** that `Targets` names while
+  `Shipped[target] < Pending`.
+- **`Version`** tells the runner to ship the version whole the first time
+  (`Shipped[target]` unset); an attrs change after the row was collected
+  recreates it without `Version`, and ships the attrs alone.
 - **Written in the same `table.Write`** as the change it records, so an
   acknowledged write always has its outbox row. Nothing is lost to a crash
   between the two. The changes that write it, in a bucket with at least one
@@ -132,9 +140,10 @@ type Outbox struct {
     TS).
 - **Not written** for version deletes, lifecycle deletes, or writes applied
   as replicas.
-- **Compaction:** a row every current target has shipped is deleted, through
-  the tombstone collection the other tables use. A target removed from the
-  setting no longer counts.
+- **Compaction:** a row every target it names has shipped is deleted,
+  through the tombstone collection the other tables use. When a target is
+  removed from the setting, the runner marks its rows shipped, so they do
+  not wait for it.
 - **Usage tally:** the table counts pending rows and bytes per bucket
   (`CountUsage`), so the backlog is one quorum read, not a scan.
 

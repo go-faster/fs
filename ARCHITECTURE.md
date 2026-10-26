@@ -97,7 +97,10 @@ The shared vocabulary every layer speaks:
   key missing for an object encrypted with one, or sent for one that is not,
   mapped to 400 InvalidRequest; a wrong key is `ErrAccessDenied`, 403;
   `ErrQuotaExceeded` — a write past a bucket or account quota, mapped to
-  Ceph RGW's 403 QuotaExceeded, since S3 has no such code; `ErrUnavailable`
+  Ceph RGW's 403 QuotaExceeded, since S3 has no such code;
+  `ErrInvalidBucketState` — a request the bucket's configuration rules out,
+  such as suspending versioning on a bucket that replicates, 409
+  InvalidBucketState; `ErrUnavailable`
   — a request the cluster cannot serve for now, such as one whose replicas
   are too few to reach a quorum, mapped to 503 ServiceUnavailable so clients
   retry it).
@@ -304,8 +307,9 @@ On disk, single node and cluster alike, the engine lives under
 `<storage.root>/.engine/`:
 
 - `meta.db` — the bbolt metadata tables (buckets, object version lists, block
-  references, multipart parts, and an index of a bucket's uploads in flight,
-  written with each upload's create, complete and abort). Every metadata write
+  references, multipart parts, an index of a bucket's uploads in flight,
+  written with each upload's create, complete and abort, and the replication
+  outbox). Every metadata write
   is a bbolt transaction.
 - `blocks/` — content-addressed data blocks named by their SHA-256, each file
   the block plus a CRC-32C trailer (stamped by `blocks/FORMAT`; a store with
@@ -445,6 +449,24 @@ can together overshoot by what they store within one TTL, and a usage read
 that fails enforces nothing (`fs.engine.quota.lookup_failures`). Admin
 `/api/v1/buckets/{bucket}/quota` and `/api/v1/accounts/{account}/quota`, CLI
 `fs quota bucket|account`.
+
+**Replication outbox.** Geo-replication
+([design](docs/design/geo-replication.md)) ships a bucket's versions to
+buckets of other fs deployments, its `replication` setting's targets. A bucket
+with targets must keep versioning enabled (suspending it is
+`ErrInvalidBucketState`, 409 InvalidBucketState, as S3 answers). What is still
+to ship is the replicated `replication` table, keyed by bucket ID and
+`key NUL versionID`: every completed version (PUT, so CopyObject, and
+CompleteMultipartUpload), delete marker (for targets that take them) and tag
+or ACL change writes the version's row in the same `table.Write` as the
+change, naming the targets whose prefix the key matches and the change's TS
+as `Pending`; deliveries raise `Shipped[target]` to it. The merge takes the
+union of targets and the greatest of every counter, and a row every target
+has received is compacted away by tombstone collection. Version deletes and
+the lifecycle sweep's changes (`fs.WithLifecycleAction`) write no row: S3
+replicates neither. The table tallies rows still pending per bucket, the
+backlog `fs.replication.backlog{,.size}` reports. The shipping itself is
+not built yet.
 
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays
