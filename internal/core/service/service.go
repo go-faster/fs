@@ -54,19 +54,13 @@ const (
 	maxTagValueLen = 256
 )
 
-// validateTags enforces the S3 object-tagging limits: at most 10 tags, each
-// as validateTagSet requires.
+// validateTags enforces the S3 object-tagging limits: at most 10 tags with
+// unique, non-empty keys of at most 128 characters and values of at most 256.
 func validateTags(tags []fs.Tag) error {
 	if len(tags) > maxObjectTags {
 		return errors.Wrapf(fs.ErrInvalidTag, "%d tags exceed the limit of %d", len(tags), maxObjectTags)
 	}
 
-	return validateTagSet(tags)
-}
-
-// validateTagSet requires unique, non-empty keys of at most 128 characters
-// and values of at most 256: the limits of a tag wherever S3 takes one.
-func validateTagSet(tags []fs.Tag) error {
 	seen := make(map[string]struct{}, len(tags))
 
 	for _, tag := range tags {
@@ -346,14 +340,6 @@ func (s Service) SetBucketLifecycle(ctx context.Context, bucket string, rules []
 	store, ok := s.storage.(fs.BucketLifecycleStore)
 	if !ok {
 		return errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot store lifecycle rules")
-	}
-
-	// A rule's tags follow the limits of the tags it matches. Ten per object
-	// is not one of them: that limits what an object carries.
-	for _, r := range rules {
-		if err := validateTagSet(r.Tags); err != nil {
-			return errors.Wrapf(err, "rule %q", r.ID)
-		}
 	}
 
 	// A rule on versions is stored only where the sweep can enforce it.

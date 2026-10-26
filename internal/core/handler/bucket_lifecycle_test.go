@@ -302,11 +302,6 @@ func TestBucketLifecycle_VersionsValidation(t *testing.T) {
 				<Expiration><Date>2030-01-01T00:00:00Z</Date><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration></Rule>`,
 			code: "MalformedXML",
 		},
-		"MarkerFalseAlone": {
-			body: `<Rule><ID>x</ID><Status>Enabled</Status>` + filter + `
-				<Expiration><ExpiredObjectDeleteMarker>false</ExpiredObjectDeleteMarker></Expiration></Rule>`,
-			code: "MalformedXML",
-		},
 		"NewerWithoutDays": {
 			body: `<Rule><ID>x</ID><Status>Enabled</Status>` + filter + `
 				<NoncurrentVersionExpiration><NewerNoncurrentVersions>3</NewerNoncurrentVersions></NoncurrentVersionExpiration></Rule>`,
@@ -363,15 +358,15 @@ func TestBucketLifecycle_Filters(t *testing.T) {
 		"Tag": {
 			filter: `<Tag><Key>tmp</Key><Value>true</Value></Tag>`,
 			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
-				require.Equal(t, &handler.LifecycleTagXML{Key: "tmp", Value: "true"}, f.Tag)
+				requireTag(t, f.Tag, "tmp", "true")
 				require.Nil(t, f.And)
 				require.Nil(t, f.Prefix)
 			},
 		},
 		"EmptyTagValue": {
-			filter: `<Tag><Key>tmp</Key></Tag>`,
+			filter: `<Tag><Key>tmp</Key><Value></Value></Tag>`,
 			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
-				require.Equal(t, &handler.LifecycleTagXML{Key: "tmp"}, f.Tag)
+				requireTag(t, f.Tag, "tmp", "")
 			},
 		},
 		"GreaterThan": {
@@ -396,25 +391,20 @@ func TestBucketLifecycle_Filters(t *testing.T) {
 				require.NotNil(t, f.And)
 				require.Nil(t, f.Tag)
 				require.Equal(t, "logs/", *f.And.Prefix)
-				require.Equal(t, []handler.LifecycleTagXML{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}, f.And.Tags)
+				require.Len(t, f.And.Tags, 2)
+				requireTag(t, &f.And.Tags[0], "a", "1")
+				requireTag(t, &f.And.Tags[1], "b", "2")
 				require.Equal(t, int64(10), *f.And.ObjectSizeGreaterThan)
 				require.Equal(t, int64(100), *f.And.ObjectSizeLessThan)
 			},
 		},
-		"AndOfOne": {
-			// Ceph RGW renders a one-predicate And bare, and so does fs.
-			filter: `<And><Tag><Key>a</Key><Value>1</Value></Tag></And>`,
+		"PrefixAndTag": {
+			// A prefix and one tag are two predicates, so they stay in And.
+			filter: `<And><Prefix>logs/</Prefix><Tag><Key>a</Key><Value>1</Value></Tag></And>`,
 			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
-				require.Nil(t, f.And)
-				require.Equal(t, &handler.LifecycleTagXML{Key: "a", Value: "1"}, f.Tag)
-			},
-		},
-		"EmptyAnd": {
-			filter: `<And></And>`,
-			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
-				require.Nil(t, f.And)
-				require.NotNil(t, f.Prefix)
-				require.Empty(t, *f.Prefix)
+				require.NotNil(t, f.And)
+				require.Equal(t, "logs/", *f.And.Prefix)
+				require.Len(t, f.And.Tags, 1)
 			},
 		},
 	} {
@@ -442,10 +432,12 @@ func TestBucketLifecycle_Filters(t *testing.T) {
 // actions are accepted where a filter allows them.
 func TestBucketLifecycle_FiltersValidation(t *testing.T) {
 	const (
-		expire = `<Expiration><Days>1</Days></Expiration>`
-		marker = `<Expiration><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration>`
-		abort  = `<AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>`
-		tag    = `<Tag><Key>k</Key><Value>v</Value></Tag>`
+		expire  = `<Expiration><Days>1</Days></Expiration>`
+		marker  = `<Expiration><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration>`
+		abort   = `<AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>`
+		tag     = `<Tag><Key>k</Key><Value>v</Value></Tag>`
+		maxSize = "1099511627776000"
+		over    = "1099511627776001"
 	)
 
 	for name, tc := range map[string]struct {
@@ -454,18 +446,29 @@ func TestBucketLifecycle_FiltersValidation(t *testing.T) {
 	}{
 		"BarePrefixAndTag":  {filter: `<Prefix>a/</Prefix>` + tag, action: expire, code: "MalformedXML"},
 		"BareBothSizes":     {filter: `<ObjectSizeGreaterThan>1</ObjectSizeGreaterThan><ObjectSizeLessThan>9</ObjectSizeLessThan>`, action: expire, code: "MalformedXML"},
-		"GreaterNotBelow":   {filter: `<And><ObjectSizeGreaterThan>100</ObjectSizeGreaterThan><ObjectSizeLessThan>100</ObjectSizeLessThan></And>`, action: expire, code: "MalformedXML"},
-		"NegativeGreater":   {filter: `<ObjectSizeGreaterThan>-1</ObjectSizeGreaterThan>`, action: expire, code: "InvalidArgument"},
-		"NegativeLess":      {filter: `<ObjectSizeLessThan>-1</ObjectSizeLessThan>`, action: expire, code: "InvalidArgument"},
+		"AndOfPrefix":       {filter: `<And><Prefix>a/</Prefix></And>`, action: expire, code: "MalformedXML"},
+		"AndOfTag":          {filter: `<And>` + tag + `</And>`, action: expire, code: "MalformedXML"},
+		"AndOfSize":         {filter: `<And><ObjectSizeGreaterThan>5</ObjectSizeGreaterThan></And>`, action: expire, code: "MalformedXML"},
+		"EmptyAnd":          {filter: `<And></And>`, action: expire, code: "MalformedXML"},
+		"TagWithoutValue":   {filter: `<Tag><Key>k</Key></Tag>`, action: expire, code: "MalformedXML"},
+		"GreaterEqualLess":  {filter: `<And><ObjectSizeGreaterThan>100</ObjectSizeGreaterThan><ObjectSizeLessThan>100</ObjectSizeLessThan></And>`, action: expire, code: "InvalidRequest"},
+		"GreaterAboveLess":  {filter: `<And><ObjectSizeGreaterThan>200</ObjectSizeGreaterThan><ObjectSizeLessThan>100</ObjectSizeLessThan></And>`, action: expire, code: "InvalidRequest"},
+		"NegativeGreater":   {filter: `<ObjectSizeGreaterThan>-1</ObjectSizeGreaterThan>`, action: expire, code: "InvalidRequest"},
+		"GreaterOverMax":    {filter: `<ObjectSizeGreaterThan>` + over + `</ObjectSizeGreaterThan>`, action: expire, code: "InvalidRequest"},
+		"ZeroLess":          {filter: `<ObjectSizeLessThan>0</ObjectSizeLessThan>`, action: expire, code: "InvalidRequest"},
+		"LessOverMax":       {filter: `<ObjectSizeLessThan>` + over + `</ObjectSizeLessThan>`, action: expire, code: "InvalidRequest"},
 		"TagWithMarker":     {filter: tag, action: marker, code: "InvalidRequest"},
 		"AndTagWithMarker":  {filter: `<And><Prefix>a/</Prefix>` + tag + `</And>`, action: marker, code: "InvalidRequest"},
 		"TagWithAbort":      {filter: tag, action: abort, code: "InvalidRequest"},
 		"SizeWithAbort":     {filter: `<ObjectSizeGreaterThan>1</ObjectSizeGreaterThan>`, action: abort, code: "InvalidRequest"},
-		"EmptyTagKey":       {filter: `<Tag><Key></Key><Value>v</Value></Tag>`, action: expire, code: "InvalidTag"},
-		"LongTagKey":        {filter: `<Tag><Key>` + strings.Repeat("k", 129) + `</Key><Value>v</Value></Tag>`, action: expire, code: "InvalidTag"},
-		"LongTagValue":      {filter: `<Tag><Key>k</Key><Value>` + strings.Repeat("v", 257) + `</Value></Tag>`, action: expire, code: "InvalidTag"},
-		"DuplicateTagKeys":  {filter: `<And>` + tag + `<Tag><Key>k</Key><Value>w</Value></Tag></And>`, action: expire, code: "InvalidTag"},
-		"SizeWithMarker":    {filter: `<ObjectSizeLessThan>1</ObjectSizeLessThan>`, action: marker},
+		"SizeWithMarker":    {filter: `<ObjectSizeLessThan>1</ObjectSizeLessThan>`, action: marker, code: "InvalidRequest"},
+		"EmptyTagKey":       {filter: `<Tag><Key></Key><Value>v</Value></Tag>`, action: expire, code: "InvalidRequest"},
+		"LongTagKey":        {filter: `<Tag><Key>` + strings.Repeat("k", 129) + `</Key><Value>v</Value></Tag>`, action: expire, code: "InvalidRequest"},
+		"LongTagValue":      {filter: `<Tag><Key>k</Key><Value>` + strings.Repeat("v", 257) + `</Value></Tag>`, action: expire, code: "InvalidRequest"},
+		"DuplicateTagKeys":  {filter: `<And>` + tag + `<Tag><Key>k</Key><Value>w</Value></Tag></And>`, action: expire, code: "InvalidRequest"},
+		"ZeroGreater":       {filter: `<ObjectSizeGreaterThan>0</ObjectSizeGreaterThan>`, action: expire},
+		"MaxBounds":         {filter: `<And><ObjectSizeGreaterThan>1</ObjectSizeGreaterThan><ObjectSizeLessThan>` + maxSize + `</ObjectSizeLessThan></And>`, action: expire},
+		"EmptyTagValue":     {filter: `<Tag><Key>k</Key><Value></Value></Tag>`, action: expire},
 		"PrefixWithAbort":   {filter: `<Prefix>a/</Prefix>`, action: abort},
 		"ElevenTags":        {filter: `<And>` + elevenTags() + `</And>`, action: expire},
 		"TagWithNoncurrent": {filter: tag, action: `<NoncurrentVersionExpiration><NoncurrentDays>1</NoncurrentDays></NoncurrentVersionExpiration>`},
@@ -491,6 +494,15 @@ func TestBucketLifecycle_FiltersValidation(t *testing.T) {
 	}
 }
 
+func requireTag(t *testing.T, tag *handler.LifecycleTagXML, key, value string) {
+	t.Helper()
+
+	require.NotNil(t, tag)
+	require.Equal(t, key, tag.Key)
+	require.NotNil(t, tag.Value)
+	require.Equal(t, value, *tag.Value)
+}
+
 // elevenTags is one more tag than an object may carry, which a rule may
 // still require.
 func elevenTags() string {
@@ -501,4 +513,25 @@ func elevenTags() string {
 	}
 
 	return b.String()
+}
+
+// TestBucketLifecycle_MarkerFalse: AWS accepts a rule whose only action is
+// ExpiredObjectDeleteMarker false, and returns it as it was sent.
+func TestBucketLifecycle_MarkerFalse(t *testing.T) {
+	h := lifecycleEngineHandler(t)
+
+	put := lifecycleRequest(t, h, http.MethodPut, `<LifecycleConfiguration><Rule><ID>x</ID><Status>Enabled</Status>
+		<Filter><Prefix></Prefix></Filter>
+		<Expiration><ExpiredObjectDeleteMarker>false</ExpiredObjectDeleteMarker></Expiration></Rule></LifecycleConfiguration>`)
+	require.Equal(t, http.StatusOK, put.Code, put.Body.String())
+
+	get := lifecycleRequest(t, h, http.MethodGet, "")
+	require.Equal(t, http.StatusOK, get.Code)
+
+	var doc handler.LifecycleConfigurationXML
+	require.NoError(t, xml.Unmarshal(get.Body.Bytes(), &doc))
+	require.Len(t, doc.Rules, 1)
+	require.NotNil(t, doc.Rules[0].Expiration)
+	require.NotNil(t, doc.Rules[0].Expiration.ExpiredObjectDeleteMarker)
+	require.False(t, *doc.Rules[0].Expiration.ExpiredObjectDeleteMarker)
 }
