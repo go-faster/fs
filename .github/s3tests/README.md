@@ -34,6 +34,11 @@ no separate checker step. The whole run takes seconds rather than minutes.
 are reproducible; bump it deliberately and re-baseline the list. The commit of
 ceph/s3-tests it tracks is recorded in s3t's own `UPSTREAM` file.
 
+The single-node job runs the suite twice against one server started with
+`--domain localhost`: path-style, then with `addressing_style = virtual`, which
+sends every bucket request to `<bucket>.localhost`. Both runs are held to the
+same known-failures list, so a virtual-host-only regression fails the job.
+
 `s3t` decides the verdict itself. It fails on two things, and the second is
 the important one:
 

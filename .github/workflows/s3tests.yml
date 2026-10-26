@@ -31,7 +31,7 @@ concurrency:
 env:
   # Pinned for reproducibility; bump deliberately and re-baseline the
   # known-failures list.
-  S3T_REF: 51506ac904f6e35424b3ec9d38716985023beba6
+  S3T_REF: 9a2d2ebb162e9357fcaa9cc5b0d42ead1138da0e
   S3_PORT: '8077'
 
 jobs:
@@ -82,8 +82,10 @@ jobs:
           mkdir -p .s3data-ci
           # Run AUTHENTICATED: the config carries the suite's credentials so it
           # exercises SigV4. The anonymous-access tests pass via canned
-          # public-read/-write ACLs.
-          ./fs s3 --config .github/s3tests/server.yaml --addr ":${S3_PORT}" --root ./.s3data-ci > fs-server.log 2>&1 &
+          # public-read/-write ACLs. The localhost domain serves
+          # <bucket>.localhost as virtual hosts for the second run; the first
+          # run's path-style requests are unaffected.
+          ./fs s3 --config .github/s3tests/server.yaml --addr ":${S3_PORT}" --root ./.s3data-ci --domain localhost > fs-server.log 2>&1 &
           echo "$!" > fs.pid
           for i in $(seq 1 30); do
             if curl -fsS -o /dev/null "http://localhost:${S3_PORT}/health"; then
@@ -104,6 +106,20 @@ jobs:
             --json s3tests.json \
             --timeout 60s
 
+      - name: Run the suite with virtual-host addressing
+        run: |
+          # The same suite and gate, every bucket addressed as
+          # <bucket>.localhost (s3t dials it as localhost; no DNS needed).
+          # Fresh random bucket names keep it apart from the first run.
+          sed 's/^\[DEFAULT\]$/[DEFAULT]\naddressing_style = virtual/' \
+            .github/s3tests/s3tests.conf > s3tests-virtual.conf
+          s3t run \
+            --config s3tests-virtual.conf \
+            --known-failures .github/s3tests/known-failures.txt \
+            --junit s3tests-virtual.xml \
+            --json s3tests-virtual.json \
+            --timeout 60s
+
       - name: Show why the tests failed
         if: failure()
         run: |
@@ -112,9 +128,13 @@ jobs:
           # re-run — and the re-run then destroyed its own evidence, because it
           # overwrote the artifact with a passing one. Print it here instead,
           # where the log for this attempt is permanent.
-          jq -r 'select(.status == "failed" or .status == "error")
-                 | "\n=== \(.node_id) ===\n\(.output // "no output recorded")"' \
-            s3tests.json || true
+          for report in s3tests.json s3tests-virtual.json; do
+            [ -f "$report" ] || continue
+            echo "##### ${report}"
+            jq -r 'select(.status == "failed" or .status == "error")
+                   | "\n=== \(.node_id) ===\n\(.output // "no output recorded")"' \
+              "$report" || true
+          done
 
       - name: Show server log on failure
         if: failure()
@@ -128,6 +148,8 @@ jobs:
           path: |
             s3tests.xml
             s3tests.json
+            s3tests-virtual.xml
+            s3tests-virtual.json
             fs-server.log
           if-no-files-found: ignore
 
