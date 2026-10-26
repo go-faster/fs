@@ -18,6 +18,10 @@ var (
 	// a missing key: the caller asked for something that is there and cannot
 	// be read, not for something that is not there.
 	ErrMethodNotAllowedOnDeleteMarker = errors.New("method not allowed on a delete marker")
+	// ErrVersionNotFound reports a version a request named that the key does
+	// not have, whether or not the key exists. S3 tells it from a missing key
+	// (NoSuchVersion, not NoSuchKey).
+	ErrVersionNotFound = errors.New("version not found")
 	// ErrBucketOwnedBySomeoneElse reports a create against a bucket name that
 	// another principal already holds.
 	ErrBucketOwnedBySomeoneElse = errors.New("bucket owned by someone else")

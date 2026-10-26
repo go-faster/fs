@@ -33,7 +33,7 @@ func (h *handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 
 	src, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
 	if !ok {
-		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-copy-source"))
+		renderAPIError(ctx, w, r, copySourceRefusal(r.Header.Get("X-Amz-Copy-Source")), errors.New("invalid x-amz-copy-source"))
 		return
 	}
 
@@ -192,6 +192,19 @@ func parseDirective(value string) (string, bool) {
 	}
 }
 
+// copySourceRefusal is how S3 refuses an x-amz-copy-source parseCopySource
+// rejects: InvalidRequest when its versionId is malformed, as AWS S3
+// answers, and InvalidArgument for anything else.
+func copySourceRefusal(header string) s3err.APIError {
+	if _, query, found := strings.Cut(header, "?"); found {
+		if q, err := url.ParseQuery(query); err == nil && q.Has("versionId") && !fs.ValidVersionID(q.Get("versionId")) {
+			return s3err.InvalidRequest
+		}
+	}
+
+	return s3err.InvalidArgument
+}
+
 // copySourceError names the copy's source, not the request's target, in the
 // body of a missing bucket or key, as S3 does.
 func copySourceError(err error, src copySource) error {
@@ -231,6 +244,12 @@ func parseCopySource(s string) (src copySource, ok bool) {
 		// rejected, matching how the rest of the query surface is treated.
 		if q, err := url.ParseQuery(s[i+1:]); err == nil {
 			src.VersionID = q.Get("versionId")
+
+			// A source version this server could not have issued is not a
+			// source; the caller answers it as AWS S3 does.
+			if q.Has("versionId") && !fs.ValidVersionID(src.VersionID) {
+				return copySource{}, false
+			}
 		}
 
 		s = s[:i]

@@ -88,7 +88,8 @@ The shared vocabulary every layer speaks:
   `SetObjectACL`/`ObjectACL`), object ownership (`ObjectOwner`), and the
   multipart operations (including `ListParts`/`ListMultipartUploads`).
 - Sentinel errors (`ErrBucketNotFound`, `ErrObjectNotFound`,
-  `ErrUploadNotFound`, `ErrBucketAlreadyExists`, `ErrBucketNotEmpty`,
+  `ErrVersionNotFound` — a named version the key does not have, 404
+  NoSuchVersion rather than NoSuchKey, `ErrUploadNotFound`, `ErrBucketAlreadyExists`, `ErrBucketNotEmpty`,
   `ErrInvalidBucketName`, `ErrInvalidKey`, `ErrUnsupportedOperation`,
   `ErrPreconditionFailed`,
   `ErrInvalidPart`, `ErrInvalidPartOrder`, `ErrInvalidPartNumber`,
