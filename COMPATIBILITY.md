@@ -66,7 +66,8 @@ Each requires a design document before commitment:
   (see above; designs:
   [docs/design/noncurrent-version-expiration.md](docs/design/noncurrent-version-expiration.md),
   [docs/design/lifecycle-filters.md](docs/design/lifecycle-filters.md)).
-- **Virtual-host-style addressing** (`bucket.host`).
+- **Virtual-host-style addressing** (`bucket.host`; design, proposed:
+  [docs/design/virtual-host-addressing.md](docs/design/virtual-host-addressing.md)).
 - **Bucket-policy subset** — only if the per-key grant model proves
   insufficient.
 - **Static website hosting**, **ACME / automatic TLS**.
