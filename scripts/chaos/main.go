@@ -3,7 +3,11 @@
 // Command chaos runs a soak test of a cluster: real fs processes under a
 // mixed workload while nodes are killed, frozen and moved in and out of the
 // layout, checking after every round that the cluster lost no acknowledged
-// write, served no torn object and brought nothing deleted back.
+// write, served no torn object and brought nothing deleted back, and that
+// bucket usage agrees with what the buckets list. The versioned bucket has
+// lifecycle rules a moved sweep clock makes due at once, so noncurrent
+// versions and delete markers are removed while the disruptions run; at the
+// end every key must hold no more than its rule keeps.
 //
 //	go run ./scripts/chaos -fs ./fs -rounds 8
 //
@@ -38,6 +42,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/lifecycle"
 
 	"github.com/go-faster/fs/adminapi"
 )
@@ -99,6 +104,16 @@ func storageConfig() string {
     tombstone_delay: 20s`
 }
 
+// lifecycleInterval is how often each node sweeps. It is short in both modes:
+// at the production cadence of 12h no pass would run within a soak.
+func lifecycleInterval() string {
+	if realistic {
+		return "1m"
+	}
+
+	return "10s"
+}
+
 func (c *cluster) config(n *node) string {
 	return fmt.Sprintf(`server:
   addr: "127.0.0.1:%d"
@@ -111,14 +126,14 @@ auth:
         - bucket: "*"
           permission: admin
 admin: {enabled: true, addr: "127.0.0.1:%d", token: %s}
-lifecycle: {interval: 0s}
+lifecycle: {interval: %s, clock_offset: 48h}
 cluster:
   node_id: %s
   addr: "127.0.0.1:%d"
   advertise_addr: "127.0.0.1:%d"
   peers: ["127.0.0.1:%d"]
   secret: %s
-`, n.s3, accessKey, secretKey, n.admin, token, n.id, n.peer, n.peer, c.nodes[0].peer, secret)
+`, n.s3, accessKey, secretKey, n.admin, token, lifecycleInterval(), n.id, n.peer, n.peer, c.nodes[0].peer, secret)
 }
 
 func (c *cluster) start(n *node) error {
@@ -697,6 +712,18 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		return err
 	}
 
+	if err := n1.client.SetBucketLifecycle(ctx, "versioned", lifecycleRules(workers)); err != nil {
+		return fmt.Errorf("lifecycle: %w", err)
+	}
+
+	// A limit the soak never reaches, so that every write goes through
+	// enforcement and its usage cache without being refused.
+	if _, err := c.admin(n1).SetBucketQuota(ctx, &adminapi.Quota{
+		Enabled: true, MaxObjects: adminapi.NewOptInt64(1 << 40), MaxSize: adminapi.NewOptInt64(1 << 60),
+	}, adminapi.SetBucketQuotaParams{Bucket: "replicated"}); err != nil {
+		return fmt.Errorf("quota: %w", err)
+	}
+
 	h := &harness{c: c, rng: rand.New(rand.NewPCG(seed, 1))} //nolint:gosec // A seeded, reproducible workload.
 
 	for w := range workers {
@@ -822,7 +849,7 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 	readErrs := 0
 
-	var keyErrs []string
+	var keyErrs, usageErrs []string
 
 	for round := range rounds {
 		h.round = round + 1
@@ -862,8 +889,18 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 			fmt.Println("  KEYS:", err)
 		}
 
+		if err := h.checkUsage(ctx); err != nil {
+			usageErrs = append(usageErrs, fmt.Sprintf("round %d: %v", h.round, err))
+			fmt.Println("  USAGE:", err)
+		}
+
 		fmt.Printf("  ops ok %d, failed %d, unavailable reads %d; verify read errors %d; violations so far %d\n",
 			h.ok.Load(), h.failed.Load(), h.unavailable.Load(), errs, len(h.violations))
+	}
+
+	lifecycleErr := h.checkLifecycle(ctx, workers)
+	if lifecycleErr != nil {
+		fmt.Println("LIFECYCLE", lifecycleErr)
 	}
 
 	h.report()
@@ -872,9 +909,13 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		fmt.Println("KEYS " + e)
 	}
 
-	if len(h.violations) > 0 || readErrs > 0 || len(keyErrs) > 0 {
-		return fmt.Errorf("%d violations, %d read errors with every node up, %d access-key failures; data kept in %s",
-			len(h.violations), readErrs, len(keyErrs), dir)
+	for _, e := range usageErrs {
+		fmt.Println("USAGE " + e)
+	}
+
+	if len(h.violations) > 0 || readErrs > 0 || len(keyErrs) > 0 || len(usageErrs) > 0 || lifecycleErr != nil {
+		return fmt.Errorf("%d violations, %d read errors with every node up, %d access-key failures, %d usage mismatches, lifecycle: %v; data kept in %s",
+			len(h.violations), readErrs, len(keyErrs), len(usageErrs), lifecycleErr, dir)
 	}
 
 	fmt.Println("PASS")
@@ -985,6 +1026,190 @@ func (h *harness) everyNode(ctx context.Context, nodes []*node, id, secret strin
 			}
 
 			time.Sleep(time.Second)
+		}
+	}
+
+	return nil
+}
+
+// keptNoncurrent is how many noncurrent versions the lifecycle rules keep of
+// a key of worker w: odd workers' keys keep two, even workers' none.
+func keptNoncurrent(w int) int {
+	if w%2 == 1 {
+		return 2
+	}
+
+	return 0
+}
+
+// lifecycleRules expires every noncurrent version in the versioned bucket a
+// day after it was replaced (at once, given the nodes' moved clock), keeping
+// the newest keptNoncurrent, and removes delete markers left with nothing
+// under them.
+func lifecycleRules(workers int) *lifecycle.Configuration {
+	cfg := lifecycle.NewConfiguration()
+
+	for w := range workers {
+		cfg.Rules = append(cfg.Rules, lifecycle.Rule{
+			ID:         fmt.Sprintf("w%d", w),
+			Status:     "Enabled",
+			RuleFilter: lifecycle.Filter{Prefix: fmt.Sprintf("w%d/", w)},
+			Expiration: lifecycle.Expiration{DeleteMarker: true},
+			NoncurrentVersionExpiration: lifecycle.NoncurrentVersionExpiration{
+				NoncurrentDays:          1,
+				NewerNoncurrentVersions: keptNoncurrent(w),
+			},
+		})
+	}
+
+	return cfg
+}
+
+// lifecycleWithin bounds how long the sweeps may take, with every node up, to
+// bring each key to what its rule keeps: a restarted node waits a minute
+// before its first pass.
+const lifecycleWithin = 5 * time.Minute
+
+// checkLifecycle waits until no key of the versioned bucket holds more
+// noncurrent versions than its rule keeps, nor a delete marker with nothing
+// under it.
+func (h *harness) checkLifecycle(ctx context.Context, workers int) error {
+	n := h.c.live()[0]
+	deadline := time.Now().Add(lifecycleWithin)
+
+	for {
+		var (
+			excess          []string
+			keys, nKept     int
+			markers, lonely int
+		)
+
+		for w := range workers {
+			kept := keptNoncurrent(w)
+			noncurrent := map[string]int{}
+			versions := map[string]int{}
+			marker := map[string]bool{}
+
+			for obj := range n.client.ListObjects(ctx, "versioned", minio.ListObjectsOptions{
+				Prefix: fmt.Sprintf("w%d/", w), Recursive: true, WithVersions: true,
+			}) {
+				if obj.Err != nil {
+					return obj.Err
+				}
+
+				versions[obj.Key]++
+
+				switch {
+				case !obj.IsLatest:
+					noncurrent[obj.Key]++
+				case obj.IsDeleteMarker:
+					marker[obj.Key] = true
+				}
+			}
+
+			keys += len(versions)
+
+			for key, c := range noncurrent {
+				nKept += c
+
+				if c > kept {
+					excess = append(excess, fmt.Sprintf("%s holds %d noncurrent, keeps %d", key, c, kept))
+				}
+			}
+
+			for key := range marker {
+				markers++
+
+				if versions[key] == 1 {
+					excess = append(excess, key+" is a lone delete marker")
+				}
+			}
+		}
+
+		// A deleted key of a rule that keeps nothing is one whose marker the
+		// sweeps had to remove: without any, that path went untried.
+		for w, ks := range h.keys {
+			for _, k := range ks {
+				if k.bucket == "versioned" && keptNoncurrent(w) == 0 && len(k.possible) == 1 && k.possible[""] {
+					lonely++
+				}
+			}
+		}
+
+		if len(excess) == 0 {
+			fmt.Printf("lifecycle: %d keys listed, %d noncurrent versions kept, %d current delete markers; %d deleted keys lost their marker\n",
+				keys, nKept, markers, lonely)
+
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			slices.Sort(excess)
+
+			return fmt.Errorf("after %s: %d keys over their rule, first %s", lifecycleWithin, len(excess), excess[0])
+		}
+
+		time.Sleep(10 * time.Second)
+	}
+}
+
+// usageWithin bounds how long bucket usage may take to agree with a listing
+// once every node is up: replicas converge on the anti-entropy interval.
+func usageWithin() time.Duration {
+	if realistic {
+		return 15 * time.Minute
+	}
+
+	return time.Minute
+}
+
+// checkUsage requires every bucket's usage, as the admin API reports it, to
+// match the versions a listing finds: delete markers and uploads in flight
+// count in neither.
+func (h *harness) checkUsage(ctx context.Context) error {
+	deadline := time.Now().Add(usageWithin())
+
+	for _, b := range buckets {
+		for {
+			live := h.c.live()
+			n := live[h.rng.IntN(len(live))]
+
+			var listed adminapi.QuotaUsage
+
+			var listErr error
+
+			for obj := range n.client.ListObjects(ctx, b.name, minio.ListObjectsOptions{Recursive: true, WithVersions: true}) {
+				if obj.Err != nil {
+					listErr = obj.Err
+
+					break
+				}
+
+				if !obj.IsDeleteMarker {
+					listed.Objects++
+					listed.Bytes += obj.Size
+				}
+			}
+
+			st, err := h.c.admin(n).GetBucketQuota(ctx, adminapi.GetBucketQuotaParams{Bucket: b.name})
+			if err == nil && listErr == nil && st.Usage == listed {
+				break
+			}
+
+			if time.Now().After(deadline) {
+				if err == nil {
+					err = listErr
+				}
+
+				if err != nil {
+					return fmt.Errorf("%s: %w", b.name, err)
+				}
+
+				return fmt.Errorf("%s: usage %d objects, %d bytes; listing %d objects, %d bytes",
+					b.name, st.Usage.Objects, st.Usage.Bytes, listed.Objects, listed.Bytes)
+			}
+
+			time.Sleep(3 * time.Second)
 		}
 	}
 
