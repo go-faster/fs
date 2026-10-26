@@ -38,7 +38,7 @@ func (h *handler) UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 
 	source, ok := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
 	if !ok {
-		renderAPIError(ctx, w, r, s3err.InvalidArgument, errors.New("invalid x-amz-copy-source"))
+		renderAPIError(ctx, w, r, copySourceRefusal(r.Header.Get("X-Amz-Copy-Source")), errors.New("invalid x-amz-copy-source"))
 		return
 	}
 

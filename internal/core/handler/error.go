@@ -59,7 +59,7 @@ func logRequestError(ctx context.Context, r *http.Request, code string, err erro
 
 	lg := zctx.From(ctx)
 
-	if code == s3err.NoSuchBucket.Code || code == s3err.NoSuchKey.Code {
+	if code == s3err.NoSuchBucket.Code || code == s3err.NoSuchKey.Code || code == s3err.NoSuchVersion.Code {
 		lg.Debug("Request failed", fields...)
 
 		return

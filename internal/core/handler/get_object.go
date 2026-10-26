@@ -329,5 +329,13 @@ func (h *handler) getObjectVersion(
 		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot address versions")
 	}
 
-	return versioner.GetObjectVersion(ctx, bucket, key, versionID)
+	resp, err := versioner.GetObjectVersion(ctx, bucket, key, versionID)
+	if errors.Is(err, fs.ErrObjectNotFound) {
+		// A named version that is not there is NoSuchVersion, naming the key
+		// and version asked for: for a copy, the source's.
+		return nil, s3err.WithDetail(errors.Wrapf(fs.ErrVersionNotFound, "%s version %s", key, versionID),
+			s3err.Detail{Key: key, VersionID: versionID})
+	}
+
+	return resp, err
 }

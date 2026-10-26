@@ -30,13 +30,14 @@ type APIError struct {
 
 // Detail holds the elements S3 adds to an error body after Code and Message.
 // Which ones appear depends on the code, as AWS S3 renders them: BucketName
-// for NoSuchBucket, Key for NoSuchKey, UploadId for NoSuchUpload, Condition
+// for NoSuchBucket, Key for NoSuchKey, Key and VersionId for NoSuchVersion, UploadId for NoSuchUpload, Condition
 // for PreconditionFailed, RangeRequested and ActualObjectSize for
 // InvalidRange, ArgumentName and ArgumentValue for InvalidArgument, Method and
 // ResourceType for MethodNotAllowed. Empty elements are left out.
 type Detail struct {
 	BucketName       string `xml:"BucketName,omitempty"`
 	Key              string `xml:"Key,omitempty"`
+	VersionID        string `xml:"VersionId,omitempty"`
 	UploadID         string `xml:"UploadId,omitempty"`
 	Condition        string `xml:"Condition,omitempty"`
 	RangeRequested   string `xml:"RangeRequested,omitempty"`
@@ -57,6 +58,7 @@ func (d Detail) merge(o Detail) Detail {
 
 	fill(&d.BucketName, o.BucketName)
 	fill(&d.Key, o.Key)
+	fill(&d.VersionID, o.VersionID)
 	fill(&d.UploadID, o.UploadID)
 	fill(&d.Condition, o.Condition)
 	fill(&d.RangeRequested, o.RangeRequested)
@@ -117,6 +119,7 @@ func DetailOf(err error) Detail {
 var (
 	NoSuchBucket                 = APIError{"NoSuchBucket", http.StatusNotFound, "The specified bucket does not exist"}
 	NoSuchKey                    = APIError{"NoSuchKey", http.StatusNotFound, "The specified key does not exist."}
+	NoSuchVersion                = APIError{"NoSuchVersion", http.StatusNotFound, "The specified version does not exist."}
 	NoSuchUpload                 = APIError{"NoSuchUpload", http.StatusNotFound, "The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed."}
 	NoSuchBucketPolicy           = APIError{"NoSuchBucketPolicy", http.StatusNotFound, "The bucket policy does not exist."}
 	NoSuchCORSConfiguration      = APIError{"NoSuchCORSConfiguration", http.StatusNotFound, "The CORS configuration does not exist"}
@@ -205,6 +208,8 @@ func FromError(err error) APIError {
 		return InternalError
 	case errors.Is(err, fs.ErrBucketNotFound):
 		return NoSuchBucket
+	case errors.Is(err, fs.ErrVersionNotFound):
+		return NoSuchVersion
 	case errors.Is(err, fs.ErrObjectNotFound):
 		return NoSuchKey
 	case errors.Is(err, fs.ErrUploadNotFound):
@@ -292,6 +297,8 @@ func fromRequest(r *http.Request, api APIError) Detail {
 		return Detail{BucketName: bucket}
 	case NoSuchKey.Code:
 		return Detail{Key: key}
+	case NoSuchVersion.Code:
+		return Detail{Key: key, VersionID: r.URL.Query().Get("versionId")}
 	case NoSuchUpload.Code:
 		return Detail{UploadID: r.URL.Query().Get("uploadId")}
 	case MethodNotAllowed.Code:

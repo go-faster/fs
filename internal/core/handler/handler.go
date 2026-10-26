@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-faster/errors"
 	"github.com/go-faster/sdk/zctx"
 	"go.uber.org/zap"
 
@@ -354,6 +355,14 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 
+	if q.Has("versionId") {
+		if apiErr, err := checkVersionID(q.Get("versionId")); err != nil {
+			renderAPIError(r.Context(), w, r, apiErr, err)
+
+			return
+		}
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		switch {
@@ -400,6 +409,23 @@ func (h *handler) routeObject(w http.ResponseWriter, r *http.Request) {
 		h.HandleObjectPost(w, r)
 	default:
 		s3err.WriteAPI(w, r, s3err.MethodNotAllowed)
+	}
+}
+
+// checkVersionID refuses a versionId this server could not have issued,
+// before any operation reads it. AWS S3 answers InvalidArgument, naming the
+// argument, for every object request: reads, deletes, and the tagging and
+// ACL subresources alike.
+func checkVersionID(id string) (s3err.APIError, error) {
+	d := s3err.Detail{ArgumentName: "versionId", ArgumentValue: id}
+
+	switch {
+	case id == "":
+		return s3err.InvalidArgument, s3err.WithDetail(errors.New("version id cannot be the empty string"), d)
+	case !fs.ValidVersionID(id):
+		return s3err.InvalidArgument, s3err.WithDetail(errors.Errorf("invalid version id %q", id), d)
+	default:
+		return s3err.APIError{}, nil
 	}
 }
 
