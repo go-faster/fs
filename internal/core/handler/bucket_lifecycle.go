@@ -442,7 +442,7 @@ const (
 	maxLifecycleTagKey   = 128
 	maxLifecycleTagValue = 256
 	// maxLifecycleObjectSize is the largest size bound AWS accepts: 1000 TiB.
-	maxLifecycleObjectSize = 1000 << 40
+	maxLifecycleObjectSize int64 = 1000 << 40
 )
 
 // count is how many of set are true.
