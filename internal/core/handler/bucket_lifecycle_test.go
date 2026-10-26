@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,12 +122,6 @@ func TestBucketLifecycle_RefusesUnenforced(t *testing.T) {
 			<NoncurrentVersionExpiration><NoncurrentDays>1</NoncurrentDays></NoncurrentVersionExpiration></Rule>`,
 		"ExpiredObjectDeleteMarkerWithoutVersions": `<Rule><ID>e</ID><Status>Enabled</Status><Prefix></Prefix>
 			<Expiration><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration></Rule>`,
-		"FilterTag": `<Rule><ID>f</ID><Status>Enabled</Status>
-			<Filter><Tag><Key>k</Key><Value>v</Value></Tag></Filter>
-			<Expiration><Days>1</Days></Expiration></Rule>`,
-		"FilterSize": `<Rule><ID>s</ID><Status>Enabled</Status>
-			<Filter><ObjectSizeGreaterThan>1</ObjectSizeGreaterThan></Filter>
-			<Expiration><Days>1</Days></Expiration></Rule>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newLifecycleHandler(t)
@@ -354,4 +349,156 @@ func TestBucketLifecycle_VersionsValidation(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, get.Code)
 		})
 	}
+}
+
+// TestBucketLifecycle_Filters round-trips each filter shape: a single
+// predicate comes back bare and several inside And, as S3 renders them.
+func TestBucketLifecycle_Filters(t *testing.T) {
+	const expire = `<Expiration><Days>1</Days></Expiration>`
+
+	for name, tc := range map[string]struct {
+		filter string
+		check  func(t *testing.T, f *handler.LifecycleFilterXML)
+	}{
+		"Tag": {
+			filter: `<Tag><Key>tmp</Key><Value>true</Value></Tag>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.Equal(t, &handler.LifecycleTagXML{Key: "tmp", Value: "true"}, f.Tag)
+				require.Nil(t, f.And)
+				require.Nil(t, f.Prefix)
+			},
+		},
+		"EmptyTagValue": {
+			filter: `<Tag><Key>tmp</Key></Tag>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.Equal(t, &handler.LifecycleTagXML{Key: "tmp"}, f.Tag)
+			},
+		},
+		"GreaterThan": {
+			filter: `<ObjectSizeGreaterThan>0</ObjectSizeGreaterThan>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.NotNil(t, f.ObjectSizeGreaterThan)
+				require.Equal(t, int64(0), *f.ObjectSizeGreaterThan)
+				require.Nil(t, f.ObjectSizeLessThan)
+			},
+		},
+		"LessThan": {
+			filter: `<ObjectSizeLessThan>1024</ObjectSizeLessThan>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.NotNil(t, f.ObjectSizeLessThan)
+				require.Equal(t, int64(1024), *f.ObjectSizeLessThan)
+			},
+		},
+		"And": {
+			filter: `<And><Prefix>logs/</Prefix><Tag><Key>a</Key><Value>1</Value></Tag><Tag><Key>b</Key><Value>2</Value></Tag>
+				<ObjectSizeGreaterThan>10</ObjectSizeGreaterThan><ObjectSizeLessThan>100</ObjectSizeLessThan></And>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.NotNil(t, f.And)
+				require.Nil(t, f.Tag)
+				require.Equal(t, "logs/", *f.And.Prefix)
+				require.Equal(t, []handler.LifecycleTagXML{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}, f.And.Tags)
+				require.Equal(t, int64(10), *f.And.ObjectSizeGreaterThan)
+				require.Equal(t, int64(100), *f.And.ObjectSizeLessThan)
+			},
+		},
+		"AndOfOne": {
+			// Ceph RGW renders a one-predicate And bare, and so does fs.
+			filter: `<And><Tag><Key>a</Key><Value>1</Value></Tag></And>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.Nil(t, f.And)
+				require.Equal(t, &handler.LifecycleTagXML{Key: "a", Value: "1"}, f.Tag)
+			},
+		},
+		"EmptyAnd": {
+			filter: `<And></And>`,
+			check: func(t *testing.T, f *handler.LifecycleFilterXML) {
+				require.Nil(t, f.And)
+				require.NotNil(t, f.Prefix)
+				require.Empty(t, *f.Prefix)
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newLifecycleHandler(t)
+
+			put := lifecycleRequest(t, h, http.MethodPut, `<LifecycleConfiguration><Rule><ID>f</ID><Status>Enabled</Status>
+				<Filter>`+tc.filter+`</Filter>`+expire+`</Rule></LifecycleConfiguration>`)
+			require.Equal(t, http.StatusOK, put.Code, put.Body.String())
+
+			get := lifecycleRequest(t, h, http.MethodGet, "")
+			require.Equal(t, http.StatusOK, get.Code)
+
+			var doc handler.LifecycleConfigurationXML
+			require.NoError(t, xml.Unmarshal(get.Body.Bytes(), &doc))
+			require.Len(t, doc.Rules, 1)
+			require.NotNil(t, doc.Rules[0].Filter)
+			tc.check(t, doc.Rules[0].Filter)
+		})
+	}
+}
+
+// TestBucketLifecycle_FiltersValidation covers the design's validation table
+// (docs/design/lifecycle-filters.md), on the engine so that the version
+// actions are accepted where a filter allows them.
+func TestBucketLifecycle_FiltersValidation(t *testing.T) {
+	const (
+		expire = `<Expiration><Days>1</Days></Expiration>`
+		marker = `<Expiration><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration>`
+		abort  = `<AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>`
+		tag    = `<Tag><Key>k</Key><Value>v</Value></Tag>`
+	)
+
+	for name, tc := range map[string]struct {
+		filter, action string
+		code           string // Empty: accepted.
+	}{
+		"BarePrefixAndTag":  {filter: `<Prefix>a/</Prefix>` + tag, action: expire, code: "MalformedXML"},
+		"BareBothSizes":     {filter: `<ObjectSizeGreaterThan>1</ObjectSizeGreaterThan><ObjectSizeLessThan>9</ObjectSizeLessThan>`, action: expire, code: "MalformedXML"},
+		"GreaterNotBelow":   {filter: `<And><ObjectSizeGreaterThan>100</ObjectSizeGreaterThan><ObjectSizeLessThan>100</ObjectSizeLessThan></And>`, action: expire, code: "MalformedXML"},
+		"NegativeGreater":   {filter: `<ObjectSizeGreaterThan>-1</ObjectSizeGreaterThan>`, action: expire, code: "InvalidArgument"},
+		"NegativeLess":      {filter: `<ObjectSizeLessThan>-1</ObjectSizeLessThan>`, action: expire, code: "InvalidArgument"},
+		"TagWithMarker":     {filter: tag, action: marker, code: "InvalidRequest"},
+		"AndTagWithMarker":  {filter: `<And><Prefix>a/</Prefix>` + tag + `</And>`, action: marker, code: "InvalidRequest"},
+		"TagWithAbort":      {filter: tag, action: abort, code: "InvalidRequest"},
+		"SizeWithAbort":     {filter: `<ObjectSizeGreaterThan>1</ObjectSizeGreaterThan>`, action: abort, code: "InvalidRequest"},
+		"EmptyTagKey":       {filter: `<Tag><Key></Key><Value>v</Value></Tag>`, action: expire, code: "InvalidTag"},
+		"LongTagKey":        {filter: `<Tag><Key>` + strings.Repeat("k", 129) + `</Key><Value>v</Value></Tag>`, action: expire, code: "InvalidTag"},
+		"LongTagValue":      {filter: `<Tag><Key>k</Key><Value>` + strings.Repeat("v", 257) + `</Value></Tag>`, action: expire, code: "InvalidTag"},
+		"DuplicateTagKeys":  {filter: `<And>` + tag + `<Tag><Key>k</Key><Value>w</Value></Tag></And>`, action: expire, code: "InvalidTag"},
+		"SizeWithMarker":    {filter: `<ObjectSizeLessThan>1</ObjectSizeLessThan>`, action: marker},
+		"PrefixWithAbort":   {filter: `<Prefix>a/</Prefix>`, action: abort},
+		"ElevenTags":        {filter: `<And>` + elevenTags() + `</And>`, action: expire},
+		"TagWithNoncurrent": {filter: tag, action: `<NoncurrentVersionExpiration><NoncurrentDays>1</NoncurrentDays></NoncurrentVersionExpiration>`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := lifecycleEngineHandler(t)
+
+			rec := lifecycleRequest(t, h, http.MethodPut, `<LifecycleConfiguration><Rule><ID>x</ID><Status>Enabled</Status>
+				<Filter>`+tc.filter+`</Filter>`+tc.action+`</Rule></LifecycleConfiguration>`)
+
+			get := lifecycleRequest(t, h, http.MethodGet, "")
+
+			if tc.code == "" {
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				require.Equal(t, http.StatusOK, get.Code)
+
+				return
+			}
+
+			require.Equal(t, tc.code, errorCode(t, rec.Body.String()), rec.Body.String())
+			require.Equal(t, http.StatusNotFound, get.Code)
+		})
+	}
+}
+
+// elevenTags is one more tag than an object may carry, which a rule may
+// still require.
+func elevenTags() string {
+	var b strings.Builder
+
+	for i := range 11 {
+		fmt.Fprintf(&b, "<Tag><Key>k%d</Key><Value>v</Value></Tag>", i)
+	}
+
+	return b.String()
 }

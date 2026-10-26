@@ -367,7 +367,7 @@ operations.
 Planned and in progress (see [findings/ROADMAP.md](findings/ROADMAP.md) for the
 authoritative, detailed list):
 
-- **The rest of lifecycle**: transitions, and tag and size filters.
+- **The rest of lifecycle**: transitions.
 - **Cluster mode** — a Garage-style cluster with zone/rack-aware replication
   ([#279](https://github.com/go-faster/fs/issues/279)).
 - **Virtual-host–style addressing**, **ACME / automatic TLS**, and **static

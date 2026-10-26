@@ -202,13 +202,18 @@ func (s *Storage) ListObjects(_ context.Context, req *fs.ListObjectsRequest) (*f
 			continue
 		}
 
-		objects = append(objects, fs.Object{
+		o := fs.Object{
 			Key:          key,
 			Size:         int64(len(obj.data)),
 			LastModified: obj.lastModified,
 			ETag:         obj.etag,
 			Owner:        obj.owner,
-		})
+		}
+		if req.Tags {
+			o.Tags = append([]fs.Tag(nil), obj.tags...)
+		}
+
+		objects = append(objects, o)
 	}
 
 	// FoldPage sorts: the map yields keys in a deliberately random order, and

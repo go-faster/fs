@@ -46,15 +46,29 @@ type LifecycleRuleXML struct {
 	NoncurrentVersionTransition []struct{} `xml:"NoncurrentVersionTransition"`
 }
 
-// LifecycleFilterXML is a rule's object filter.
+// LifecycleFilterXML is a rule's object filter. S3 allows exactly one of its
+// elements; several predicates combine inside And.
 type LifecycleFilterXML struct {
-	Prefix *string `xml:"Prefix"`
+	Prefix                *string                `xml:"Prefix"`
+	Tag                   *LifecycleTagXML       `xml:"Tag"`
+	ObjectSizeGreaterThan *int64                 `xml:"ObjectSizeGreaterThan"`
+	ObjectSizeLessThan    *int64                 `xml:"ObjectSizeLessThan"`
+	And                   *LifecycleFilterAndXML `xml:"And"`
+}
 
-	// Not enforced; present so PUT can refuse them.
-	Tag                   *struct{} `xml:"Tag"`
-	And                   *struct{} `xml:"And"`
-	ObjectSizeGreaterThan *int64    `xml:"ObjectSizeGreaterThan"`
-	ObjectSizeLessThan    *int64    `xml:"ObjectSizeLessThan"`
+// LifecycleFilterAndXML is a filter's conjunction: an object matches when
+// every predicate holds.
+type LifecycleFilterAndXML struct {
+	Prefix                *string           `xml:"Prefix"`
+	Tags                  []LifecycleTagXML `xml:"Tag"`
+	ObjectSizeGreaterThan *int64            `xml:"ObjectSizeGreaterThan"`
+	ObjectSizeLessThan    *int64            `xml:"ObjectSizeLessThan"`
+}
+
+// LifecycleTagXML is a tag a filter requires.
+type LifecycleTagXML struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
 }
 
 // LifecycleExpirationXML is a rule's object expiration.
@@ -105,11 +119,10 @@ func (h *handler) GetBucketLifecycle(w http.ResponseWriter, r *http.Request) {
 	doc := LifecycleConfigurationXML{Xmlns: s3XMLNamespace, Rules: make([]LifecycleRuleXML, 0, len(rules))}
 
 	for _, rule := range rules {
-		prefix := rule.Prefix
 		out := LifecycleRuleXML{
 			ID:     rule.ID,
 			Status: rule.Status,
-			Filter: &LifecycleFilterXML{Prefix: &prefix},
+			Filter: lifecycleFilter(rule),
 		}
 
 		switch {
@@ -228,7 +241,11 @@ func parseLifecycleRules(in []LifecycleRuleXML) ([]fs.LifecycleRule, s3err.APIEr
 
 		seen[rule.ID] = struct{}{}
 
-		out := fs.LifecycleRule{ID: rule.ID, Status: rule.Status, Prefix: lifecyclePrefix(rule)}
+		out := fs.LifecycleRule{ID: rule.ID, Status: rule.Status}
+
+		if apiErr, err := parseLifecycleFilter(rule, &out); err != nil {
+			return nil, apiErr, err
+		}
 
 		if exp := rule.Expiration; exp != nil {
 			marker := exp.ExpiredObjectDeleteMarker != nil
@@ -275,6 +292,18 @@ func parseLifecycleRules(in []LifecycleRuleXML) ([]fs.LifecycleRule, s3err.APIEr
 			return nil, s3err.MalformedXML, errors.New("a rule must carry at least one action")
 		}
 
+		// Delete markers and uploads in progress have no tags, and uploads no
+		// size yet: such a rule could never act, and is refused rather than
+		// kept. AWS documents the tag cases; Ceph RGW answers InvalidRequest.
+		switch {
+		case out.HasTags() && out.ExpiredObjectDeleteMarker:
+			return nil, s3err.InvalidRequest, errors.New("ExpiredObjectDeleteMarker cannot be used with a tag filter")
+		case out.HasTags() && out.AbortIncompleteMultipartUploadDays > 0:
+			return nil, s3err.InvalidRequest, errors.New("AbortIncompleteMultipartUpload cannot be used with a tag filter")
+		case out.HasSize() && out.AbortIncompleteMultipartUploadDays > 0:
+			return nil, s3err.InvalidRequest, errors.New("AbortIncompleteMultipartUpload cannot be used with a size filter")
+		}
+
 		rules = append(rules, out)
 	}
 
@@ -317,18 +346,107 @@ func parseNoncurrentExpiration(rule LifecycleRuleXML, nve *LifecycleNoncurrentEx
 	return s3err.APIError{}, nil
 }
 
-// lifecyclePrefix resolves the rule's prefix from either spelling; Filter wins
-// when a rule carries both, which is what S3 documents.
-func lifecyclePrefix(rule LifecycleRuleXML) string {
-	if rule.Filter != nil && rule.Filter.Prefix != nil {
-		return *rule.Filter.Prefix
+// parseLifecycleFilter resolves the rule's filter into out. The legacy
+// rule-level Prefix is read when there is no Filter; Filter wins when a rule
+// carries both, which is what S3 documents.
+func parseLifecycleFilter(rule LifecycleRuleXML, out *fs.LifecycleRule) (s3err.APIError, error) {
+	f := rule.Filter
+	if f == nil {
+		if rule.Prefix != nil {
+			out.Prefix = *rule.Prefix
+		}
+
+		return s3err.APIError{}, nil
 	}
 
-	if rule.Prefix != nil {
-		return *rule.Prefix
+	predicates := 0
+
+	for _, set := range []bool{f.Prefix != nil, f.Tag != nil, f.ObjectSizeGreaterThan != nil, f.ObjectSizeLessThan != nil, f.And != nil} {
+		if set {
+			predicates++
+		}
 	}
 
-	return ""
+	// S3 documents exactly one; Ceph RGW accepts several and ANDs them. An
+	// SDK sends whatever its caller built, so the refusal is what tells a
+	// client its filter needs an And.
+	if predicates > 1 {
+		return s3err.MalformedXML, errors.New("a Filter takes one predicate; combine several in And")
+	}
+
+	gt, lt := f.ObjectSizeGreaterThan, f.ObjectSizeLessThan
+
+	switch {
+	case f.Prefix != nil:
+		out.Prefix = *f.Prefix
+	case f.Tag != nil:
+		out.Tags = []fs.Tag{{Key: f.Tag.Key, Value: f.Tag.Value}}
+	case f.And != nil:
+		if f.And.Prefix != nil {
+			out.Prefix = *f.And.Prefix
+		}
+
+		for _, tag := range f.And.Tags {
+			out.Tags = append(out.Tags, fs.Tag{Key: tag.Key, Value: tag.Value})
+		}
+
+		gt, lt = f.And.ObjectSizeGreaterThan, f.And.ObjectSizeLessThan
+	}
+
+	if (gt != nil && *gt < 0) || (lt != nil && *lt < 0) {
+		return s3err.InvalidArgument, errors.New("object size bounds must not be negative")
+	}
+
+	// Ceph RGW answers MalformedXML; AWS documents the rule without a code.
+	if gt != nil && lt != nil && *gt >= *lt {
+		return s3err.MalformedXML, errors.New("ObjectSizeGreaterThan must be less than ObjectSizeLessThan")
+	}
+
+	out.SizeGreaterThan, out.SizeLessThan = gt, lt
+
+	return s3err.APIError{}, nil
+}
+
+// lifecycleFilter renders a rule's filter as S3 does: a single predicate
+// bare, several inside And. An empty filter is an empty prefix, the whole
+// bucket.
+func lifecycleFilter(rule fs.LifecycleRule) *LifecycleFilterXML {
+	predicates := len(rule.Tags)
+
+	for _, set := range []bool{rule.Prefix != "", rule.SizeGreaterThan != nil, rule.SizeLessThan != nil} {
+		if set {
+			predicates++
+		}
+	}
+
+	if predicates > 1 {
+		and := &LifecycleFilterAndXML{
+			ObjectSizeGreaterThan: rule.SizeGreaterThan,
+			ObjectSizeLessThan:    rule.SizeLessThan,
+		}
+		if rule.Prefix != "" {
+			and.Prefix = &rule.Prefix
+		}
+
+		for _, tag := range rule.Tags {
+			and.Tags = append(and.Tags, LifecycleTagXML{Key: tag.Key, Value: tag.Value})
+		}
+
+		return &LifecycleFilterXML{And: and}
+	}
+
+	switch {
+	case len(rule.Tags) == 1:
+		return &LifecycleFilterXML{Tag: &LifecycleTagXML{Key: rule.Tags[0].Key, Value: rule.Tags[0].Value}}
+	case rule.SizeGreaterThan != nil:
+		return &LifecycleFilterXML{ObjectSizeGreaterThan: rule.SizeGreaterThan}
+	case rule.SizeLessThan != nil:
+		return &LifecycleFilterXML{ObjectSizeLessThan: rule.SizeLessThan}
+	default:
+		prefix := rule.Prefix
+
+		return &LifecycleFilterXML{Prefix: &prefix}
+	}
 }
 
 // unsupportedLifecycleElement names the first element of rule this server does
@@ -339,19 +457,6 @@ func unsupportedLifecycleElement(rule LifecycleRuleXML) string {
 		return "Transition"
 	case len(rule.NoncurrentVersionTransition) > 0:
 		return "NoncurrentVersionTransition"
-	}
-
-	if f := rule.Filter; f != nil {
-		switch {
-		case f.Tag != nil:
-			return "Filter.Tag"
-		case f.And != nil:
-			return "Filter.And"
-		case f.ObjectSizeGreaterThan != nil:
-			return "Filter.ObjectSizeGreaterThan"
-		case f.ObjectSizeLessThan != nil:
-			return "Filter.ObjectSizeLessThan"
-		}
 	}
 
 	return ""

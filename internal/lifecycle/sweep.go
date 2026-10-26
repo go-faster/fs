@@ -15,6 +15,7 @@ package lifecycle
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -392,7 +393,7 @@ type keyState struct {
 // version removed. Expiring the current version stays fenced on its ETag, as
 // in expireObjects.
 func (s *Sweeper) expireVersions(ctx context.Context, v fs.Versioner, bucket string, rules []fs.LifecycleRule, report *Report) error {
-	req := fs.ListObjectVersionsRequest{Bucket: bucket, Limit: sweepPage}
+	req := fs.ListObjectVersionsRequest{Bucket: bucket, Limit: sweepPage, Tags: hasTags(rules)}
 
 	var k keyState
 
@@ -437,7 +438,7 @@ func (s *Sweeper) expireVersion(
 	case ver.IsLatest && ver.DeleteMarker:
 		k.marker = &ver
 	case ver.IsLatest:
-		at, rule := fs.LifecycleExpiry(rules, ver.Key, ver.LastModified)
+		at, rule := fs.LifecycleExpiry(rules, judged(ver), ver.LastModified)
 		if at.IsZero() || now.Before(at) {
 			return nil
 		}
@@ -465,7 +466,7 @@ func (s *Sweeper) expireVersion(
 		newer := k.noncurrent
 		k.noncurrent++
 
-		at, rule := fs.LifecycleNoncurrentExpiry(rules, ver.Key, k.successor, newer)
+		at, rule := fs.LifecycleNoncurrentExpiry(rules, judged(ver), k.successor, newer)
 		if k.successor.IsZero() || at.IsZero() || now.Before(at) {
 			k.left = true
 
@@ -539,7 +540,7 @@ func (s *Sweeper) settleMarker(
 // the cursor: StartAfter is an exclusive lower bound on the key, so the next
 // page resumes after the last key seen whether or not that key still exists.
 func (s *Sweeper) expireObjects(ctx context.Context, bucket string, rules []fs.LifecycleRule) (expired, raced int, err error) {
-	req := fs.ListObjectsRequest{Bucket: bucket, Limit: sweepPage}
+	req := fs.ListObjectsRequest{Bucket: bucket, Limit: sweepPage, Tags: hasTags(rules)}
 
 	for {
 		page, err := s.Storage.ListObjects(ctx, &req)
@@ -550,7 +551,7 @@ func (s *Sweeper) expireObjects(ctx context.Context, bucket string, rules []fs.L
 		now := s.now()
 
 		for _, obj := range page.Objects {
-			at, rule := fs.LifecycleExpiry(rules, obj.Key, obj.LastModified)
+			at, rule := fs.LifecycleExpiry(rules, fs.LifecycleObject{Key: obj.Key, Size: obj.Size, Tags: obj.Tags}, obj.LastModified)
 			if at.IsZero() || now.Before(at) {
 				continue
 			}
@@ -633,6 +634,18 @@ func (s *Sweeper) abortUploads(ctx context.Context, bucket string, rules []fs.Li
 	}
 
 	return aborted, nil
+}
+
+// judged is what the rules judge a listed version by.
+func judged(ver fs.ObjectVersion) fs.LifecycleObject {
+	return fs.LifecycleObject{Key: ver.Key, Size: ver.Size, Tags: ver.Tags}
+}
+
+// hasTags reports whether any enabled rule filters on tags: only then is a
+// listing asked for them, so a prefix- or size-only configuration pays
+// nothing for tags.
+func hasTags(rules []fs.LifecycleRule) bool {
+	return slices.ContainsFunc(rules, func(r fs.LifecycleRule) bool { return r.Enabled() && r.HasTags() })
 }
 
 // hasEnabledRule reports whether any rule would do something.

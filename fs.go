@@ -38,6 +38,9 @@ type Object struct {
 	ETag         string
 	// Owner is the principal that wrote the object; zero when unrecorded.
 	Owner Owner
+	// Tags are the object's tags, filled only when the listing asked for
+	// them (ListObjectsRequest.Tags).
+	Tags []Tag
 }
 
 // ObjectMetadata holds the user-controlled metadata stored with an object:
@@ -75,6 +78,9 @@ type ObjectVersion struct {
 	ETag         string
 	LastModified time.Time
 	Owner        Owner
+	// Tags are the version's tags, filled only when the listing asked for
+	// them (ListObjectVersionsRequest.Tags). A delete marker has none.
+	Tags []Tag
 }
 
 // ListObjectVersionsRequest describes one page of a version listing. It mirrors
@@ -89,6 +95,8 @@ type ListObjectVersionsRequest struct {
 	KeyMarker       string
 	VersionIDMarker string
 	Limit           int
+	// Tags asks for each version's tags, as ListObjectsRequest.Tags does.
+	Tags bool
 }
 
 // ListObjectVersionsResponse is one page of a version listing, newest version
