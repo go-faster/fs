@@ -35,9 +35,9 @@ to deleting objects itself.
 
 From the S3 lifecycle documentation ("Lifecycle configuration elements",
 "Filtering objects by size") and the `LifecycleRuleFilter` and
-`LifecycleRuleAndOperator` API references. Where the documentation is silent,
-Ceph RGW 20.2.4 (tentacle) was asked; "Validation" below records each case
-and what fs does.
+`LifecycleRuleAndOperator` API references, with every validation case checked
+against AWS S3 itself on 2026-10-26. "Validation" below records each case,
+what Ceph RGW 20.2.4 does, and what fs does: AWS's answer.
 
 **Filter shape.** A `<Filter>` holds exactly one of `Prefix`, `Tag`,
 `ObjectSizeGreaterThan`, `ObjectSizeLessThan` or `And`. To combine
@@ -63,8 +63,11 @@ listings report.
   markers have no tags.
 - `AbortIncompleteMultipartUpload` cannot be used with a tag filter:
   uploads in progress have no tags yet.
+- `ExpiredObjectDeleteMarker` and `AbortIncompleteMultipartUpload` cannot be
+  used with a size filter either.
 - When both size bounds are set, `ObjectSizeGreaterThan` must be less than
-  `ObjectSizeLessThan`.
+  `ObjectSizeLessThan`. `ObjectSizeGreaterThan` is 0 to 1000 TiB and
+  `ObjectSizeLessThan` 1 to 1000 TiB.
 
 **Delete markers** carry no tags, so a tag rule never matches one. That
 includes removing an expired object delete marker under `Expiration.Days`.
@@ -150,39 +153,33 @@ bounds). They leave `unsupportedLifecycleElement`. The rule-level legacy
 
 **Validation:**
 
-| Case | AWS docs | RGW 20.2 | fs |
-|------|----------|----------|----|
-| More than one predicate directly under `<Filter>` | exactly one | accepts | `MalformedXML` |
-| `<And>` with fewer than two predicates | "two or more" | accepts, renders bare | accepts, renders bare |
-| `ObjectSizeGreaterThan` ≥ `ObjectSizeLessThan` | not allowed | `MalformedXML` | `MalformedXML` |
-| Negative size | silent | accepts | `InvalidArgument` |
-| Tag filter with `ExpiredObjectDeleteMarker` | not allowed | `InvalidRequest` | `InvalidRequest` |
-| Tag filter with `AbortIncompleteMultipartUpload` | not allowed | `InvalidRequest` | `InvalidRequest` |
-| Size filter with `AbortIncompleteMultipartUpload` | silent | accepts | `InvalidRequest` |
-| Size filter with `ExpiredObjectDeleteMarker` | silent | accepts | accepts; a marker is 0 bytes |
-| Tag key empty or over 128 bytes, value over 256 | object-tag limits | not checked | `InvalidTag` |
-| Two tags with the same key in `<And>` | silent | accepts | `InvalidTag` |
-| `<Tag>` without `<Value>` | silent | accepts | accepts as the empty value |
+| Case | AWS S3 | RGW 20.2 | fs |
+|------|--------|----------|----|
+| More than one predicate directly under `<Filter>` | `MalformedXML` | accepts | `MalformedXML` |
+| `<And>` with fewer than two predicates, or empty | `MalformedXML` | accepts, renders bare | `MalformedXML` |
+| `<Tag>` without `<Value>` | `MalformedXML` | accepts | `MalformedXML` |
+| `ObjectSizeGreaterThan` ≥ `ObjectSizeLessThan` | `InvalidRequest` | `MalformedXML` | `InvalidRequest` |
+| `ObjectSizeGreaterThan` outside 0 to 1000 TiB | `InvalidRequest` | accepts | `InvalidRequest` |
+| `ObjectSizeLessThan` outside 1 to 1000 TiB | `InvalidRequest` | accepts | `InvalidRequest` |
+| Tag filter with `ExpiredObjectDeleteMarker` | `InvalidRequest` | `InvalidRequest` | `InvalidRequest` |
+| Tag filter with `AbortIncompleteMultipartUpload` | `InvalidRequest` | `InvalidRequest` | `InvalidRequest` |
+| Size filter with `ExpiredObjectDeleteMarker` | `InvalidRequest` | accepts | `InvalidRequest` |
+| Size filter with `AbortIncompleteMultipartUpload` | `InvalidRequest` | accepts | `InvalidRequest` |
+| Tag key empty or over 128 characters, value over 256 | `InvalidRequest` | not checked | `InvalidRequest` |
+| Two tags with the same key in `<And>` | `InvalidRequest` | accepts | `InvalidRequest` |
+| More than ten tags in `<And>` | accepts | accepts | accepts |
+| `<Tag>` with an empty `<Value></Value>` | accepts | accepts | accepts |
 
-The cases where fs is stricter than RGW:
+The first version of this design (#369, implemented in #370) followed RGW
+where the documentation was silent. The AWS check showed RGW is far more
+lenient, and fs was aligned with AWS in every row.
 
-- **Several bare predicates.** The documentation says "exactly one". An SDK
-  sends whatever the caller builds, so the error is what tells a client its
-  filter is ambiguous.
-- **A size filter with an abort.** An upload in progress has no size, so the
-  rule would never abort anything. A lifecycle action that is stored but can
-  never run is what the project already refuses rather than keeping
-  (`ErrUnsupportedOperation`). The same reasoning applies here.
-- **Negative sizes and duplicate tag keys** describe rules that cannot match
-  as written. `InvalidTag` and its limits come from `validateTags`, which
-  object tagging already uses, minus the limit of ten tags per object, which
-  is not a lifecycle rule.
+The client gets the error code's standard message; fs logs which check
+failed.
 
 **Rendering.** `GET ?lifecycle` returns a single predicate bare and several
-inside `<And>`, as S3 and RGW do. An `<And>` that was sent with one predicate
-comes back without the `<And>`, as in RGW. (RGW also places size bounds
-outside `<And>` when tags are present. That is an RGW quirk, and fs keeps
-them inside.)
+inside `<And>`, as AWS does. (RGW places size bounds outside `<And>` when
+tags are present. That is an RGW quirk, and fs keeps them inside.)
 
 **Capability.** Every backend can carry tags in a listing, so these rules are
 accepted wherever lifecycle rules are. The versioned actions keep their
@@ -268,19 +265,21 @@ Nothing: rules are set and read over the S3 API, as today.
   not needed: tags reach the sweep through the same rows the soak already
   exercises.
 
-## Open questions
+## Resolved questions
 
-1. **Delete markers under a size filter.** The documentation does not say
-   whether `ObjectSizeLessThan` covers delete markers. fs treats a marker as
-   0 bytes: S3 lists markers with no size, and `fs.ObjectVersion` holds 0
-   for one. The alternative
-   is that size predicates never match markers, which would make
-   `ExpiredObjectDeleteMarker` inert under any size filter. Checking needs a
-   bucket on AWS itself; RGW's answer would only show RGW.
-2. **Size filter with `AbortIncompleteMultipartUpload`.** fs refuses this
-   combination where RGW accepts it. If AWS accepts it and aborts by some
-   notion of an upload's size, refusing would break a client that works
-   against AWS. The same check on AWS settles it.
+Checked against AWS S3 on 2026-10-26:
+
+1. **Size filter with `AbortIncompleteMultipartUpload`.** Refused with
+   `InvalidRequest` ("cannot be specified with Object Size"), as fs already
+   did.
+2. **Delete markers under a size filter.** Narrowed. AWS refuses
+   `ExpiredObjectDeleteMarker` together with a size filter, so the question
+   only remains for markers that other actions reach:
+   - a current marker that `Expiration.Days` cleans up;
+   - a noncurrent marker under `NoncurrentVersionExpiration`.
+
+   fs judges those as 0 bytes. Observing what AWS does takes rules that run
+   for days, so this one corner stays unverified.
 
 ## Not in this design
 

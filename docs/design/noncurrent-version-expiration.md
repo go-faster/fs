@@ -272,6 +272,11 @@ RGW 20.2.4 (tentacle):
 Found while checking: `NewerNoncurrentVersions` needs a `<Filter>` element,
 or the rule is `InvalidRequest`.
 
+All four, and the `<Filter>` requirement, were later confirmed against AWS
+S3 itself on 2026-10-26, with the same error codes. One case differed and
+was fixed: AWS accepts a rule whose only action is
+`ExpiredObjectDeleteMarker` set to `false`, which fs had refused.
+
 ## Not in this design
 
 - Transitions and storage classes: there's one storage class.
