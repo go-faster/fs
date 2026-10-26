@@ -42,6 +42,9 @@ type options struct {
 	defaultEncryption string
 
 	customerKeysOverHTTP bool
+	// domains are the service domains of virtual-host-style addressing,
+	// normalized by Domains.
+	domains []string
 }
 
 // WithCustomerKeysOverHTTP accepts SSE-C keys on requests that did not arrive
@@ -92,9 +95,11 @@ func WithCORS(c CORSResolver) Option {
 // response carries an x-amz-request-id header; request routing is delegated to
 // route. Options enable authentication and CORS.
 //
-// Middleware order (outermost first): request-id → CORS → auth → router, so
-// error responses carry a request id, CORS preflight is answered before auth,
-// and only authenticated (or public-read) requests reach the router.
+// Middleware order (outermost first): request-id → virtual hosts → CORS →
+// auth → router, so error responses carry a request id, a virtual-host
+// request is path-style before anything reads its bucket, CORS preflight is
+// answered before auth, and only authenticated (or public-read) requests
+// reach the router.
 func New(s fs.Storage, opts ...Option) http.Handler {
 	var o options
 	for _, opt := range opts {
@@ -123,7 +128,7 @@ func New(s fs.Storage, opts ...Option) http.Handler {
 
 	inner = corsMiddleware(o.cors, s, inner)
 
-	return withRequestID(drainBody(optionsGuard(inner)))
+	return withRequestID(virtualHosts(o.domains, drainBody(optionsGuard(inner))))
 }
 
 // optionsGuard rejects an OPTIONS request that carries no Origin.

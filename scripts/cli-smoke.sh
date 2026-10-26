@@ -3,7 +3,8 @@
 # CLI smoke matrix: drives a live fs server with the real S3 command-line
 # clients (aws-cli, mc, s3cmd, rclone), covering a bucket create / object
 # round-trip / listing / delete cycle with edge-case object key names, and an
-# SSE-C (customer key) round trip over TLS for the clients that support it.
+# SSE-C (customer key) round trip over TLS for the clients that support it,
+# and an aws-cli run with virtual-host-style addressing (<bucket>.localhost).
 #
 # A missing client is skipped (warned, not failed) so the script is usable on a
 # workstation; CI installs all four, so every client is exercised there. Any
@@ -81,8 +82,11 @@ start_server() {
 
   log "starting server on ${ENDPOINT}"
   # The smoke matrix drives the clients with arbitrary credentials the server
-  # ignores, so run without authentication (auth is ON by default).
-  "${WORK}/fs" s3 --addr ":${PORT}" --root "${DATA}" --insecure-no-auth > "${WORK}/server.log" 2>&1 &
+  # ignores, so run without authentication (auth is ON by default). The
+  # localhost domain serves <bucket>.localhost as virtual hosts; the other
+  # clients address 127.0.0.1, which no domain matches, so they stay
+  # path-style.
+  "${WORK}/fs" s3 --addr ":${PORT}" --root "${DATA}" --insecure-no-auth --domain localhost > "${WORK}/server.log" 2>&1 &
   SERVER_PID=$!
 
   for _ in $(seq 1 30); do
@@ -145,6 +149,57 @@ smoke_awscli() {
   done
   "${aws[@]}" s3api delete-bucket --bucket "${bucket}" >/dev/null
   ok "aws-cli round-trip over ${#KEYS[@]} edge-case keys"
+}
+
+# smoke_awscli_vhost repeats the round trip with virtual-host-style
+# addressing: every request goes to <bucket>.localhost, signed over the path
+# without the bucket, and a presigned URL carries the bucket in its host.
+# It needs *.localhost to resolve to loopback, which systemd-resolved does.
+smoke_awscli_vhost() {
+  command -v aws >/dev/null || return 0
+
+  if ! getent hosts smoke-vhost.localhost >/dev/null 2>&1; then
+    SKIPPED+=("aws-cli virtual-host")
+    warn "aws-cli virtual-host: *.localhost does not resolve here"
+    return
+  fi
+
+  RAN+=("aws-cli virtual-host")
+  log "aws-cli virtual-host"
+
+  local bucket="smoke-vhost"
+  local conf="${WORK}/aws-vhost.conf"
+  printf '[default]\ns3 =\n    addressing_style = virtual\n' > "${conf}"
+
+  local aws=(env AWS_CONFIG_FILE="${conf}" AWS_ACCESS_KEY_ID="${ACCESS_KEY}" AWS_SECRET_ACCESS_KEY="${SECRET_KEY}"
+    AWS_EC2_METADATA_DISABLED=true AWS_DEFAULT_REGION=us-east-1
+    aws --endpoint-url "http://localhost:${PORT}")
+
+  "${aws[@]}" s3api create-bucket --bucket "${bucket}" >/dev/null
+
+  local i=0
+  for key in "${KEYS[@]}"; do
+    "${aws[@]}" s3api put-object --bucket "${bucket}" --key "${key}" --body "${FILES}/f${i}" >/dev/null
+    "${aws[@]}" s3api get-object --bucket "${bucket}" --key "${key}" "${OUT}/vhost-${i}" >/dev/null
+    verify_download "${i}" "${OUT}/vhost-${i}" "aws-cli virtual-host" "${key}"
+    i=$((i + 1))
+  done
+
+  local count
+  count=$("${aws[@]}" s3api list-objects-v2 --bucket "${bucket}" --query 'length(Contents)' --output text)
+  [[ "${count}" == "${#KEYS[@]}" ]] || fail "aws-cli virtual-host: listed ${count}, want ${#KEYS[@]}"
+
+  local url
+  url=$("${aws[@]}" s3 presign "s3://${bucket}/${KEYS[0]}")
+  [[ "${url}" == "http://${bucket}.localhost:${PORT}/"* ]] || fail "aws-cli virtual-host: presigned URL ${url} does not name the bucket host"
+  curl -fsS -o "${OUT}/vhost-presigned" "${url}" || fail "aws-cli virtual-host: presigned GET failed"
+  verify_download 0 "${OUT}/vhost-presigned" "aws-cli virtual-host presigned" "${KEYS[0]}"
+
+  for key in "${KEYS[@]}"; do
+    "${aws[@]}" s3api delete-object --bucket "${bucket}" --key "${key}" >/dev/null
+  done
+  "${aws[@]}" s3api delete-bucket --bucket "${bucket}" >/dev/null
+  ok "aws-cli virtual-host round-trip over ${#KEYS[@]} edge-case keys, presigned GET"
 }
 
 # ---- mc (MinIO client) ------------------------------------------------------
@@ -389,6 +444,7 @@ make_fixtures
 start_server
 
 smoke_awscli
+smoke_awscli_vhost
 smoke_mc
 smoke_s3cmd
 smoke_rclone

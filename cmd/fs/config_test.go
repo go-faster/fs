@@ -346,3 +346,20 @@ func TestSaveConfig_InvalidPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write config file")
 }
+
+func TestValidate_Domains(t *testing.T) {
+	for _, ok := range []string{"s3.example.com", "S3.Example.com.", "localhost", "a-b.c1"} {
+		cfg := DefaultConfig()
+		cfg.Server.Domains = []string{ok}
+		require.NoError(t, cfg.Validate(), ok)
+	}
+
+	for _, bad := range []string{"", "*.s3.example.com", "https://s3.example.com", "s3.example.com:9000", "s3.example.com/x", "-a.com", "a..b"} {
+		cfg := DefaultConfig()
+		cfg.Server.Domains = []string{bad}
+
+		err := cfg.Validate()
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "server.domains")
+	}
+}

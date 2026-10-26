@@ -119,6 +119,37 @@ exporters).
   `X-Forwarded-Proto: https`. `encryption.customer_keys_over_http: true`
   lifts that, for development and tests only.
 
+## Virtual-host addressing
+
+Path-style requests (`https://s3.example.com/photos/cat.jpg`) work on any
+host. To also serve virtual-host-style ones (`https://photos.s3.example.com/cat.jpg`),
+which some clients default to, list the service domains:
+
+```yaml
+server:
+  domains: ["s3.example.com"]
+```
+
+(or `fs s3 --domain s3.example.com`, repeatable). Then:
+
+- **DNS:** a wildcard record per domain, `*.s3.example.com`, pointing at the
+  server, beside the record for `s3.example.com` itself.
+- **TLS:** a certificate for both `s3.example.com` and `*.s3.example.com`. A
+  bucket with dots in its name (`my.photos`) does not match a wildcard
+  certificate; most SDKs fall back to path-style for such buckets over HTTPS,
+  as they do against AWS.
+- **Proxies** must pass the `Host` header through unchanged: nginx needs
+  `proxy_set_header Host $host`; Caddy and Traefik pass it by default. SigV4
+  signs `Host`, so a proxy that rewrites it breaks authentication anyway.
+  `X-Forwarded-Host` is not read.
+- A host that matches no domain — an IP address, an internal name — is served
+  path-style, so health checks and clients addressing the server directly
+  keep working. `/health` and `/ready` are answered only on such hosts and
+  on the bare domains; on a bucket host they are object keys.
+- The startup log names the domains in effect, and every request log line
+  carries its `host`: a virtual-host request answered `NoSuchBucket` for the
+  first label of its host points at a missing or misspelled domain.
+
 ## Cluster mode
 
 Experimental (#279). With `cluster.node_id` set,

@@ -78,6 +78,9 @@ config:
     idle_timeout: "2m0s"
     # Health check endpoint path
     health_path: "/health"
+    # Service domains for virtual-host-style addressing (<bucket>.<domain>).
+    # Each needs a wildcard DNS record and certificate; see docs/DEPLOYMENT.md.
+    # domains: ["s3.example.com"]
 
   # Storage configuration
   storage:

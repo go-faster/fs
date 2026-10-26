@@ -22,6 +22,7 @@ config:
     write_timeout: "30s"     # Response write timeout
     idle_timeout: "2m0s"     # Connection idle timeout
     health_path: "/health"   # Health check endpoint
+    # domains: ["s3.example.com"]  # Virtual-host addressing: <bucket>.s3.example.com
 ```
 
 ### Storage Configuration

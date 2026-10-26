@@ -181,7 +181,8 @@ about HTTP or S3; don't import upward.
 - `make compat` — regenerate `docs/CONFORMANCE.md` from the known-failures list alone
   (CI drift-checks it).
 - `make cli-smoke` — drive a live binary with aws-cli/mc/s3cmd/rclone over
-  edge-case keys (installed clients only; CI runs all four).
+  edge-case keys, plus aws-cli with virtual-host addressing against
+  `<bucket>.localhost` (installed clients only; CI runs all four).
 - `make chaos` — soak a six-node cluster of real processes (`scripts/chaos`)
   under a mixed workload while killing, freezing and re-laying-out nodes;
   fails on any read outside what the acknowledged writes allow (lost, torn or

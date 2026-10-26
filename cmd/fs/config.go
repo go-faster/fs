@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -166,6 +167,12 @@ type ServerConfig struct {
 	// Empty is the S3 default region, reported as an empty constraint.
 	Region string `yaml:"region,omitempty"`
 
+	// Domains are the service domains of virtual-host-style addressing: a
+	// request to <bucket>.<domain> addresses that bucket, and needs a
+	// wildcard DNS record (and certificate) per domain. Path-style keeps
+	// working on every host. Empty is path-style only.
+	Domains []string `yaml:"domains,omitempty"`
+
 	// TLS, if both files are set, serves HTTPS with hot-reloadable certificates.
 	TLS TLSConfig `yaml:"tls,omitempty"`
 }
@@ -311,6 +318,12 @@ func (c *Config) Validate() error {
 		return errors.New("storage.quota_cache_ttl must not be negative")
 	}
 
+	for _, d := range c.Server.Domains {
+		if err := validateDomain(d); err != nil {
+			return fmt.Errorf("server.domains: %w", err)
+		}
+	}
+
 	if c.Server.ReadTimeout <= 0 {
 		return errors.New("server.read_timeout must be positive")
 	}
@@ -351,6 +364,28 @@ func SaveConfig(cfg Config, path string) error {
 	// #nosec G306 -- config files
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return errors.Wrap(err, "write config file")
+	}
+
+	return nil
+}
+
+// validateDomain requires a hostname: dot-separated labels of letters,
+// digits and '-', without a scheme, port, path or wildcard.
+func validateDomain(d string) error {
+	if d == "" {
+		return errors.New("empty domain")
+	}
+
+	for label := range strings.SplitSeq(strings.TrimSuffix(d, "."), ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("%q is not a hostname", d)
+		}
+
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
+				return fmt.Errorf("%q is not a hostname (no scheme, port, path or wildcard)", d)
+			}
+		}
 	}
 
 	return nil

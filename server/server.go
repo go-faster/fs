@@ -86,6 +86,14 @@ func WithRegion(region string) HandlerOption {
 	}
 }
 
+// WithDomains enables virtual-host-style addressing for these service
+// domains; see handler.WithDomains. Empty (the default) is path-style only.
+func WithDomains(domains []string) HandlerOption {
+	return func(o *handlerOptions) {
+		o.opts = append(o.opts, handler.WithDomains(domains))
+	}
+}
+
 // WithCORS enables per-bucket CORS (OPTIONS preflight + response headers).
 func WithCORS(cfg cors.Config) HandlerOption {
 	return func(o *handlerOptions) {
@@ -161,6 +169,11 @@ type Config struct {
 	// created it, plus anyone holding a grant that names it. Off by default:
 	// enabling it changes what existing "*" grants mean.
 	OwnerIsolation bool
+
+	// Domains are the service domains of virtual-host-style addressing: a
+	// request to <bucket>.<domain> addresses that bucket. Path-style keeps
+	// working on every host. Empty is path-style only.
+	Domains []string
 
 	// Region names the location this deployment reports for its buckets
 	// (GetBucketLocation, and the constraint accepted at create). Empty is the
@@ -306,6 +319,10 @@ func (s *Server) buildHandler() http.Handler {
 		opts = append(opts, WithRegion(s.cfg.Region))
 	}
 
+	if len(s.cfg.Domains) > 0 {
+		opts = append(opts, WithDomains(s.cfg.Domains))
+	}
+
 	if s.cfg.OwnerIsolation {
 		opts = append(opts, WithOwnerIsolation(true))
 	}
@@ -322,10 +339,17 @@ func (s *Server) buildHandler() http.Handler {
 	health := s.cfg.HealthPath != "" && s.cfg.HealthPath != "-"
 	ready := s.cfg.ReadyPath != "" && s.cfg.ReadyPath != "-" && s.cfg.ReadyPath != s.cfg.HealthPath
 
+	domains := handler.Domains(s.cfg.Domains)
+
 	// Exact paths, not an http.ServeMux: a mux cleans paths, and would answer
-	// an object key such as "a//b" or "x/../y" with a redirect.
+	// an object key such as "a//b" or "x/../y" with a redirect. On a host that
+	// names a bucket the paths are keys, so the checks are not answered there.
 	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, bucketHost := handler.BucketFromHost(domains, r.Host)
+
 		switch {
+		case bucketHost:
+			s3.ServeHTTP(w, r)
 		case health && r.URL.Path == s.cfg.HealthPath:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("OK"))

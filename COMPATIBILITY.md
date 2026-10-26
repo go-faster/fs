@@ -15,8 +15,11 @@ end-to-end through real SDK clients (`aws-sdk-go-v2`, `minio-go`) and the
 command-line clients `aws-cli`, `mc`, `s3cmd` and `rclone`. The machine-generated
 breakdown lives in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
 
-Addressing is **path-style** (`https://host/bucket/key`); the server is
-single-region and ignores `LocationConstraint`.
+Addressing is **path-style** (`https://host/bucket/key`) on every host, and
+**virtual-host-style** (`https://bucket.host/key`) for the service domains in
+`server.domains` (`--domain`); see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#virtual-host-addressing). The server
+is single-region and ignores `LocationConstraint`.
 
 ## Implemented
 
@@ -66,8 +69,6 @@ Each requires a design document before commitment:
   (see above; designs:
   [docs/design/noncurrent-version-expiration.md](docs/design/noncurrent-version-expiration.md),
   [docs/design/lifecycle-filters.md](docs/design/lifecycle-filters.md)).
-- **Virtual-host-style addressing** (`bucket.host`; design, proposed:
-  [docs/design/virtual-host-addressing.md](docs/design/virtual-host-addressing.md)).
 - **Bucket-policy subset** — only if the per-key grant model proves
   insufficient.
 - **Static website hosting**, **ACME / automatic TLS**.
