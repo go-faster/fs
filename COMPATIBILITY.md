@@ -61,9 +61,11 @@ enforced.
 Each requires a design document before commitment:
 
 - **Lifecycle, the rest** — transitions and storage classes; tag and size
-  filters. Expiration, noncurrent-version expiration, expired object delete
-  markers and abandoned uploads, by prefix, are implemented and enforced (see
-  above; design:
+  filters (design, proposed:
+  [docs/design/lifecycle-filters.md](docs/design/lifecycle-filters.md)).
+  Expiration, noncurrent-version expiration, expired object delete markers
+  and abandoned uploads, by prefix, are implemented and enforced (see above;
+  design:
   [docs/design/noncurrent-version-expiration.md](docs/design/noncurrent-version-expiration.md)).
 - **Virtual-host-style addressing** (`bucket.host`).
 - **Bucket-policy subset** — only if the per-key grant model proves
