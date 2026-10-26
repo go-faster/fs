@@ -132,6 +132,10 @@ func requestScope(r *http.Request) (bucket, key string, action auth.Action) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	bucket, key, _ = strings.Cut(path, "/")
 
+	if r.URL.Query().Has(replicaParam) {
+		return bucket, key, auth.ActionAdmin
+	}
+
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return bucket, key, auth.ActionRead
@@ -158,7 +162,7 @@ func anonymousAllowed(ctx context.Context, store fs.Storage, a Authenticator, bu
 	}
 
 	if key == "" {
-		if action == auth.ActionWrite {
+		if action != auth.ActionRead {
 			return false
 		}
 
@@ -176,7 +180,10 @@ func anonymousAllowed(ctx context.Context, store fs.Storage, a Authenticator, bu
 		return false
 	}
 
-	if action == auth.ActionWrite {
+	switch action {
+	case auth.ActionAdmin:
+		return false
+	case auth.ActionWrite:
 		return level.AllowsAnonWrite()
 	}
 
@@ -307,6 +314,12 @@ func isPostObjectRequest(r *http.Request) bool {
 	}
 
 	if _, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/"); key != "" {
+		return false
+	}
+
+	// Replication is never a browser upload, whatever its content type:
+	// it must not skip the signature check.
+	if r.URL.Query().Has(replicaParam) {
 		return false
 	}
 

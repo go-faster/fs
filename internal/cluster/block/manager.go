@@ -266,6 +266,45 @@ func (m *Manager) Get(ctx context.Context, h Hash) ([]byte, error) {
 	return nil, errors.Wrapf(errors.Join(errs...), "block %s", h)
 }
 
+// Has reports whether some replica of the block holds a copy, asking this
+// node first. One copy is enough: resync and anti-entropy bring the others.
+// It errs only when no replica says yes and some could not be asked.
+func (m *Manager) Has(ctx context.Context, h Hash) (bool, error) {
+	nodes, err := m.replicas(h)
+	if err != nil {
+		return false, err
+	}
+
+	if slices.Contains(nodes, m.member.ID()) && m.store.Has(h) {
+		return true, nil
+	}
+
+	var errs []error
+
+	for _, id := range nodes {
+		if id == m.member.ID() {
+			continue
+		}
+
+		status, _, err := m.member.Raw(ctx, id, http.MethodHead, "/v1/block/"+h.String(), nil)
+
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+		case status == http.StatusOK:
+			return true, nil
+		case status != http.StatusNotFound:
+			errs = append(errs, errors.Errorf("has block %s on %s: status %d", h, id, status))
+		}
+	}
+
+	if len(errs) > 0 {
+		return false, errors.Wrapf(errors.Join(append(errs, fs.ErrUnavailable)...), "block %s", h)
+	}
+
+	return false, nil
+}
+
 // GetInto is Get reading into buf when this node holds a good copy, so a
 // reader of many blocks can reuse its buffers; otherwise it is Get. The
 // result may alias buf.

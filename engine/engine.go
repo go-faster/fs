@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"hash/fnv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -90,6 +91,10 @@ type Engine struct {
 
 	gcMu sync.Mutex
 	gc   gcStats
+
+	// replicasApplied and replicasRefused count versions received from
+	// other deployments.
+	replicasApplied, replicasRefused atomic.Int64
 
 	// bufs recycles block buffers between reads, so a GET does not allocate
 	// (and the kernel zero) a fresh block for every block it serves.
@@ -205,6 +210,8 @@ type payload struct {
 	ChecksumAlgorithm string `json:"cksum_alg,omitempty"`
 	Checksum          string `json:"cksum,omitempty"`
 	ChecksumType      string `json:"cksum_type,omitempty"`
+	// Replica marks a version that arrived through geo-replication.
+	Replica bool `json:"replica,omitempty"`
 }
 
 type blockLoc struct {

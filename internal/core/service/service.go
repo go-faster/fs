@@ -758,3 +758,67 @@ func (s Service) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID
 
 	return s.storage.AbortMultipartUpload(ctx, bucket, key, uploadID)
 }
+
+// replicaReceiver is the backend as a replication target, or
+// ErrUnsupportedOperation when it cannot be one.
+func (s Service) replicaReceiver(bucket string) (fs.ReplicaReceiver, error) {
+	if err := validate.BucketName(bucket); err != nil {
+		return nil, errors.Wrap(err, "validate bucket name")
+	}
+
+	r, ok := s.storage.(fs.ReplicaReceiver)
+	if !ok {
+		return nil, errors.Wrap(fs.ErrUnsupportedOperation, "backend cannot be a replication target")
+	}
+
+	return r, nil
+}
+
+// ReplicaInfo implements fs.ReplicaReceiver by forwarding to the backend.
+func (s Service) ReplicaInfo(ctx context.Context, bucket string) (fs.ReplicaInfo, error) {
+	r, err := s.replicaReceiver(bucket)
+	if err != nil {
+		return fs.ReplicaInfo{}, err
+	}
+
+	return r.ReplicaInfo(ctx, bucket)
+}
+
+// ClaimReplicaBlocks implements fs.ReplicaReceiver by forwarding to the
+// backend.
+func (s Service) ClaimReplicaBlocks(
+	ctx context.Context, bucket, versionID string, blocks []fs.ReplicaBlock,
+) ([]fs.ReplicaBlockClaim, error) {
+	r, err := s.replicaReceiver(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.ClaimReplicaBlocks(ctx, bucket, versionID, blocks)
+}
+
+// PutReplicaBlock implements fs.ReplicaReceiver by forwarding to the backend.
+func (s Service) PutReplicaBlock(ctx context.Context, bucket, versionID string, b fs.ReplicaBlock, data []byte) error {
+	r, err := s.replicaReceiver(bucket)
+	if err != nil {
+		return err
+	}
+
+	return r.PutReplicaBlock(ctx, bucket, versionID, b, data)
+}
+
+// ApplyReplicas implements fs.ReplicaReceiver by forwarding to the backend.
+func (s Service) ApplyReplicas(ctx context.Context, bucket string, versions []fs.ReplicaVersion) ([]fs.ReplicaResult, error) {
+	r, err := s.replicaReceiver(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range versions {
+		if err := validate.Key(v.Key); err != nil {
+			return nil, errors.Wrap(err, "validate object key")
+		}
+	}
+
+	return r.ApplyReplicas(ctx, bucket, versions)
+}

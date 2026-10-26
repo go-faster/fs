@@ -261,6 +261,12 @@ func (h *handler) route(w http.ResponseWriter, r *http.Request) {
 func (h *handler) routeBucket(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
+	if q.Has(replicaParam) {
+		h.Replica(w, r)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		switch {
