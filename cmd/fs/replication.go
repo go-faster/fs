@@ -14,7 +14,8 @@ import (
 
 // registerReplicationMetrics exports each replicating bucket's backlog: the
 // versions some target has yet to receive, and their bytes — what losing
-// this deployment would lose. A bucket is reported by the node elected to
+// this deployment would lose — and, as a target, the versions received and
+// refused. A bucket is reported by the node elected to
 // run its replication, so a cluster does not report it once per node.
 // member is nil for a single node.
 func registerReplicationMetrics(mp metric.MeterProvider, e *engine.Engine, member *peer.Member) error {
@@ -34,7 +35,25 @@ func registerReplicationMetrics(mp metric.MeterProvider, e *engine.Engine, membe
 		return errors.Wrap(err, "gauge fs.replication.backlog.size")
 	}
 
+	applied, err := meter.Int64ObservableCounter("fs.replication.applied",
+		metric.WithUnit("{version}"),
+		metric.WithDescription("Versions received from other deployments and applied here since start."))
+	if err != nil {
+		return errors.Wrap(err, "counter fs.replication.applied")
+	}
+
+	refused, err := meter.Int64ObservableCounter("fs.replication.refused",
+		metric.WithUnit("{version}"),
+		metric.WithDescription("Versions received from other deployments and refused since start; the source retries them."))
+	if err != nil {
+		return errors.Wrap(err, "counter fs.replication.refused")
+	}
+
 	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		st := e.ReplicaStats()
+		o.ObserveInt64(applied, st.Applied)
+		o.ObserveInt64(refused, st.Refused)
+
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
@@ -56,7 +75,7 @@ func registerReplicationMetrics(mp metric.MeterProvider, e *engine.Engine, membe
 		}
 
 		return nil
-	}, backlog, size)
+	}, backlog, size, applied, refused)
 	if err != nil {
 		return errors.Wrap(err, "register replication metrics")
 	}

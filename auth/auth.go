@@ -24,8 +24,8 @@ const (
 	Read Permission = iota
 	// Write allows Read plus PUT/POST/DELETE (including bucket create/delete).
 	Write
-	// Admin allows everything Write does, and is the level future admin-only
-	// operations will require.
+	// Admin allows everything Write does, and accepting versions replicated
+	// from another deployment (ActionAdmin).
 	Admin
 )
 
@@ -59,7 +59,23 @@ const (
 	ActionRead Action = iota
 	// ActionWrite is required by PUT/POST/DELETE.
 	ActionWrite
+	// ActionAdmin is required by what only an administrator of a bucket may
+	// do: write versions replicated from another deployment, with the IDs,
+	// times and owners they were written with there.
+	ActionAdmin
 )
+
+// needs is the permission action requires.
+func (a Action) needs() Permission {
+	switch a {
+	case ActionWrite:
+		return Write
+	case ActionAdmin:
+		return Admin
+	default:
+		return Read
+	}
+}
 
 // Grant authorizes an access key for buckets matching Pattern (a glob using
 // path.Match semantics; "*" matches all buckets) up to Permission.
@@ -224,10 +240,7 @@ func (s *Store) Allow(accessKey, bucket string, action Action) bool {
 		return true
 	}
 
-	need := Read
-	if action == ActionWrite {
-		need = Write
-	}
+	need := action.needs()
 
 	for _, g := range k.Grants {
 		if g.Permission >= need && patternMatches(g.Pattern, bucket) {
@@ -252,10 +265,7 @@ func (s *Store) AllowsExplicitly(accessKey, bucket string, action Action) bool {
 		return false
 	}
 
-	need := Read
-	if action == ActionWrite {
-		need = Write
-	}
+	need := action.needs()
 
 	for _, g := range k.Grants {
 		if g.Pattern == "*" || g.Permission < need {

@@ -1,6 +1,7 @@
 # Design: geo-replication
 
-**Status:** in progress: phase 1 (the outbox) is implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** in progress: phases 1 (the outbox) and 2 (the target) are
+implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
@@ -185,9 +186,23 @@ the handshake reports.
 | Request | Body | Answer |
 |---------|------|--------|
 | `GET /{bucket}?x-fs-replica` | — | protocol version, versioning status, whether a master key is configured |
-| `POST /{bucket}?x-fs-replica=blocks` | block hashes | the ones not stored |
-| `PUT /{bucket}?x-fs-replica=block&hash=H` | block bytes | stored; refused if the bytes do not hash to `H` |
+| `POST /{bucket}?x-fs-replica=blocks` | a version ID and its blocks (hash, size) | per block: the scheme the target stores it with, and whether it is missing |
+| `PUT /{bucket}?x-fs-replica=block&version=V&hash=H&scheme=S` | block bytes | stored; refused (`BadDigest`) if the bytes do not hash to `H` |
 | `POST /{bucket}?x-fs-replica=versions` | versions (JSON) | per version: applied, or refused with a reason |
+
+**Claims.** Asking for the missing blocks is also claiming them: the target
+first writes the block references the version will hold (keyed by its
+version ID), so collection keeps every block of the version from then on,
+however long the rest of the shipment takes. A block reference only ever
+turns deleted, so a version deleted at the target and shipped again stays
+unreferenced, and the merge keeps it deleted. A version that never arrives —
+its target removed mid-shipment — leaves its claims and their blocks
+behind. Only a replicated block is looked up (`block.Manager.Has`, any
+replica's copy); an erasure-coded one is always asked for, since how a
+block is already stored at the target is not recorded anywhere a lookup
+could find it. The scheme comes from the target and travels back with the
+block and the version, so a scheme change mid-shipment cannot make a
+version describe its blocks wrongly.
 
 A shipped version carries what `meta.Version` and the engine's payload
 carry, in a wire form the destination translates:
@@ -291,8 +306,8 @@ of metrics, by bucket and target:
 | `fs.replication.blocks.offered` and `fs.replication.blocks.sent` | dedupe ratio; bytes sent as `fs.replication.sent` (By) |
 | `fs.replication.backfill.remaining` | versions the walk has not reached |
 
-On the destination, `fs.replication.applied` counts versions applied, by
-bucket.
+On the destination, `fs.replication.applied` and `fs.replication.refused`
+count versions received since start.
 
 Logs:
 
@@ -351,11 +366,11 @@ through `x-amz-replication-status`.
 
 Each phase is a PR that leaves main working:
 
-1. **Outbox:** the table, capture on every listed change, the lifecycle
-   exclusion, compaction, the backlog metrics. Nothing ships yet. Since no
-   bucket has targets, no outbox rows are written.
-2. **Destination:** `?x-fs-replica`, `Engine.ApplyReplica`, block intake,
-   the replica flag.
+1. **Outbox** (done): the table, capture on every listed change, the
+   lifecycle exclusion, compaction, the backlog metrics.
+2. **Destination** (done): `?x-fs-replica` and the `admin` action,
+   `fs.ReplicaReceiver` in the engine, block claims and intake, the replica
+   flag, export, and `internal/replication.Client`.
 3. **Runner:** the `replication` setting, the admin API and CLI, shipping,
    status, metrics, and the integration tests.
 4. **Backfill.**

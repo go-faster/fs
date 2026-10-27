@@ -177,7 +177,10 @@ so `Set` hot-reloads credentials without locking readers. `Store` satisfies the
 handler's `Authenticator` interface (`Secret`, `Allow`, `PublicRead`, `Owner`).
 `Owner` resolves an access key to the `auth.Identity` (`user_id` /
 `display_name`, defaulting to the access key) that objects it writes are owned
-by.
+by. A request's action follows its method — GET/HEAD read, the rest write —
+except geo-replication's `?x-fs-replica`, which needs `Admin` on the bucket
+(`ActionAdmin`): it writes versions with the IDs, times and owners another
+deployment gave them.
 
 Credentials are config/env keys plus runtime keys the admin API creates, held
 by `auth.Manager`. Runtime keys live in the engine's replicated `access_keys`
@@ -280,6 +283,14 @@ root, opens the `engine` (refusing a data directory left by the removed
 filesystem backend), wraps the handler with OpenTelemetry
 and request logging, and runs `server.Server`. Server defaults are derived from
 the `server` package constants so the two cannot drift.
+
+### `internal/replication` — geo-replication
+
+Ships a bucket's versions to buckets of other fs deployments
+([design](docs/design/geo-replication.md)). `Client` speaks the
+`?x-fs-replica` protocol to one target bucket, SigV4-signed with the
+target's credentials; see "Replication target" under Engine for the other
+side. The runner that drains the outbox through it comes next.
 
 ### `integration` and `internal/mock`
 
@@ -465,8 +476,25 @@ union of targets and the greatest of every counter, and a row every target
 has received is compacted away by tombstone collection. Version deletes and
 the lifecycle sweep's changes (`fs.WithLifecycleAction`) write no row: S3
 replicates neither. The table tallies rows still pending per bucket, the
-backlog `fs.replication.backlog{,.size}` reports. The shipping itself is
-not built yet.
+backlog `fs.replication.backlog{,.size}` reports.
+
+**Replication target.** A deployment receives replicated versions on the
+`?x-fs-replica` bucket subresource (`internal/core/handler/replica.go`):
+`GET` describes the bucket, `POST =blocks` claims a version's blocks,
+`PUT =block` sends one, `POST =versions` applies a batch. Bodies are JSON
+of the `fs.Replica*` types; the backend implements `fs.ReplicaReceiver`
+(the engine; the service forwards it). A claim writes the block references
+the version will hold, keyed by its version ID, before anything else, so
+collection keeps the blocks however long the shipment takes; it answers a
+replicated block found stored (`block.Manager.Has`) as present, and asks
+for every erasure-coded one. Applying merges the version through the
+ordinary row merge — a version deleted here stays deleted, an attrs-only
+change never creates one — with the payload marked `Replica`, blocks as
+the target stores them, an SSE-S3 data key wrapped by the target's key
+ring and an SSE-C one as the client sealed it; no outbox row, no quota.
+The source side is `Engine.ExportReplica` / `ReadReplicaBlock` and
+`internal/replication.Client`, which signs each request with SigV4. The
+runner that drives them is not built yet.
 
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays

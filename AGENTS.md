@@ -151,7 +151,11 @@ automated resumable migration and the public API becomes additive-only.
   [design](docs/design/geo-replication.md)): a bucket's `replication`
   setting names targets on other fs deployments; every change to ship writes
   its outbox row in the same `table.Write`, version deletes and lifecycle
-  changes (`fs.WithLifecycleAction`) none; shipping is not built yet.
+  changes (`fs.WithLifecycleAction`) none. As a target (`replica.go`) it
+  implements `fs.ReplicaReceiver`: claims a version's blocks by
+  referencing them from it, stores those sent, merges the version through
+  the ordinary row merge (marked `Replica`, no outbox row, no quota); as a
+  source, `ExportReplica`/`ReadReplicaBlock`. The runner is not built yet.
   Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 and SSE-C seal
   data through `internal/sse` (an SSE-C key arrives on the context,
@@ -169,6 +173,9 @@ automated resumable migration and the public API becomes additive-only.
   change; the block store keeps its blocks' and shards' in memory
   (`block/digest.go`), built by one walk and moved by every file placed or
   removed.
+- `internal/replication` — geo-replication between deployments: `Client`
+  speaks the `?x-fs-replica` protocol (SigV4-signed JSON; the handler side is
+  `internal/core/handler/replica.go`, which needs the `admin` grant).
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

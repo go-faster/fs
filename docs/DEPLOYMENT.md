@@ -261,7 +261,11 @@ usage read that fails lets the write through
   that some replication target has yet to receive: what losing this
   deployment would lose. Reported by the node that runs the bucket's
   replication. Shipping is not built yet, so a bucket with targets only
-  accumulates a backlog for now.
+  accumulates a backlog for now. As a target: `fs.replication.applied` and
+  `fs.replication.refused`, versions received from other deployments since
+  start; refusals are retried by the source, so a climbing `refused` is a
+  version that cannot land here (no master key for an SSE-S3 version, a
+  block never sent).
 - **Lifecycle**: `fs.lifecycle.age` — seconds since a pass last completed,
   the number to alert on (-1: none yet; a cluster's buckets are spread over
   its nodes, so each node reports its own) — `fs.lifecycle.failed_buckets`,
