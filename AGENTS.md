@@ -220,8 +220,15 @@ about HTTP or S3; don't import upward.
   (`-replication=false` leaves it out). About a
   minute per round; `ROUNDS=n`, `ARGS=-actions 4,5`. `ARGS=-realistic` runs
   the nodes at fs's defaults (fsync on, production background cadence) —
-  slower, and data accumulates (~6 GB a round), so give it a `-dir` on a disk
-  with room.
+  slower, and data accumulates (~6–12 GB a round), so give it a `-dir` on a
+  disk with room. The WAN soak (geo-replication phase 7) runs the target on
+  another machine: there `chaos -serve-target 0.0.0.0 -dir d` serves t1..t3
+  over TLS with a self-signed `d/target.crt`; the source runs `chaos -target
+  <host> -target-ca target.crt`. The fault proxy stays in between and passes
+  TLS through, the runner verifies the certificate, and the target-kill fault
+  becomes a clean round. Open the target's ports 18700–18702 only to the
+  source: the soak's credentials are in this file. Every round prints the
+  replication lag and backlog at their worst.
 - `make fuzz` — actively fuzz the wire parsers (`FUZZTIME=5m` to search
   longer); `make fuzz_selftest` checks the runner's own failure handling in
   seconds, without fuzzing.

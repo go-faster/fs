@@ -438,6 +438,17 @@ Each phase is a PR that leaves main working:
    runner's batch, concurrency and timeouts against it. Run by hand or
    nightly, not per PR, since it costs money and its timing varies.
 
+   The harness is `scripts/chaos` with `-serve-target` on one machine and
+   `-target` on the other (see AGENTS.md). Its first run (Helsinki to
+   Ashburn, about 100 ms, at fs's defaults, 20 rounds in 50 minutes) passed
+   every check and drained in 2m9s, but under load the runner fell behind:
+   lag reached 846 s and the backlog 4,000–5,500 versions (2–3.4 GB), worst
+   in the rounds without injected faults. Versions ship one at a time, each
+   paying at least two round trips (claim, then blocks), so a 100 ms link
+   caps the runner near 5 versions a second; the default HTTP transport also
+   keeps two idle connections per host, fewer than the blocks in flight, so
+   the rest redo the TLS handshake.
+
 ## Open questions
 
 - **Tag filters.** AWS rules filter by prefix and tags. Prefix covers the

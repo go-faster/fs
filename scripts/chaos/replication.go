@@ -133,7 +133,7 @@ func (p *proxy) handle(c net.Conn) {
 		return
 	}
 
-	up, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", n.s3), 5*time.Second)
+	up, err := net.DialTimeout("tcp", n.s3Addr(), 5*time.Second)
 	if err != nil {
 		_ = c.Close()
 
@@ -215,27 +215,56 @@ type replication struct {
 	deleted map[string]bool
 }
 
-// setup starts the target deployment and the proxy, and replicates the
-// source's versioned bucket to it.
-func setupReplication(ctx context.Context, src, dst *cluster, seed uint64) (*replication, error) {
+// newTarget is the target deployment: three nodes, t1..t3.
+func newTarget(bin, dir string) (*cluster, error) {
+	dst := &cluster{bin: bin, secret: secret + "-replica", widths: []int{3}}
+
+	for i, zone := range []string{"a", "b", "c"} {
+		n, err := newNode(fmt.Sprintf("t%d", i+1), zone, 18700+i, 18800+i, 18900+i, dir)
+		if err != nil {
+			return nil, err
+		}
+
+		n.member = true
+		dst.nodes = append(dst.nodes, n)
+	}
+
+	return dst, nil
+}
+
+// startTarget starts the target deployment with its versioned bucket.
+func startTarget(ctx context.Context, dst *cluster) error {
 	for _, n := range dst.nodes {
 		if err := dst.start(n); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	if err := dst.applyLayout(ctx); err != nil {
-		return nil, fmt.Errorf("target: %w", err)
+		return fmt.Errorf("target: %w", err)
 	}
 
 	t1 := dst.nodes[0]
 
 	if err := t1.client.MakeBucket(ctx, replicaBucket, minio.MakeBucketOptions{}); err != nil {
-		return nil, fmt.Errorf("target bucket: %w", err)
+		return fmt.Errorf("target bucket: %w", err)
 	}
 
 	if err := t1.client.EnableVersioning(ctx, replicaBucket); err != nil {
-		return nil, fmt.Errorf("target versioning: %w", err)
+		return fmt.Errorf("target versioning: %w", err)
+	}
+
+	return nil
+}
+
+// setup starts the target deployment, unless it runs on another machine
+// (-target), and the proxy, and replicates the source's versioned bucket to
+// it.
+func setupReplication(ctx context.Context, src, dst *cluster, seed uint64) (*replication, error) {
+	if targetHost == "" {
+		if err := startTarget(ctx, dst); err != nil {
+			return nil, err
+		}
 	}
 
 	p, err := startProxy(dst, seed)
@@ -243,20 +272,32 @@ func setupReplication(ctx context.Context, src, dst *cluster, seed uint64) (*rep
 		return nil, err
 	}
 
+	// The proxy passes TLS through: the runner verifies a remote target's
+	// certificate, made for 127.0.0.1 as well as its host.
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	if targetHost != "" {
+		endpoint = fmt.Sprintf("https://127.0.0.1:%d", proxyPort)
+	}
+
 	_, err = src.admin(src.live()[0]).SetBucketReplication(ctx, &adminapi.Replication{Targets: []adminapi.ReplicationTarget{{
 		Name:            "dr",
-		Endpoint:        fmt.Sprintf("http://127.0.0.1:%d", proxyPort),
+		Endpoint:        endpoint,
 		Bucket:          replicaBucket,
 		AccessKeyID:     accessKey,
 		SecretAccessKey: adminapi.NewOptString(secretKey),
 		DeleteMarkers:   adminapi.NewOptBool(true),
-		Insecure:        adminapi.NewOptBool(true),
+		Insecure:        adminapi.NewOptBool(targetHost == ""),
 	}}}, adminapi.SetBucketReplicationParams{Bucket: replicaBucket})
 	if err != nil {
 		return nil, fmt.Errorf("set replication: %w", err)
 	}
 
-	fmt.Printf("  %s replicates to %s through a fault proxy on :%d\n", replicaBucket, "t1..t3", proxyPort)
+	where := "t1..t3"
+	if targetHost != "" {
+		where += " at " + targetHost
+	}
+
+	fmt.Printf("  %s replicates to %s through a fault proxy on :%d\n", replicaBucket, where, proxyPort)
 
 	return &replication{
 		src: src, dst: dst, proxy: p,
@@ -278,6 +319,10 @@ func (r *replication) disrupt(ctx context.Context, round int, load time.Duration
 	defer r.proxy.set(netClean)
 
 	switch {
+	case f.kill && targetHost != "":
+		// A remote target's nodes are not the harness's to kill: the
+		// round runs over the WAN as it is.
+		fmt.Println("  replication link: clean")
 	case f.outage:
 		fmt.Printf("  replication link: down for %s\n", load)
 
@@ -302,6 +347,42 @@ func (r *replication) disrupt(ctx context.Context, round int, load time.Duration
 	}
 
 	<-ctx.Done()
+}
+
+// watch samples the replication status until ctx is done, and prints the
+// round's worst lag and backlog: what the runner's batch, concurrency and
+// timeouts are tuned against.
+func (r *replication) watch(ctx context.Context) {
+	var (
+		lag           float64
+		backlog, size int64
+		errs, samples int
+	)
+
+	for sleep(ctx, 2*time.Second) {
+		live := r.src.live()
+		if len(live) == 0 {
+			continue
+		}
+
+		st, err := r.src.admin(live[r.rng.IntN(len(live))]).GetBucketReplicationStatus(ctx,
+			adminapi.GetBucketReplicationStatusParams{Bucket: replicaBucket})
+		if err != nil {
+			errs++
+
+			continue
+		}
+
+		samples++
+		backlog, size = max(backlog, st.Backlog), max(size, st.BacklogBytes)
+
+		for _, t := range st.Targets {
+			lag = max(lag, t.LagSeconds)
+		}
+	}
+
+	fmt.Printf("  replication lag: max %.1fs, backlog max %d versions (%.1f MiB); %d samples, %d failed\n",
+		lag, backlog, float64(size)/(1<<20), samples, errs)
 }
 
 // sleep waits d or until ctx is done, and reports whether d passed.
@@ -377,7 +458,7 @@ func (r *replication) check(ctx context.Context) error {
 		up := n.up
 		n.mu.Unlock()
 
-		if !up {
+		if !up && targetHost == "" {
 			if err := r.dst.start(n); err != nil {
 				return err
 			}
