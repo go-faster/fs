@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,7 +230,12 @@ func TestReplicationBacklog(t *testing.T) {
 		require.NoError(t, e.outbox.Insert(ctx, inc.ID, sk, meta.Outbox{Shipped: map[string]int64{"dr2": o.Pending}}))
 	}
 
-	u, err = e.ReplicationBacklog(ctx, "b")
-	require.NoError(t, err)
-	assert.Equal(t, Usage{Objects: 1, Bytes: 20}, u)
+	// The tally reads the greatest of a quorum, and the third replica may
+	// apply the deliveries a moment after the write is acknowledged: a
+	// shrinking backlog is seen eventually, not at once.
+	require.Eventually(t, func() bool {
+		u, err := e.ReplicationBacklog(ctx, "b")
+
+		return err == nil && u == Usage{Objects: 1, Bytes: 20}
+	}, 5*time.Second, 10*time.Millisecond)
 }
