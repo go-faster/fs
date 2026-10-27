@@ -1,8 +1,8 @@
 # Design: geo-replication
 
 **Status:** in progress: phases 1 (the outbox), 2 (the target), 3 (the
-runner, admin API and CLI), 4 (backfill) and 5 (the status header) are
-implemented; the chaos run and a WAN soak remain. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+runner, admin API and CLI), 4 (backfill), 5 (the status header) and 6 (the
+chaos run) are implemented; a WAN soak remains. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
@@ -398,9 +398,20 @@ through `x-amz-replication-status`.
   then check the versions, IDs, metadata, tags, the status headers and the
   ciphertext on the replica.
 - **Chaos:** a second three-node cluster as a target of the soak's
-  versioned buckets. After the last round and a drain, every version
-  acknowledged at the source exists at the destination, and nothing
-  deleted at the destination by version came back.
+  versioned bucket, reached through a TCP proxy that degrades the link a
+  different way each round (40 ms per chunk, 1 MiB/s, random resets, an
+  outage, a target node killed) while the source's own rounds kill, freeze
+  and re-lay-out its nodes, moving the runner. Versions are deleted at the
+  target by ID during the load. After the last round and a drain:
+  - every version the source still holds exists at the destination with
+    its ETag, unless deleted there (the source's lifecycle removes versions
+    the target keeps, so the comparison is from the source's side);
+  - nothing deleted at the destination by version came back;
+  - every source version reports `x-amz-replication-status: COMPLETED`;
+  - the runner logged at least one failure, so the faults reached it.
+
+  Delete markers are not compared: the source's lifecycle creates and
+  removes markers it does not replicate.
 
 ## Phasing
 
@@ -415,7 +426,8 @@ Each phase is a PR that leaves main working:
    shipping, status, metrics, and the integration tests.
 4. **Backfill** (done).
 5. **`x-amz-replication-status`** (done).
-6. **The chaos run:** a second three-node cluster as the target of the
+6. **The chaos run** (done, `scripts/chaos/replication.go`): a second
+   three-node cluster as the target of the
    soak's versioned buckets, behind a fault-injecting proxy (added delay,
    limited bandwidth, dropped and reset connections, outages), so the
    checks under Testing hold on every replication PR.

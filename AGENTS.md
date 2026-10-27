@@ -210,7 +210,13 @@ about HTTP or S3; don't import upward.
   created through one node are accepted and revoked on every node, that
   bucket usage matches a listing after every round, and that lifecycle
   sweeps (their clock moved ahead by the test-only `lifecycle.clock_offset`)
-  bring every versioned key down to what its rule keeps. About a
+  bring every versioned key down to what its rule keeps. The versioned
+  bucket also replicates to a second, three-node deployment through a
+  fault-injecting proxy (latency, a bandwidth cap, resets, outages, a
+  target node killed) while versions are deleted at the target; after a
+  drain every source version must be at the target, none deleted there may
+  come back, and every one must report `COMPLETED`
+  (`-replication=false` leaves it out). About a
   minute per round; `ROUNDS=n`, `ARGS=-actions 4,5`. `ARGS=-realistic` runs
   the nodes at fs's defaults (fsync on, production background cadence) —
   slower, and data accumulates (~6 GB a round), so give it a `-dir` on a disk
