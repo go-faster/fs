@@ -124,6 +124,29 @@ func pass(t *testing.T, r *Runner) {
 	require.NoError(t, err)
 }
 
+// passUntil runs passes until done holds. A backfill starts once its delay
+// has passed by the wall clock, which on some systems ticks coarsely
+// enough that a pass right after the request still finds it early.
+func passUntil(t *testing.T, r *Runner, done func() bool) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		pass(t, r)
+
+		return done()
+	}, 5*time.Second, 5*time.Millisecond)
+}
+
+// backfilled reports whether d's backfill to target has walked and shipped.
+func (d *deployment) backfilled(t *testing.T, target string) func() bool {
+	return func() bool {
+		bfs, err := d.engine.ReplicationBackfills(context.Background(), "data")
+		require.NoError(t, err)
+
+		return !bfs[target].Due() && d.backlog(t) == 0
+	}
+}
+
 func TestRunnerDelivers(t *testing.T) {
 	ctx := context.Background()
 	src, dst := newDeployment(t, nil), newDeployment(t, nil)
@@ -382,8 +405,7 @@ func TestRunnerBackfill(t *testing.T) {
 	require.NoError(t, src.engine.SaveBackfillProgress(ctx, "data", "dr", p))
 
 	r = &Runner{Source: src.engine, BackfillDelay: time.Nanosecond}
-	pass(t, r) // Walks.
-	pass(t, r) // Ships what the walk queued.
+	passUntil(t, r, src.backfilled(t, "dr"))
 
 	assert.Equal(t, src.versions(t), dst.versions(t), "every existing version, the marker too")
 	assert.Zero(t, src.backlog(t))
@@ -400,12 +422,10 @@ func TestRunnerBackfill(t *testing.T) {
 	require.NoError(t, src.engine.RequestReplicationBackfill(ctx, "data", "dr"))
 	require.ErrorIs(t, src.engine.RequestReplicationBackfill(ctx, "data", "nope"), fs.ErrInvalidBucketState)
 
-	pass(t, r)
-	pass(t, r)
+	passUntil(t, r, src.backfilled(t, "dr"))
 
 	bfs, err = src.engine.ReplicationBackfills(ctx, "data")
 	require.NoError(t, err)
-	assert.False(t, bfs["dr"].Due())
 	assert.Equal(t, int64(5), bfs["dr"].Progress.Walked)
 	assert.Equal(t, src.versions(t), dst.versions(t))
 
@@ -433,8 +453,7 @@ func TestRunnerBackfillPrefix(t *testing.T) {
 	require.NoError(t, src.engine.SetBucketReplication(ctx, "data", []engine.ReplicationTarget{tg}))
 
 	r := &Runner{Source: src.engine, BackfillDelay: time.Nanosecond}
-	pass(t, r)
-	pass(t, r)
+	passUntil(t, r, src.backfilled(t, "dr"))
 
 	var keys []string
 	for _, v := range dst.versions(t) {

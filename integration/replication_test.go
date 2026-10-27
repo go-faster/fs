@@ -306,10 +306,20 @@ func TestReplicationBackfill(t *testing.T) {
 
 	r := &replication.Runner{Source: srcEngine, BackfillDelay: time.Nanosecond}
 
-	for range 2 { // The walk, then the shipment.
+	// The walk, then the shipment. The walk starts once its delay has
+	// passed by the wall clock, which ticks coarsely on some systems.
+	require.Eventually(t, func() bool {
 		_, err := r.Pass(ctx)
 		require.NoError(t, err)
-	}
+
+		bfs, err := srcEngine.ReplicationBackfills(ctx, "photos")
+		require.NoError(t, err)
+
+		backlog, err := srcEngine.ReplicationBacklog(ctx, "photos")
+		require.NoError(t, err)
+
+		return !bfs["dr"].Due() && backlog.Objects == 0
+	}, 5*time.Second, 5*time.Millisecond)
 
 	want, err := src.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{Bucket: aws.String("photos")})
 	require.NoError(t, err)
