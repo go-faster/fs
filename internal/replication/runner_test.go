@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -27,11 +28,14 @@ const (
 
 // deployment is an fs deployment for the runner's tests: its engine with
 // bucket "data" versioned, served over S3 by an admin key. down makes it answer
-// 503 to everything.
+// 503 to everything, and delay holds every request, as a long round trip
+// does; peak is the most requests it has served at once.
 type deployment struct {
-	engine *engine.Engine
-	url    string
-	down   atomic.Bool
+	engine         *engine.Engine
+	url            string
+	down           atomic.Bool
+	delay          atomic.Int64
+	inFlight, peak atomic.Int64
 }
 
 func newDeployment(t *testing.T, kr *sse.Keyring) *deployment {
@@ -61,6 +65,13 @@ func newDeployment(t *testing.T, kr *sse.Keyring) *deployment {
 			return
 		}
 
+		n := d.inFlight.Add(1)
+		defer d.inFlight.Add(-1)
+
+		for p := d.peak.Load(); n > p && !d.peak.CompareAndSwap(p, n); p = d.peak.Load() {
+		}
+
+		time.Sleep(time.Duration(d.delay.Load()))
 		h.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
@@ -201,6 +212,27 @@ func TestRunnerDelivers(t *testing.T) {
 
 	_, err = dst.engine.GetObjectVersion(ctx, "data", "brief", id)
 	require.Error(t, err)
+}
+
+func TestRunnerConcurrentVersions(t *testing.T) {
+	ctx := context.Background()
+	src, dst := newDeployment(t, nil), newDeployment(t, nil)
+	require.NoError(t, src.engine.SetBucketReplication(ctx, "data", []engine.ReplicationTarget{dst.target("dr")}))
+
+	// Enough versions with blocks for a batch to have many in flight.
+	for i := range 3 * versionsInFlight {
+		src.put(t, fmt.Sprintf("k%d", i%5), random(t, 64<<10))
+	}
+
+	dst.delay.Store(int64(20 * time.Millisecond))
+
+	r := &Runner{Source: src.engine}
+	pass(t, r)
+
+	assert.Zero(t, src.backlog(t))
+	assert.Equal(t, src.versions(t), dst.versions(t), "every version, in order")
+	assert.Greater(t, dst.peak.Load(), int64(blocksInFlight), "versions are prepared at once, not one by one")
+	assert.LessOrEqual(t, dst.peak.Load(), int64(versionsInFlight*blocksInFlight))
 }
 
 func TestRunnerTargetDown(t *testing.T) {

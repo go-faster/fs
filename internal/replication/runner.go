@@ -45,8 +45,13 @@ const (
 	outboxPage = 500
 	// applyBatch is how many versions go to a target in one request.
 	applyBatch = 100
-	// blocksInFlight is how many blocks of a version are sent at once.
-	blocksInFlight = 4
+	// versionsInFlight is how many versions of a batch are prepared at once
+	// — exported, their blocks claimed and sent — and blocksInFlight how many
+	// blocks of each. Every version costs at least a round trip to claim its
+	// blocks and another to send them, so over a 100 ms link one at a time
+	// ships about five a second.
+	versionsInFlight = 16
+	blocksInFlight   = 4
 	// maxBackoff caps the wait after a target's failures.
 	maxBackoff = time.Minute
 	// backfillPage is how many keys a backfill walks at a time, and
@@ -444,7 +449,7 @@ func (r *Runner) target(bucket string, cfg engine.ReplicationTarget) (*target, e
 
 	hc := r.HTTP
 	if hc == nil {
-		hc = &http.Client{Timeout: 5 * time.Minute}
+		hc = defaultHTTP()
 	}
 
 	c, err := NewClient(cfg.Endpoint, cfg.Bucket, cfg.AccessKeyID, cfg.SecretAccessKey, hc)
@@ -461,6 +466,16 @@ func (r *Runner) target(bucket string, cfg engine.ReplicationTarget) (*target, e
 	t.cfg, t.client, t.failures, t.next = cfg, c, 0, time.Time{}
 
 	return t, nil
+}
+
+// defaultHTTP is the client of targets: it keeps a connection idle for every
+// request a batch may have in flight, where http.DefaultTransport keeps two
+// per host, so that the others do not redo the TCP and TLS handshakes.
+func defaultHTTP() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = versionsInFlight * blocksInFlight
+
+	return &http.Client{Timeout: 5 * time.Minute, Transport: tr}
 }
 
 // ship delivers entries, outbox rows pending for t, in batches. An error is
@@ -493,40 +508,37 @@ func (r *Runner) shipBatch(ctx context.Context, bucket string, t *target, entrie
 		})
 	}
 
-	for _, e := range entries {
-		// The version itself ships the first time; after that, or for a
-		// row an attributes change recreated, its tags and ACL alone.
-		attrsOnly := !e.Row.Version || e.Row.Shipped[t.cfg.Name] > 0
+	ready := make([]prepared, len(entries))
 
-		rv, err := r.Source.ExportReplica(ctx, bucket, e.Key, e.VersionID, attrsOnly)
+	var g errgroup.Group
 
-		switch {
-		case errors.Is(err, fs.ErrVersionNotFound):
-			// Deleted here since: version deletes are not replicated, so
-			// there is nothing left to send.
+	g.SetLimit(versionsInFlight)
+
+	for i, e := range entries {
+		g.Go(func() error {
+			p, err := r.prepare(ctx, bucket, t, e)
+			ready[i] = p
+
+			return err
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// In the batch's order, as one at a time would have it.
+	for i, e := range entries {
+		switch p := ready[i]; {
+		case p.gone:
 			mark(e, "")
-
-			continue
-		case err != nil:
-			return errors.Wrapf(err, "export %s@%s", e.Key, e.VersionID)
+		case p.refused != "":
+			r.refused(bucket, t, e, p.refused)
+			mark(e, p.refused)
+		default:
+			versions = append(versions, p.rv)
+			sent = append(sent, e)
 		}
-
-		if len(rv.Blocks) > 0 {
-			reason, err := r.shipBlocks(ctx, t, &rv)
-			if err != nil {
-				return err
-			}
-
-			if reason != "" {
-				r.refused(bucket, t, e, reason)
-				mark(e, reason)
-
-				continue
-			}
-		}
-
-		versions = append(versions, rv)
-		sent = append(sent, e)
 	}
 
 	if len(versions) > 0 {
@@ -562,6 +574,46 @@ func (r *Runner) shipBatch(ctx context.Context, bucket string, t *target, entrie
 	r.succeeded(bucket, t, marks)
 
 	return nil
+}
+
+// prepared is a version of a batch made ready to apply: exported, its blocks
+// at the target. gone is a version deleted here since, and refused why the
+// version cannot ship.
+type prepared struct {
+	rv      fs.ReplicaVersion
+	gone    bool
+	refused string
+}
+
+// prepare exports e and sends the blocks the target lacks.
+func (r *Runner) prepare(ctx context.Context, bucket string, t *target, e engine.OutboxEntry) (prepared, error) {
+	// The version itself ships the first time; after that, or for a row an
+	// attributes change recreated, its tags and ACL alone.
+	attrsOnly := !e.Row.Version || e.Row.Shipped[t.cfg.Name] > 0
+
+	rv, err := r.Source.ExportReplica(ctx, bucket, e.Key, e.VersionID, attrsOnly)
+
+	switch {
+	case errors.Is(err, fs.ErrVersionNotFound):
+		// Deleted here since: version deletes are not replicated, so there
+		// is nothing left to send.
+		return prepared{gone: true}, nil
+	case err != nil:
+		return prepared{}, errors.Wrapf(err, "export %s@%s", e.Key, e.VersionID)
+	}
+
+	if len(rv.Blocks) > 0 {
+		reason, err := r.shipBlocks(ctx, t, &rv)
+		if err != nil {
+			return prepared{}, err
+		}
+
+		if reason != "" {
+			return prepared{refused: reason}, nil
+		}
+	}
+
+	return prepared{rv: rv}, nil
 }
 
 // shipBlocks claims a version's blocks at the target and sends those it
