@@ -14,8 +14,9 @@
 // Each worker owns its keys and runs one operation at a time on them, so the
 // expected state of every key is known: the value of its last acknowledged
 // write, plus any value a failed write may still deliver — a write whose
-// response was lost has an unknown outcome and may land later. A read that
-// returns anything else is a violation.
+// response was lost has an unknown outcome and may land later, and one held
+// by a frozen node lands when it resumes, after the writes acknowledged
+// meanwhile. A read that returns anything else is a violation.
 package main
 
 import (
@@ -68,7 +69,24 @@ type node struct {
 	mu              sync.Mutex
 	cmd             *exec.Cmd
 	up              bool
-	client          *minio.Client
+	// frozen is set while the node is stopped, and thawed is when it last
+	// resumed: a request it held through the freeze completes after it.
+	frozen bool
+	thawed time.Time
+	client *minio.Client
+}
+
+// thawGrace is how long after a freeze the requests a node held may still
+// be completing.
+const thawGrace = 5 * time.Second
+
+// holding reports whether the node may still complete a request whose client
+// gave up on it: it is frozen, or resumed only just now.
+func (n *node) holding() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	return n.frozen || time.Since(n.thawed) < thawGrace
 }
 
 type cluster struct {
@@ -229,6 +247,14 @@ func (c *cluster) signal(n *node, sig syscall.Signal, up bool) {
 	defer n.mu.Unlock()
 
 	n.up = up
+
+	switch sig {
+	case syscall.SIGSTOP:
+		n.frozen = true
+	case syscall.SIGCONT:
+		n.frozen, n.thawed = false, time.Now()
+	}
+
 	_ = n.cmd.Process.Signal(sig)
 }
 
@@ -380,8 +406,9 @@ type keyModel struct {
 	seq         int
 	possible    map[string]bool
 	// failed are writes since the last acknowledged one whose outcome is
-	// unknown: one may still land, even after a later delete.
-	failed map[string]bool
+	// unknown, by the node they were sent to: one may still land, even after
+	// a later delete.
+	failed map[string]*node
 	// history is the key's recent operations, for a violation report.
 	history []string
 }
@@ -397,6 +424,19 @@ func (k *keyModel) set(vals ...string) {
 	k.possible = map[string]bool{}
 	for _, v := range vals {
 		k.possible[v] = true
+	}
+}
+
+// held keeps the failed writes a frozen node may still complete, and makes
+// them possible: the node commits one when it resumes, as the key's newest
+// version, after any write acknowledged meanwhile.
+func (k *keyModel) held() {
+	for v, n := range k.failed {
+		if n.holding() {
+			k.possible[v] = true
+		} else {
+			delete(k.failed, v)
+		}
 	}
 }
 
@@ -513,12 +553,12 @@ func (h *harness) worker(ctx context.Context, w int, seed uint64) {
 			if err != nil {
 				h.failed.Add(1)
 
-				k.possible[v], k.failed[v] = true, true
+				k.possible[v], k.failed[v] = true, n
 				k.note("put %s via %s FAILED: %v", v, n.id, err)
 			} else {
 				h.ok.Add(1)
 				k.set(v)
-				k.failed = map[string]bool{}
+				k.held()
 				k.note("put %s via %s ok", v, n.id)
 			}
 		case p < 70:
@@ -534,13 +574,16 @@ func (h *harness) worker(ctx context.Context, w int, seed uint64) {
 
 				// A delete removes the version it saw. On an unversioned
 				// bucket a failed write may still land after it, as a newer
-				// version; on a versioned one the marker is newer than it.
+				// version; on a versioned one the marker is newer than it,
+				// unless a frozen node still holds the write.
 				k.set("")
 
 				if k.bucket != "versioned" {
 					for v := range k.failed {
 						k.possible[v] = true
 					}
+				} else {
+					k.held()
 				}
 			}
 		default:
@@ -789,7 +832,7 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 			b := buckets[(w+i)%len(buckets)].name
 			ks = append(ks, &keyModel{
 				bucket: b, key: fmt.Sprintf("w%d/k%d", w, i),
-				possible: map[string]bool{"": true}, failed: map[string]bool{},
+				possible: map[string]bool{"": true}, failed: map[string]*node{},
 			})
 		}
 
