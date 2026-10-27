@@ -387,7 +387,16 @@ Each phase is a PR that leaves main working:
    shipping, status, metrics, and the integration tests.
 4. **Backfill.**
 5. **`x-amz-replication-status`.**
-6. **The chaos run.**
+6. **The chaos run:** a second three-node cluster as the target of the
+   soak's versioned buckets, behind a fault-injecting proxy (added delay,
+   limited bandwidth, dropped and reset connections, outages), so the
+   checks under Testing hold on every replication PR.
+7. **A WAN soak on Hetzner:** two short-lived clusters in different
+   locations, created and destroyed by a script (`hcloud`), running the
+   chaos workload at fs's defaults for a few hours. It finds what a local
+   proxy only approximates — real latency, bandwidth and TLS — and tunes the
+   runner's batch, concurrency and timeouts against it. Run by hand or
+   nightly, not per PR, since it costs money and its timing varies.
 
 ## Open questions
 
