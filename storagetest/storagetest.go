@@ -124,6 +124,7 @@ var suite = map[string]func(t *testing.T, storage fs.Storage){
 	"Multipart/Complete/NotFound":           testMultipartCompleteNotFound,
 	"Multipart/Abort":                       testMultipartAbort,
 	"Multipart/Abort/NotFound":              testMultipartAbortNotFound,
+	"Multipart/Abort/AfterComplete":         testMultipartAbortAfterComplete,
 	"Multipart/ListParts":                   testMultipartListParts,
 	"Multipart/ListParts/Overwrite":         testMultipartListPartsOverwrite,
 	"Multipart/ListParts/NotFound":          testMultipartListPartsNotFound,
@@ -824,6 +825,38 @@ func testMultipartAbortNotFound(t *testing.T, storage fs.Storage) {
 
 	err := storage.AbortMultipartUpload(ctx, testBucket, testKey, "nonexistent-upload")
 	require.ErrorIs(t, err, fs.ErrUploadNotFound)
+}
+
+// testMultipartAbortAfterComplete aborts an upload that has completed, as a
+// client does that gave up waiting for the completion: the abort is refused,
+// and the object stands.
+func testMultipartAbortAfterComplete(t *testing.T, storage fs.Storage) {
+	ctx := t.Context()
+
+	require.NoError(t, storage.CreateBucket(ctx, testBucket))
+
+	upload, err := storage.CreateMultipartUpload(ctx, &fs.CreateMultipartUploadRequest{Bucket: testBucket, Key: testKey})
+	require.NoError(t, err)
+
+	part := uploadPart(t, storage, upload, 1, []byte("data"))
+
+	_, err = storage.CompleteMultipartUpload(ctx, &fs.CompleteMultipartUploadRequest{
+		Bucket: testBucket, Key: testKey, UploadID: upload.UploadID,
+		Parts: []fs.CompletedPart{{PartNumber: 1, ETag: part.ETag}},
+	})
+	require.NoError(t, err)
+
+	err = storage.AbortMultipartUpload(ctx, testBucket, testKey, upload.UploadID)
+	require.ErrorIs(t, err, fs.ErrUploadNotFound)
+
+	resp, err := storage.GetObject(ctx, testBucket, testKey)
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Reader.Close() }()
+
+	got, err := io.ReadAll(resp.Reader)
+	require.NoError(t, err)
+	require.Equal(t, []byte("data"), got)
 }
 
 func testMultipartListParts(t *testing.T, storage fs.Storage) {

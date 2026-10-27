@@ -117,17 +117,24 @@ func (e *Engine) upload(ctx context.Context, bucket, key, id string) (string, me
 		return "", meta.Version{}, err
 	}
 
-	o, err := e.object(ctx, inc.ID, key)
+	v, err := e.uploadIn(ctx, inc.ID, key, id)
+
+	return inc.ID, v, err
+}
+
+// uploadIn is upload in the bucket of ID bucketID.
+func (e *Engine) uploadIn(ctx context.Context, bucketID, key, id string) (meta.Version, error) {
+	o, err := e.object(ctx, bucketID, key)
 	if err != nil {
-		return "", meta.Version{}, err
+		return meta.Version{}, err
 	}
 
 	v, ok := o.Find(id)
 	if !ok || v.State != meta.Uploading {
-		return inc.ID, v, fs.ErrUploadNotFound
+		return v, fs.ErrUploadNotFound
 	}
 
-	return inc.ID, v, nil
+	return v, nil
 }
 
 func (e *Engine) UploadPart(ctx context.Context, req *fs.UploadPartRequest) (*fs.Part, error) {
@@ -551,12 +558,23 @@ func completed(req *fs.CompleteMultipartUploadRequest, p payload) *fs.CompleteMu
 }
 
 func (e *Engine) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	bucketID, v, err := e.upload(ctx, bucket, key, uploadID)
+	_, inc, err := e.bucket(ctx, bucket)
 	if err != nil {
 		return err
 	}
 
+	bucketID := inc.ID
+
+	// The upload is read under the key's lock: a completion holding it may
+	// finish first, and an abort that read the upload before would write
+	// Gone over the object it became. (One coordinated elsewhere can still
+	// race; the merge lets the completion stand.)
 	defer e.lock(bucketID, key)()
+
+	v, err := e.uploadIn(ctx, bucketID, key, uploadID)
+	if err != nil {
+		return err
+	}
 
 	v.State = meta.Gone
 	if err := e.writeRows(ctx,

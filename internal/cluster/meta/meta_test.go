@@ -148,7 +148,7 @@ func TestVersionedKeepsHistory(t *testing.T) {
 	_, ok := o.Current()
 	assert.False(t, ok, "a delete marker on top hides the key")
 
-	o = MergeObject(o, row(Version{ID: "c", TS: 3, State: Gone}))
+	o = MergeObject(o, row(Version{ID: "c", TS: 3, State: Gone, Completed: true}))
 	cur, ok := o.Current()
 	require.True(t, ok, "removing the marker brings back the version below")
 	assert.Equal(t, "b", cur.ID)
@@ -188,15 +188,53 @@ func TestDeletedNullStaysReplaced(t *testing.T) {
 }
 
 func TestGoneDropsPayload(t *testing.T) {
+	// A deletion copies the completed version it deletes, Completed set.
 	o := row(
 		Version{ID: "a", TS: 1, State: Complete, Payload: json.RawMessage(`{"big":true}`)},
-		Version{ID: "a", TS: 1, State: Gone},
+		Version{ID: "a", TS: 1, State: Gone, Completed: true},
 	)
 
 	require.Len(t, o.Versions, 1)
 	assert.Equal(t, Gone, o.Versions[0].State)
 	assert.Nil(t, o.Versions[0].Payload)
 	assert.True(t, o.Versions[0].Completed)
+}
+
+// TestAbortRacingCompletion is an upload completed through one coordinator
+// and aborted through another that read it still in flight: the completion
+// stands, in any order, and still replaces the older null version.
+func TestAbortRacingCompletion(t *testing.T) {
+	older := Version{ID: "a", TS: 1, Null: true, State: Complete, Payload: json.RawMessage(`{"v":1}`)}
+	tags := LWW[json.RawMessage]{TS: 5, V: json.RawMessage(`{"tags":1}`)}
+	// The abort's copy is the upload as it read it: provisional TS, not null.
+	upload := Version{ID: "u", TS: 2, State: Uploading, Attrs: tags}
+	aborted := Version{ID: "u", TS: 2, State: Gone}
+	completed := Version{ID: "u", TS: 3, Null: true, State: Complete, Payload: json.RawMessage(`{"v":2}`)}
+
+	want := row(older, upload, completed)
+
+	cur, ok := want.Current()
+	require.True(t, ok)
+	require.Equal(t, "u", cur.ID)
+	require.Len(t, want.Versions, 1, "the completion replaced the older null version")
+
+	for _, got := range []Object{
+		MergeObject(MergeObject(row(older, upload), row(aborted)), row(completed)),
+		MergeObject(MergeObject(row(older, upload), row(completed)), row(aborted)),
+		MergeObject(row(older), MergeObject(row(aborted), row(upload, completed))),
+	} {
+		assert.JSONEq(t, string(encode(want)), string(encode(got)))
+	}
+
+	// The tags set on the upload survived the abort's copy winning first.
+	assert.Equal(t, tags, cur.Attrs)
+
+	// A deletion of the completed version still beats it.
+	deleted := completed
+	deleted.State, deleted.Completed = Gone, true
+
+	_, ok = MergeObject(want, row(deleted, aborted)).Current()
+	assert.False(t, ok)
 }
 
 func TestFindLatest(t *testing.T) {
