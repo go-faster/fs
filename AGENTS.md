@@ -106,7 +106,8 @@ automated resumable migration and the public API becomes additive-only.
   every replica only where the row is still exactly the queued one.
 - `internal/cluster/meta` — the metadata rows and their merges: buckets
   (incarnation + per-setting LWW registers), objects (version list: uploads,
-  versions, delete markers, null versions; Uploading → Complete → Gone),
+  versions, delete markers, null versions; Uploading → Complete → Gone, an
+  abort's Gone ranking below Complete so a completion it raced stands),
   block refs, multipart parts and the index of uploads in flight (both
   overwritten by `Done` once the upload finishes), access keys created
   through the admin API, account quotas, the geo-replication outbox (a row

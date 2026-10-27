@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +25,9 @@ type node struct {
 	member *peer.Member
 	srv    *httptest.Server
 	engine *Engine
+	// down makes the node answer its peers 503, as if unreachable, until
+	// cleared; noWrites does so for multi-table writes alone.
+	down, noWrites atomic.Bool
 }
 
 // cluster starts n nodes, each in its own zone, sharing a layout with
@@ -80,11 +85,21 @@ func clusterWide(t testing.TB, n int, cfg Config, widths ...int) []*node {
 		e, err := New(c)
 		require.NoError(t, err)
 
-		srv.Config.Handler = m.Handler()
+		nd := &node{member: m, srv: srv, engine: e}
+		h := m.Handler()
+		srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if nd.down.Load() || (nd.noWrites.Load() && r.URL.Path == "/v1/tables/write") {
+				http.Error(w, "down", http.StatusServiceUnavailable)
+
+				return
+			}
+
+			h.ServeHTTP(w, r)
+		})
 		srv.Start()
 		t.Cleanup(srv.Close)
 
-		nodes[i] = &node{member: m, srv: srv, engine: e}
+		nodes[i] = nd
 	}
 
 	require.Eventually(t, func() bool {

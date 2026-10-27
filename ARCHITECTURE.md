@@ -537,6 +537,17 @@ what covers a write still in flight and a partition handover a layout change
 started: either could carry the row from before its delete. Single nodes
 collect the same way, with one replica.
 
+A version's copies merge by rank, not raw state: Uploading, then aborted
+(Gone without `Completed`), then Complete, then deleted (Gone with
+`Completed`, which a deletion copies from the completed version it
+removes). An abort therefore never beats a completion of the same upload:
+the two can both be acknowledged when coordinators race — a client that gave
+up on a completion that went on to succeed aborts the upload — and the
+object the completion made, which already replaced the older null version,
+stands. `AbortMultipartUpload` reads the upload under the key's lock, so on
+one coordinator an abort after a completion is `NoSuchUpload`; across
+coordinators the merge decides.
+
 **Periodic-pass scheduling.** The lifecycle sweep records when it last
 completed — `<root>/.lastrun/<task>.json` — and schedules the next pass one interval
 after that rather than one interval after process start. The engine's hourly

@@ -42,7 +42,8 @@ type Version struct {
 	// Completed records that the version reached Complete, and stays set once
 	// it is Gone. A null version that completed replaces older null versions
 	// even after it is deleted; an aborted upload never did, and replaces
-	// nothing.
+	// nothing. It also tells a deletion (Gone, Completed) from an abort (Gone
+	// alone), which a completion of the same upload beats; see rank.
 	Completed bool `json:"completed,omitempty"`
 	// DeleteMarker is a complete version that says the key is deleted.
 	DeleteMarker bool `json:"delete_marker,omitempty"`
@@ -66,20 +67,43 @@ func (v Version) before(w Version) bool {
 	return v.ID < w.ID
 }
 
-// mergeVersion merges two copies of the same version: the further state wins.
-// Copies in the same state are the same write, but pick deterministically all
+// rank orders the copies of a version: the further state wins, except that
+// an aborted upload — Gone in a copy that never completed — does not beat
+// its completion. An abort and a completion of one upload can both be
+// acknowledged, by two coordinators each reading it still Uploading; the
+// completion's object stands, as in S3, where an abort cannot undo a
+// completion it raced. A version deleted after it completed carries
+// Completed, and beats every other copy.
+func rank(v Version) int {
+	switch {
+	case v.State == Uploading:
+		return 0
+	case v.State == Gone && !v.Completed:
+		return 1
+	case v.State == Complete:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// mergeVersion merges two copies of the same version: the higher rank wins.
+// Copies of the same rank are the same write, but pick deterministically all
 // the same.
 func mergeVersion(a, b Version) Version {
 	out := a
 
-	switch {
-	case b.State > a.State:
+	switch ra, rb := rank(a), rank(b); {
+	case rb > ra:
 		out = b
-	case b.State == a.State && bytes.Compare(encode(withoutRegisters(b)), encode(withoutRegisters(a))) > 0:
+	case rb == ra && bytes.Compare(encode(withoutRegisters(b)), encode(withoutRegisters(a))) > 0:
 		out = b
 	}
 
-	out.Completed = a.Completed || b.Completed || out.State == Complete
+	// The winner's own: a loser's flag would change the winner's rank, and
+	// the merge would stop being associative. A deletion carries the flag of
+	// the completed version it was made from.
+	out.Completed = out.Completed || out.State == Complete
 	out.Attrs = a.Attrs.Merge(b.Attrs)
 	out.Key = a.Key.Merge(b.Key)
 
@@ -119,8 +143,15 @@ func MergeObject(a, b Object) Object {
 			v = mergeVersion(prev, v)
 		}
 
+		// A tombstone keeps nothing but what orders it. An aborted upload
+		// keeps its registers: its completion may still arrive and win, and
+		// they merge into it.
 		if v.State == Gone {
-			v.Payload, v.DeleteMarker, v.Attrs, v.Key = nil, false, LWW[json.RawMessage]{}, LWW[json.RawMessage]{}
+			v.Payload, v.DeleteMarker = nil, false
+
+			if v.Completed {
+				v.Attrs, v.Key = LWW[json.RawMessage]{}, LWW[json.RawMessage]{}
+			}
 		}
 
 		byID[v.ID] = v
