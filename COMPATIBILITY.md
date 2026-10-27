@@ -74,7 +74,8 @@ Each requires a design document before commitment:
 - **Static website hosting**, **ACME / automatic TLS**.
 - **Geo-replication** — asynchronous, bucket-level replication of versions
   between independent fs deployments
-  ([design](docs/design/geo-replication.md), proposed).
+  ([design](docs/design/geo-replication.md), in progress: new versions ship;
+  backfill and `x-amz-replication-status` are next).
 
 ## Out of scope
 

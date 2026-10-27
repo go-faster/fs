@@ -44,6 +44,12 @@ func encodeDeleteAccessKeyResponse(response *DeleteAccessKeyNoContent, w http.Re
 	return nil
 }
 
+func encodeDeleteBucketReplicationResponse(response *DeleteBucketReplicationNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
+
+	return nil
+}
+
 func encodeGetAccountQuotaResponse(response *QuotaStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -58,6 +64,32 @@ func encodeGetAccountQuotaResponse(response *QuotaStatus, w http.ResponseWriter,
 }
 
 func encodeGetBucketQuotaResponse(response *QuotaStatus, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeGetBucketReplicationResponse(response *Replication, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeGetBucketReplicationStatusResponse(response *ReplicationStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 
@@ -175,6 +207,19 @@ func encodeSetAccountQuotaResponse(response *QuotaStatus, w http.ResponseWriter,
 }
 
 func encodeSetBucketQuotaResponse(response *QuotaStatus, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeSetBucketReplicationResponse(response *Replication, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

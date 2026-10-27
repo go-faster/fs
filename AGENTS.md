@@ -155,7 +155,9 @@ automated resumable migration and the public API becomes additive-only.
   implements `fs.ReplicaReceiver`: claims a version's blocks by
   referencing them from it, stores those sent, merges the version through
   the ordinary row merge (marked `Replica`, no outbox row, no quota); as a
-  source, `ExportReplica`/`ReadReplicaBlock`. The runner is not built yet.
+  source, `ExportReplica`/`ReadReplicaBlock`, and `Outbox`/`MarkReplicated`
+  for the runner; admin API `/api/v1/buckets/{bucket}/replication{,/status}`,
+  CLI `fs replication`.
   Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 and SSE-C seal
   data through `internal/sse` (an SSE-C key arrives on the context,
@@ -175,7 +177,10 @@ automated resumable migration and the public API becomes additive-only.
   removed.
 - `internal/replication` — geo-replication between deployments: `Client`
   speaks the `?x-fs-replica` protocol (SigV4-signed JSON; the handler side is
-  `internal/core/handler/replica.go`, which needs the `admin` grant).
+  `internal/core/handler/replica.go`, which needs the `admin` grant);
+  `Runner` ships the outbox of the buckets this node is elected for
+  (`cmd/fs/replication.go` wires it and its metrics); `Check` is the
+  handshake before a target is set.
 - `integration` — end-to-end tests driving the server via `minio-go`.
 - `internal/mock` — generated mocks (moq).
 

@@ -15,6 +15,7 @@ import (
 	"github.com/go-faster/fs/auth"
 	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/internal/cluster/peer"
+	"github.com/go-faster/fs/internal/replication"
 )
 
 // BuildInfo is static build metadata reported by GetInfo.
@@ -44,6 +45,12 @@ type Options struct {
 	Cluster *peer.Member
 	// Engine is the storage, for key rotation; nil returns 501.
 	Engine *engine.Engine
+	// Replication is this node's replication runner, for the status of the
+	// buckets it runs; nil reports none.
+	Replication *replication.Runner
+	// ReplicationCheck is the handshake with a replication target before it
+	// is set; nil means replication.Check over the default HTTP client.
+	ReplicationCheck func(ctx context.Context, t engine.ReplicationTarget) error
 	// now overrides the clock in tests.
 	now func() time.Time
 }
@@ -59,6 +66,12 @@ var _ adminapi.Handler = (*AdminAPI)(nil)
 func NewAdminAPI(opts Options) *AdminAPI {
 	if opts.now == nil {
 		opts.now = time.Now
+	}
+
+	if opts.ReplicationCheck == nil {
+		opts.ReplicationCheck = func(ctx context.Context, t engine.ReplicationTarget) error {
+			return replication.Check(ctx, t, nil)
+		}
 	}
 
 	if opts.StartTime.IsZero() {

@@ -14,13 +14,16 @@ var (
 	rn3AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn9AllowedHeaders = map[string]string{
-		"PUT": "Content-Type",
-	}
 	rn12AllowedHeaders = map[string]string{
 		"PUT": "Content-Type",
 	}
 	rn14AllowedHeaders = map[string]string{
+		"PUT": "Content-Type",
+	}
+	rn8AllowedHeaders = map[string]string{
+		"PUT": "Content-Type",
+	}
+	rn16AllowedHeaders = map[string]string{
 		"PUT": "Content-Type",
 	}
 	rn1AllowedHeaders = map[string]string{
@@ -198,7 +201,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "GET,PUT",
-									allowedHeaders: rn9AllowedHeaders,
+									allowedHeaders: rn12AllowedHeaders,
 									acceptPost:     "",
 									acceptPatch:    "",
 								})
@@ -266,13 +269,76 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "GET,PUT",
-									allowedHeaders: rn12AllowedHeaders,
+									allowedHeaders: rn14AllowedHeaders,
 									acceptPost:     "",
 									acceptPatch:    "",
 								})
 							}
 
 							return
+						}
+
+					case 'r': // Prefix: "replication"
+
+						if l := len("replication"); len(elem) >= l && elem[0:l] == "replication" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							switch r.Method {
+							case "DELETE":
+								s.handleDeleteBucketReplicationRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							case "GET":
+								s.handleGetBucketReplicationRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							case "PUT":
+								s.handleSetBucketReplicationRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "DELETE,GET,PUT",
+									allowedHeaders: rn8AllowedHeaders,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+						switch elem[0] {
+						case '/': // Prefix: "/status"
+
+							if l := len("/status"); len(elem) >= l && elem[0:l] == "/status" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch r.Method {
+								case "GET":
+									s.handleGetBucketReplicationStatusRequest([1]string{
+										args[0],
+									}, elemIsEscaped, w, r)
+								default:
+									s.notAllowed(w, r, notAllowedParams{
+										allowedMethods: "GET",
+										allowedHeaders: nil,
+										acceptPost:     "",
+										acceptPatch:    "",
+									})
+								}
+
+								return
+							}
+
 						}
 
 					case 's': // Prefix: "scheme"
@@ -297,7 +363,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "GET,PUT",
-									allowedHeaders: rn14AllowedHeaders,
+									allowedHeaders: rn16AllowedHeaders,
 									acceptPost:     "",
 									acceptPatch:    "",
 								})
@@ -807,6 +873,75 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 							default:
 								return
 							}
+						}
+
+					case 'r': // Prefix: "replication"
+
+						if l := len("replication"); len(elem) >= l && elem[0:l] == "replication" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							switch method {
+							case "DELETE":
+								r.name = DeleteBucketReplicationOperation
+								r.summary = "Stop replicating a bucket"
+								r.operationID = "deleteBucketReplication"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/replication"
+								r.args = args
+								r.count = 1
+								return r, true
+							case "GET":
+								r.name = GetBucketReplicationOperation
+								r.summary = "A bucket's replication targets"
+								r.operationID = "getBucketReplication"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/replication"
+								r.args = args
+								r.count = 1
+								return r, true
+							case "PUT":
+								r.name = SetBucketReplicationOperation
+								r.summary = "Set a bucket's replication targets"
+								r.operationID = "setBucketReplication"
+								r.operationGroup = ""
+								r.pathPattern = "/api/v1/buckets/{bucket}/replication"
+								r.args = args
+								r.count = 1
+								return r, true
+							default:
+								return
+							}
+						}
+						switch elem[0] {
+						case '/': // Prefix: "/status"
+
+							if l := len("/status"); len(elem) >= l && elem[0:l] == "/status" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch method {
+								case "GET":
+									r.name = GetBucketReplicationStatusOperation
+									r.summary = "How far a bucket's replication has got"
+									r.operationID = "getBucketReplicationStatus"
+									r.operationGroup = ""
+									r.pathPattern = "/api/v1/buckets/{bucket}/replication/status"
+									r.args = args
+									r.count = 1
+									return r, true
+								default:
+									return
+								}
+							}
+
 						}
 
 					case 's': // Prefix: "scheme"

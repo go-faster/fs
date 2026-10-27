@@ -23,6 +23,7 @@ func Root() *cobra.Command {
 	cmd.AddCommand(Encrypt())
 	cmd.AddCommand(Bucket())
 	cmd.AddCommand(Quota())
+	cmd.AddCommand(Replication())
 
 	return cmd
 }

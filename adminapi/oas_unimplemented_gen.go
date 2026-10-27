@@ -48,6 +48,16 @@ func (UnimplementedHandler) DeleteAccessKey(ctx context.Context, params DeleteAc
 	return ht.ErrNotImplemented
 }
 
+// DeleteBucketReplication implements deleteBucketReplication operation.
+//
+// Removes every target. What has not shipped yet never will; the outbox rows for the removed targets
+// are marked shipped by the next pass.
+//
+// DELETE /api/v1/buckets/{bucket}/replication
+func (UnimplementedHandler) DeleteBucketReplication(ctx context.Context, params DeleteBucketReplicationParams) error {
+	return ht.ErrNotImplemented
+}
+
 // GetAccountQuota implements getAccountQuota operation.
 //
 // The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
@@ -66,6 +76,31 @@ func (UnimplementedHandler) GetAccountQuota(ctx context.Context, params GetAccou
 //
 // GET /api/v1/buckets/{bucket}/quota
 func (UnimplementedHandler) GetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (r *QuotaStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetBucketReplication implements getBucketReplication operation.
+//
+// The buckets on other fs deployments this bucket's versions are replicated to
+// (docs/design/geo-replication.md), secrets omitted. Empty when replication is off. Returns 404 for a
+// missing bucket, 501 without a storage engine.
+//
+// GET /api/v1/buckets/{bucket}/replication
+func (UnimplementedHandler) GetBucketReplication(ctx context.Context, params GetBucketReplicationParams) (r *Replication, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetBucketReplicationStatus implements getBucketReplicationStatus operation.
+//
+// Per target: the versions still to ship and the age of the oldest change among them (the recovery
+// point a site loss would have), and the versions the target refused with its reasons, read from the
+// bucket's outbox on any node. When the node answering runs the bucket's replication (runner true),
+// also the runner's view: the last success and failure, and what it shipped since start. In a cluster
+// one node runs each bucket; ask another node, or watch the fs.replication.* metrics, which only that
+// node exports.
+//
+// GET /api/v1/buckets/{bucket}/replication/status
+func (UnimplementedHandler) GetBucketReplicationStatus(ctx context.Context, params GetBucketReplicationStatusParams) (r *ReplicationStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -166,6 +201,21 @@ func (UnimplementedHandler) SetAccountQuota(ctx context.Context, req *Quota, par
 //
 // PUT /api/v1/buckets/{bucket}/quota
 func (UnimplementedHandler) SetBucketQuota(ctx context.Context, req *Quota, params SetBucketQuotaParams) (r *QuotaStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetBucketReplication implements setBucketReplication operation.
+//
+// Replaces the bucket's targets. Versions written from now on, delete markers when delete_markers is
+// set, and changes of their tags and ACL ship to every target; versions written before do not. The
+// bucket needs versioning enabled, and suspending it is refused while targets exist. Each target is
+// checked first: it must answer the replication handshake with the given credentials (the admin grant
+// on its bucket) and have versioning enabled, and be https unless insecure is set. A target given
+// without secret_access_key keeps the secret of the current target of that name. Returns 400 when a
+// target fails the check, 409 when the bucket is not versioned.
+//
+// PUT /api/v1/buckets/{bucket}/replication
+func (UnimplementedHandler) SetBucketReplication(ctx context.Context, req *Replication, params SetBucketReplicationParams) (r *Replication, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

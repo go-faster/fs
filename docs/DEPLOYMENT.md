@@ -198,6 +198,44 @@ scheme they were written with. A write needs K+1 shard holders up, a read
 any K. A layout narrower than a bucket's code — current, or any it had
 before, since its coded blocks stay — is refused.
 
+## Geo-replication
+
+A bucket's versions can be replicated, asynchronously, to buckets of other
+fs deployments ([design](design/geo-replication.md)). Both buckets need
+versioning enabled; on the target, create a key with the `admin` grant on
+its bucket. Then, on the source:
+
+```sh
+export FS_REPLICATION_SECRET_KEY=...   # the target key's secret
+fs replication set photos --name dr --endpoint https://s3.eu.example.com \
+  --target-bucket photos-replica --access-key FSRPL... --delete-markers
+fs replication status photos            # backlog, lag, refusals
+fs replication rm photos dr
+```
+
+(or `PUT /api/v1/buckets/{bucket}/replication` and
+`GET /api/v1/buckets/{bucket}/replication/status`.) The server checks the
+target before saving it: reachable, the credentials accepted, versioning
+enabled, `https://` (`--insecure` allows http, for tests: the protocol
+carries data keys). Versions written from then on ship with their IDs,
+times, metadata, tags and ACLs, delete markers with `--delete-markers`, and
+later tag or ACL changes too; version deletes and lifecycle actions do not,
+so each side runs its own lifecycle. Versions written before the target was
+set do not ship yet (backfill is the next phase of the design).
+
+One node runs each bucket's replication — the one that sweeps its lifecycle
+— polling for changes every five seconds and shipping back to back while
+there are any. A target that fails is retried with backoff up to a minute;
+a version it refuses (an SSE-S3 version at a target with no master key) is
+recorded with the reason, shown by `status`, and retried every minute
+without holding up the rest. A status asked of another node reads the
+backlog and refusals but not the runner's last error; the metrics below come
+from the runner's node.
+
+Each pass reads the bucket's whole outbox, including rows already shipped
+until tombstone collection drops them a day later, so a bucket written at
+hundreds of versions a second spends its passes reading; watch the lag.
+
 ## Quotas
 
 Ceph RGW-style quotas limit what a bucket, or an account — every bucket one
@@ -259,9 +297,15 @@ usage read that fails lets the write through
 - **Replication**: `fs.replication.backlog{bucket}` and
   `fs.replication.backlog.size{bucket}` — the versions, and their bytes,
   that some replication target has yet to receive: what losing this
-  deployment would lose. Reported by the node that runs the bucket's
-  replication. Shipping is not built yet, so a bucket with targets only
-  accumulates a backlog for now. As a target: `fs.replication.applied` and
+  deployment would lose. By bucket and target: `fs.replication.lag` (s), the
+  age of the oldest change still to ship at the last pass — the recovery
+  point you actually have, the number to alert on;
+  `fs.replication.failing`, 1 while requests to the target fail and back
+  off; `fs.replication.shipped` and `fs.replication.failed`, versions
+  delivered and refused since start; `fs.replication.blocks.offered` and
+  `fs.replication.blocks.sent` (their ratio is the dedupe) and
+  `fs.replication.sent` (By). All are reported by the node that runs the
+  bucket's replication. As a target: `fs.replication.applied` and
   `fs.replication.refused`, versions received from other deployments since
   start; refusals are retried by the source, so a climbing `refused` is a
   version that cannot land here (no master key for an SSE-S3 version, a

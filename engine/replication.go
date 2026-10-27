@@ -3,9 +3,11 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -48,8 +50,8 @@ type ReplicationTarget struct {
 	Insecure bool `json:"insecure,omitempty"`
 }
 
-// validate checks t on its own; validTargets checks a bucket's set.
-func (t ReplicationTarget) validate() error {
+// Validate checks t on its own; validTargets checks a bucket's set.
+func (t ReplicationTarget) Validate() error {
 	switch {
 	case t.Name == "":
 		return errors.New("a target needs a name")
@@ -85,7 +87,7 @@ func validTargets(targets []ReplicationTarget) error {
 	seen := make(map[string]bool, len(targets))
 
 	for _, t := range targets {
-		if err := t.validate(); err != nil {
+		if err := t.Validate(); err != nil {
 			return err
 		}
 
@@ -221,12 +223,43 @@ func (e *Engine) ReplicationBacklog(ctx context.Context, bucket string) (Usage, 
 // replication targets, by name.
 func (e *Engine) ReplicationBacklogs(ctx context.Context) (map[string]Usage, error) {
 	out := map[string]Usage{}
+
+	err := e.replicatedBuckets(ctx, func(name string, _ meta.Bucket, inc meta.Incarnation) error {
+		u, err := e.outbox.Usage(ctx, inc.ID)
+		if err != nil {
+			return errors.Wrapf(err, "bucket %q", name)
+		}
+
+		out[name] = usageFrom(u)
+
+		return nil
+	})
+
+	return out, err
+}
+
+// ReplicatedBuckets returns every bucket with replication targets, and its
+// targets, secrets included.
+func (e *Engine) ReplicatedBuckets(ctx context.Context) (map[string][]ReplicationTarget, error) {
+	out := map[string][]ReplicationTarget{}
+
+	err := e.replicatedBuckets(ctx, func(name string, b meta.Bucket, _ meta.Incarnation) error {
+		out[name] = replicationTargets(b)
+
+		return nil
+	})
+
+	return out, err
+}
+
+// replicatedBuckets calls fn for every live bucket with replication targets.
+func (e *Engine) replicatedBuckets(ctx context.Context, fn func(name string, b meta.Bucket, inc meta.Incarnation) error) error {
 	start := ""
 
 	for {
 		page, err := e.buckets.Range(ctx, bucketsPK, start, 1000)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		for _, r := range page {
@@ -235,18 +268,198 @@ func (e *Engine) ReplicationBacklogs(ctx context.Context) (map[string]Usage, err
 				continue
 			}
 
-			u, err := e.outbox.Usage(ctx, inc.ID)
-			if err != nil {
-				return nil, errors.Wrapf(err, "bucket %q", r.SK)
+			if err := fn(r.SK, r.Row, inc); err != nil {
+				return err
 			}
-
-			out[r.SK] = usageFrom(u)
 		}
 
 		if len(page) < 1000 {
-			return out, nil
+			return nil
 		}
 
 		start = page[len(page)-1].SK + "\x00"
 	}
+}
+
+// OutboxEntry is the outbox row of one version.
+type OutboxEntry struct {
+	Key, VersionID string
+	Row            meta.Outbox
+}
+
+// After is the cursor of Outbox that continues after e.
+func (e OutboxEntry) After() string { return meta.OutboxSK(e.Key, e.VersionID) + "\x00" }
+
+// Outbox returns up to limit rows of a bucket's outbox, in key order, from
+// the cursor after on: "" for the first, OutboxEntry.After for the next. It
+// returns rows every target has received too, until they are collected.
+func (e *Engine) Outbox(ctx context.Context, bucket, after string, limit int) ([]OutboxEntry, error) {
+	_, inc, err := e.bucket(ctx, bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	page, err := e.outbox.Range(ctx, inc.ID, after, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]OutboxEntry, 0, len(page))
+
+	for _, r := range page {
+		key, id, ok := strings.Cut(r.SK, "\x00")
+		if !ok {
+			continue
+		}
+
+		out = append(out, OutboxEntry{Key: key, VersionID: id, Row: r.Row})
+	}
+
+	return out, nil
+}
+
+// ReplicationMark records a delivery of a version's change to a target, or
+// its refusal.
+type ReplicationMark struct {
+	Key, VersionID, Target string
+	// Pending is the change delivered or refused: the outbox row's Pending
+	// when it was read.
+	Pending int64
+	// Refused is the target's reason; empty for a delivery.
+	Refused string
+}
+
+// MarkReplicated records deliveries and refusals in a bucket's outbox.
+func (e *Engine) MarkReplicated(ctx context.Context, bucket string, marks []ReplicationMark) error {
+	if len(marks) == 0 {
+		return nil
+	}
+
+	_, inc, err := e.bucket(ctx, bucket)
+	if err != nil {
+		return err
+	}
+
+	at := e.ts()
+	merged := map[string]meta.Outbox{}
+
+	for _, m := range marks {
+		o := meta.Outbox{Shipped: map[string]int64{m.Target: m.Pending}}
+		if m.Refused != "" {
+			o = meta.Outbox{Refused: map[string]meta.Refusal{m.Target: {Pending: m.Pending, At: at, Reason: m.Refused}}}
+		}
+
+		sk := meta.OutboxSK(m.Key, m.VersionID)
+		merged[sk] = meta.MergeOutbox(merged[sk], o)
+	}
+
+	rows := make([]table.Row, 0, len(merged))
+
+	for _, sk := range slices.Sorted(maps.Keys(merged)) {
+		r, err := e.outbox.Row(inc.ID, sk, merged[sk])
+		if err != nil {
+			return err
+		}
+
+		rows = append(rows, r)
+	}
+
+	return table.Write(ctx, e.member, rows...)
+}
+
+// TargetBacklog is what a bucket has still to ship to one target.
+type TargetBacklog struct {
+	// Pending and Bytes are the versions with a change still to ship, and
+	// their size.
+	Pending, Bytes int64
+	// Oldest is when the oldest of those changes was made; zero when none.
+	Oldest time.Time
+	// Refused counts the pending versions whose latest change the target
+	// refused, and Recent are the latest refusals, newest first.
+	Refused int64
+	Recent  []TargetRefusal
+}
+
+// TargetRefusal is a target's refusal of a version.
+type TargetRefusal struct {
+	Key, VersionID, Reason string
+	At                     time.Time
+}
+
+// ReplicationStatus reads a bucket's outbox, up to limit rows, and returns
+// what each target named in it has still to ship. complete reports whether
+// the whole outbox was read.
+func (e *Engine) ReplicationStatus(
+	ctx context.Context, bucket string, limit, recent int,
+) (out map[string]TargetBacklog, complete bool, err error) {
+	targets, err := e.BucketReplication(ctx, bucket)
+	if err != nil {
+		return nil, false, err
+	}
+
+	out = map[string]TargetBacklog{}
+	for _, t := range targets {
+		out[t.Name] = TargetBacklog{}
+	}
+
+	after, read := "", 0
+
+	for {
+		n := min(1000, limit-read)
+		if n <= 0 {
+			break
+		}
+
+		page, err := e.Outbox(ctx, bucket, after, n)
+		if err != nil {
+			return nil, false, err
+		}
+
+		for _, en := range page {
+			for _, name := range en.Row.Targets {
+				if !en.Row.PendingFor(name) {
+					continue
+				}
+
+				tb := out[name]
+				tb.Pending++
+				tb.Bytes += en.Row.Size
+
+				if at := time.Unix(0, en.Row.Pending); tb.Oldest.IsZero() || at.Before(tb.Oldest) {
+					tb.Oldest = at
+				}
+
+				if r, ok := en.Row.RefusedBy(name); ok {
+					tb.Refused++
+					tb.Recent = append(tb.Recent, TargetRefusal{
+						Key: en.Key, VersionID: en.VersionID, Reason: r.Reason, At: time.Unix(0, r.At),
+					})
+				}
+
+				out[name] = tb
+			}
+		}
+
+		read += len(page)
+
+		if len(page) < n {
+			complete = true
+
+			break
+		}
+
+		after = page[len(page)-1].After()
+	}
+
+	for name, tb := range out {
+		slices.SortFunc(tb.Recent, func(a, b TargetRefusal) int { return b.At.Compare(a.At) })
+
+		if len(tb.Recent) > recent {
+			tb.Recent = tb.Recent[:recent]
+		}
+
+		out[name] = tb
+	}
+
+	return out, complete, nil
 }

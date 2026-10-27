@@ -334,6 +334,9 @@ func (s *CreatedAccessKey) SetCreatedAt(val time.Time) {
 // DeleteAccessKeyNoContent is response for DeleteAccessKey operation.
 type DeleteAccessKeyNoContent struct{}
 
+// DeleteBucketReplicationNoContent is response for DeleteBucketReplication operation.
+type DeleteBucketReplicationNoContent struct{}
+
 // Error occurred while processing request.
 // Ref: #/components/schemas/Error
 type Error struct {
@@ -1216,6 +1219,403 @@ func (s *ReloadResult) SetReloaded(val []string) {
 // SetConfigRevision sets the value of ConfigRevision.
 func (s *ReloadResult) SetConfigRevision(val OptString) {
 	s.ConfigRevision = val
+}
+
+// Ref: #/components/schemas/Replication
+type Replication struct {
+	Targets []ReplicationTarget `json:"targets"`
+}
+
+// GetTargets returns the value of Targets.
+func (s *Replication) GetTargets() []ReplicationTarget {
+	return s.Targets
+}
+
+// SetTargets sets the value of Targets.
+func (s *Replication) SetTargets(val []ReplicationTarget) {
+	s.Targets = val
+}
+
+// Ref: #/components/schemas/ReplicationRefusal
+type ReplicationRefusal struct {
+	Key       string `json:"key"`
+	VersionID string `json:"version_id"`
+	// The target's, or this deployment's when it could not read the version.
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+}
+
+// GetKey returns the value of Key.
+func (s *ReplicationRefusal) GetKey() string {
+	return s.Key
+}
+
+// GetVersionID returns the value of VersionID.
+func (s *ReplicationRefusal) GetVersionID() string {
+	return s.VersionID
+}
+
+// GetReason returns the value of Reason.
+func (s *ReplicationRefusal) GetReason() string {
+	return s.Reason
+}
+
+// GetAt returns the value of At.
+func (s *ReplicationRefusal) GetAt() time.Time {
+	return s.At
+}
+
+// SetKey sets the value of Key.
+func (s *ReplicationRefusal) SetKey(val string) {
+	s.Key = val
+}
+
+// SetVersionID sets the value of VersionID.
+func (s *ReplicationRefusal) SetVersionID(val string) {
+	s.VersionID = val
+}
+
+// SetReason sets the value of Reason.
+func (s *ReplicationRefusal) SetReason(val string) {
+	s.Reason = val
+}
+
+// SetAt sets the value of At.
+func (s *ReplicationRefusal) SetAt(val time.Time) {
+	s.At = val
+}
+
+// Ref: #/components/schemas/ReplicationStatus
+type ReplicationStatus struct {
+	// Whether the node answering runs the bucket's replication.
+	Runner bool `json:"runner"`
+	// Whether the whole outbox was read; per-target numbers are lower bounds when not (the first 100000
+	// rows).
+	Complete bool `json:"complete"`
+	// Versions some target has yet to receive.
+	Backlog      int64                     `json:"backlog"`
+	BacklogBytes int64                     `json:"backlog_bytes"`
+	Targets      []ReplicationTargetStatus `json:"targets"`
+}
+
+// GetRunner returns the value of Runner.
+func (s *ReplicationStatus) GetRunner() bool {
+	return s.Runner
+}
+
+// GetComplete returns the value of Complete.
+func (s *ReplicationStatus) GetComplete() bool {
+	return s.Complete
+}
+
+// GetBacklog returns the value of Backlog.
+func (s *ReplicationStatus) GetBacklog() int64 {
+	return s.Backlog
+}
+
+// GetBacklogBytes returns the value of BacklogBytes.
+func (s *ReplicationStatus) GetBacklogBytes() int64 {
+	return s.BacklogBytes
+}
+
+// GetTargets returns the value of Targets.
+func (s *ReplicationStatus) GetTargets() []ReplicationTargetStatus {
+	return s.Targets
+}
+
+// SetRunner sets the value of Runner.
+func (s *ReplicationStatus) SetRunner(val bool) {
+	s.Runner = val
+}
+
+// SetComplete sets the value of Complete.
+func (s *ReplicationStatus) SetComplete(val bool) {
+	s.Complete = val
+}
+
+// SetBacklog sets the value of Backlog.
+func (s *ReplicationStatus) SetBacklog(val int64) {
+	s.Backlog = val
+}
+
+// SetBacklogBytes sets the value of BacklogBytes.
+func (s *ReplicationStatus) SetBacklogBytes(val int64) {
+	s.BacklogBytes = val
+}
+
+// SetTargets sets the value of Targets.
+func (s *ReplicationStatus) SetTargets(val []ReplicationTargetStatus) {
+	s.Targets = val
+}
+
+// Ref: #/components/schemas/ReplicationTarget
+type ReplicationTarget struct {
+	// Identifies the target within the bucket.
+	Name string `json:"name"`
+	// The target deployment's S3 endpoint, e.g. https://s3.eu.example.com.
+	Endpoint string `json:"endpoint"`
+	// The target bucket; it needs versioning enabled.
+	Bucket string `json:"bucket"`
+	// A key with the admin grant on the target bucket.
+	AccessKeyID string `json:"access_key_id"`
+	// Its secret. Write-only: never returned.
+	SecretAccessKey OptString `json:"secret_access_key"`
+	// Replicate only the keys that start with it.
+	Prefix OptString `json:"prefix"`
+	// Replicate delete markers too (S3 DeleteMarkerReplication).
+	DeleteMarkers OptBool `json:"delete_markers"`
+	// Allow an http:// endpoint. Replication carries data keys; for tests.
+	Insecure OptBool `json:"insecure"`
+}
+
+// GetName returns the value of Name.
+func (s *ReplicationTarget) GetName() string {
+	return s.Name
+}
+
+// GetEndpoint returns the value of Endpoint.
+func (s *ReplicationTarget) GetEndpoint() string {
+	return s.Endpoint
+}
+
+// GetBucket returns the value of Bucket.
+func (s *ReplicationTarget) GetBucket() string {
+	return s.Bucket
+}
+
+// GetAccessKeyID returns the value of AccessKeyID.
+func (s *ReplicationTarget) GetAccessKeyID() string {
+	return s.AccessKeyID
+}
+
+// GetSecretAccessKey returns the value of SecretAccessKey.
+func (s *ReplicationTarget) GetSecretAccessKey() OptString {
+	return s.SecretAccessKey
+}
+
+// GetPrefix returns the value of Prefix.
+func (s *ReplicationTarget) GetPrefix() OptString {
+	return s.Prefix
+}
+
+// GetDeleteMarkers returns the value of DeleteMarkers.
+func (s *ReplicationTarget) GetDeleteMarkers() OptBool {
+	return s.DeleteMarkers
+}
+
+// GetInsecure returns the value of Insecure.
+func (s *ReplicationTarget) GetInsecure() OptBool {
+	return s.Insecure
+}
+
+// SetName sets the value of Name.
+func (s *ReplicationTarget) SetName(val string) {
+	s.Name = val
+}
+
+// SetEndpoint sets the value of Endpoint.
+func (s *ReplicationTarget) SetEndpoint(val string) {
+	s.Endpoint = val
+}
+
+// SetBucket sets the value of Bucket.
+func (s *ReplicationTarget) SetBucket(val string) {
+	s.Bucket = val
+}
+
+// SetAccessKeyID sets the value of AccessKeyID.
+func (s *ReplicationTarget) SetAccessKeyID(val string) {
+	s.AccessKeyID = val
+}
+
+// SetSecretAccessKey sets the value of SecretAccessKey.
+func (s *ReplicationTarget) SetSecretAccessKey(val OptString) {
+	s.SecretAccessKey = val
+}
+
+// SetPrefix sets the value of Prefix.
+func (s *ReplicationTarget) SetPrefix(val OptString) {
+	s.Prefix = val
+}
+
+// SetDeleteMarkers sets the value of DeleteMarkers.
+func (s *ReplicationTarget) SetDeleteMarkers(val OptBool) {
+	s.DeleteMarkers = val
+}
+
+// SetInsecure sets the value of Insecure.
+func (s *ReplicationTarget) SetInsecure(val OptBool) {
+	s.Insecure = val
+}
+
+// Ref: #/components/schemas/ReplicationTargetStatus
+type ReplicationTargetStatus struct {
+	Name string `json:"name"`
+	// Versions with a change still to ship to the target.
+	Pending      int64 `json:"pending"`
+	PendingBytes int64 `json:"pending_bytes"`
+	// Age of the oldest change still to ship; 0 when none.
+	LagSeconds float64 `json:"lag_seconds"`
+	// Pending versions whose latest change the target refused. They are retried every minute.
+	Refused int64 `json:"refused"`
+	// The latest refusals, newest first, up to 20.
+	RecentRefusals []ReplicationRefusal `json:"recent_refusals"`
+	// Runner only: the last request to the target failed; it is being retried with backoff.
+	Failing OptBool `json:"failing"`
+	// Runner only: when a request to the target last succeeded.
+	LastSuccess OptDateTime `json:"last_success"`
+	// Runner only: when one last failed.
+	LastFailure OptDateTime `json:"last_failure"`
+	// Runner only: why.
+	LastError OptString `json:"last_error"`
+	// Runner only: versions delivered since start.
+	Shipped OptInt64 `json:"shipped"`
+	// Runner only: blocks of delivered versions since start.
+	BlocksOffered OptInt64 `json:"blocks_offered"`
+	// Runner only: of those, the blocks the target lacked.
+	BlocksSent OptInt64 `json:"blocks_sent"`
+	// Runner only: their bytes.
+	BytesSent OptInt64 `json:"bytes_sent"`
+}
+
+// GetName returns the value of Name.
+func (s *ReplicationTargetStatus) GetName() string {
+	return s.Name
+}
+
+// GetPending returns the value of Pending.
+func (s *ReplicationTargetStatus) GetPending() int64 {
+	return s.Pending
+}
+
+// GetPendingBytes returns the value of PendingBytes.
+func (s *ReplicationTargetStatus) GetPendingBytes() int64 {
+	return s.PendingBytes
+}
+
+// GetLagSeconds returns the value of LagSeconds.
+func (s *ReplicationTargetStatus) GetLagSeconds() float64 {
+	return s.LagSeconds
+}
+
+// GetRefused returns the value of Refused.
+func (s *ReplicationTargetStatus) GetRefused() int64 {
+	return s.Refused
+}
+
+// GetRecentRefusals returns the value of RecentRefusals.
+func (s *ReplicationTargetStatus) GetRecentRefusals() []ReplicationRefusal {
+	return s.RecentRefusals
+}
+
+// GetFailing returns the value of Failing.
+func (s *ReplicationTargetStatus) GetFailing() OptBool {
+	return s.Failing
+}
+
+// GetLastSuccess returns the value of LastSuccess.
+func (s *ReplicationTargetStatus) GetLastSuccess() OptDateTime {
+	return s.LastSuccess
+}
+
+// GetLastFailure returns the value of LastFailure.
+func (s *ReplicationTargetStatus) GetLastFailure() OptDateTime {
+	return s.LastFailure
+}
+
+// GetLastError returns the value of LastError.
+func (s *ReplicationTargetStatus) GetLastError() OptString {
+	return s.LastError
+}
+
+// GetShipped returns the value of Shipped.
+func (s *ReplicationTargetStatus) GetShipped() OptInt64 {
+	return s.Shipped
+}
+
+// GetBlocksOffered returns the value of BlocksOffered.
+func (s *ReplicationTargetStatus) GetBlocksOffered() OptInt64 {
+	return s.BlocksOffered
+}
+
+// GetBlocksSent returns the value of BlocksSent.
+func (s *ReplicationTargetStatus) GetBlocksSent() OptInt64 {
+	return s.BlocksSent
+}
+
+// GetBytesSent returns the value of BytesSent.
+func (s *ReplicationTargetStatus) GetBytesSent() OptInt64 {
+	return s.BytesSent
+}
+
+// SetName sets the value of Name.
+func (s *ReplicationTargetStatus) SetName(val string) {
+	s.Name = val
+}
+
+// SetPending sets the value of Pending.
+func (s *ReplicationTargetStatus) SetPending(val int64) {
+	s.Pending = val
+}
+
+// SetPendingBytes sets the value of PendingBytes.
+func (s *ReplicationTargetStatus) SetPendingBytes(val int64) {
+	s.PendingBytes = val
+}
+
+// SetLagSeconds sets the value of LagSeconds.
+func (s *ReplicationTargetStatus) SetLagSeconds(val float64) {
+	s.LagSeconds = val
+}
+
+// SetRefused sets the value of Refused.
+func (s *ReplicationTargetStatus) SetRefused(val int64) {
+	s.Refused = val
+}
+
+// SetRecentRefusals sets the value of RecentRefusals.
+func (s *ReplicationTargetStatus) SetRecentRefusals(val []ReplicationRefusal) {
+	s.RecentRefusals = val
+}
+
+// SetFailing sets the value of Failing.
+func (s *ReplicationTargetStatus) SetFailing(val OptBool) {
+	s.Failing = val
+}
+
+// SetLastSuccess sets the value of LastSuccess.
+func (s *ReplicationTargetStatus) SetLastSuccess(val OptDateTime) {
+	s.LastSuccess = val
+}
+
+// SetLastFailure sets the value of LastFailure.
+func (s *ReplicationTargetStatus) SetLastFailure(val OptDateTime) {
+	s.LastFailure = val
+}
+
+// SetLastError sets the value of LastError.
+func (s *ReplicationTargetStatus) SetLastError(val OptString) {
+	s.LastError = val
+}
+
+// SetShipped sets the value of Shipped.
+func (s *ReplicationTargetStatus) SetShipped(val OptInt64) {
+	s.Shipped = val
+}
+
+// SetBlocksOffered sets the value of BlocksOffered.
+func (s *ReplicationTargetStatus) SetBlocksOffered(val OptInt64) {
+	s.BlocksOffered = val
+}
+
+// SetBlocksSent sets the value of BlocksSent.
+func (s *ReplicationTargetStatus) SetBlocksSent(val OptInt64) {
+	s.BlocksSent = val
+}
+
+// SetBytesSent sets the value of BytesSent.
+func (s *ReplicationTargetStatus) SetBytesSent(val OptInt64) {
+	s.BytesSent = val
 }
 
 // Ref: #/components/schemas/RotateResult

@@ -54,6 +54,13 @@ type Invoker interface {
 	//
 	// DELETE /api/v1/access-keys/{accessKey}
 	DeleteAccessKey(ctx context.Context, params DeleteAccessKeyParams) error
+	// DeleteBucketReplication invokes deleteBucketReplication operation.
+	//
+	// Removes every target. What has not shipped yet never will; the outbox rows for the removed targets
+	// are marked shipped by the next pass.
+	//
+	// DELETE /api/v1/buckets/{bucket}/replication
+	DeleteBucketReplication(ctx context.Context, params DeleteBucketReplicationParams) error
 	// GetAccountQuota invokes getAccountQuota operation.
 	//
 	// The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
@@ -69,6 +76,25 @@ type Invoker interface {
 	//
 	// GET /api/v1/buckets/{bucket}/quota
 	GetBucketQuota(ctx context.Context, params GetBucketQuotaParams) (*QuotaStatus, error)
+	// GetBucketReplication invokes getBucketReplication operation.
+	//
+	// The buckets on other fs deployments this bucket's versions are replicated to
+	// (docs/design/geo-replication.md), secrets omitted. Empty when replication is off. Returns 404 for a
+	// missing bucket, 501 without a storage engine.
+	//
+	// GET /api/v1/buckets/{bucket}/replication
+	GetBucketReplication(ctx context.Context, params GetBucketReplicationParams) (*Replication, error)
+	// GetBucketReplicationStatus invokes getBucketReplicationStatus operation.
+	//
+	// Per target: the versions still to ship and the age of the oldest change among them (the recovery
+	// point a site loss would have), and the versions the target refused with its reasons, read from the
+	// bucket's outbox on any node. When the node answering runs the bucket's replication (runner true),
+	// also the runner's view: the last success and failure, and what it shipped since start. In a cluster
+	// one node runs each bucket; ask another node, or watch the fs.replication.* metrics, which only that
+	// node exports.
+	//
+	// GET /api/v1/buckets/{bucket}/replication/status
+	GetBucketReplicationStatus(ctx context.Context, params GetBucketReplicationStatusParams) (*ReplicationStatus, error)
 	// GetBucketScheme invokes getBucketScheme operation.
 	//
 	// "rf3" (three replicas, the default) or "ec:K,M" (erasure coded as K data and M parity shards).
@@ -142,6 +168,18 @@ type Invoker interface {
 	//
 	// PUT /api/v1/buckets/{bucket}/quota
 	SetBucketQuota(ctx context.Context, request *Quota, params SetBucketQuotaParams) (*QuotaStatus, error)
+	// SetBucketReplication invokes setBucketReplication operation.
+	//
+	// Replaces the bucket's targets. Versions written from now on, delete markers when delete_markers is
+	// set, and changes of their tags and ACL ship to every target; versions written before do not. The
+	// bucket needs versioning enabled, and suspending it is refused while targets exist. Each target is
+	// checked first: it must answer the replication handshake with the given credentials (the admin grant
+	// on its bucket) and have versioning enabled, and be https unless insecure is set. A target given
+	// without secret_access_key keeps the secret of the current target of that name. Returns 400 when a
+	// target fails the check, 409 when the bucket is not versioned.
+	//
+	// PUT /api/v1/buckets/{bucket}/replication
+	SetBucketReplication(ctx context.Context, request *Replication, params SetBucketReplicationParams) (*Replication, error)
 	// SetBucketScheme invokes setBucketScheme operation.
 	//
 	// Applies to blocks written from now on; existing ones keep the scheme they were written with. Blocks
@@ -493,6 +531,106 @@ func (c *Client) sendDeleteAccessKey(ctx context.Context, params DeleteAccessKey
 	return result, nil
 }
 
+// DeleteBucketReplication invokes deleteBucketReplication operation.
+//
+// Removes every target. What has not shipped yet never will; the outbox rows for the removed targets
+// are marked shipped by the next pass.
+//
+// DELETE /api/v1/buckets/{bucket}/replication
+func (c *Client) DeleteBucketReplication(ctx context.Context, params DeleteBucketReplicationParams) error {
+	_, err := c.sendDeleteBucketReplication(ctx, params)
+	return err
+}
+
+func (c *Client) sendDeleteBucketReplication(ctx context.Context, params DeleteBucketReplicationParams) (res *DeleteBucketReplicationNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("deleteBucketReplication"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/replication"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, DeleteBucketReplicationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/replication"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeDeleteBucketReplicationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetAccountQuota invokes getAccountQuota operation.
 //
 // The account's quota (unlimited and disabled until one is set) and what every bucket it owns stores
@@ -687,6 +825,211 @@ func (c *Client) sendGetBucketQuota(ctx context.Context, params GetBucketQuotaPa
 
 	stage = "DecodeResponse"
 	result, err := decodeGetBucketQuotaResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetBucketReplication invokes getBucketReplication operation.
+//
+// The buckets on other fs deployments this bucket's versions are replicated to
+// (docs/design/geo-replication.md), secrets omitted. Empty when replication is off. Returns 404 for a
+// missing bucket, 501 without a storage engine.
+//
+// GET /api/v1/buckets/{bucket}/replication
+func (c *Client) GetBucketReplication(ctx context.Context, params GetBucketReplicationParams) (*Replication, error) {
+	res, err := c.sendGetBucketReplication(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetBucketReplication(ctx context.Context, params GetBucketReplicationParams) (res *Replication, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getBucketReplication"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/replication"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetBucketReplicationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/replication"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetBucketReplicationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetBucketReplicationStatus invokes getBucketReplicationStatus operation.
+//
+// Per target: the versions still to ship and the age of the oldest change among them (the recovery
+// point a site loss would have), and the versions the target refused with its reasons, read from the
+// bucket's outbox on any node. When the node answering runs the bucket's replication (runner true),
+// also the runner's view: the last success and failure, and what it shipped since start. In a cluster
+// one node runs each bucket; ask another node, or watch the fs.replication.* metrics, which only that
+// node exports.
+//
+// GET /api/v1/buckets/{bucket}/replication/status
+func (c *Client) GetBucketReplicationStatus(ctx context.Context, params GetBucketReplicationStatusParams) (*ReplicationStatus, error) {
+	res, err := c.sendGetBucketReplicationStatus(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetBucketReplicationStatus(ctx context.Context, params GetBucketReplicationStatusParams) (res *ReplicationStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getBucketReplicationStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/replication/status"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetBucketReplicationStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/replication/status"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetBucketReplicationStatusResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1489,6 +1832,114 @@ func (c *Client) sendSetBucketQuota(ctx context.Context, request *Quota, params 
 
 	stage = "DecodeResponse"
 	result, err := decodeSetBucketQuotaResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetBucketReplication invokes setBucketReplication operation.
+//
+// Replaces the bucket's targets. Versions written from now on, delete markers when delete_markers is
+// set, and changes of their tags and ACL ship to every target; versions written before do not. The
+// bucket needs versioning enabled, and suspending it is refused while targets exist. Each target is
+// checked first: it must answer the replication handshake with the given credentials (the admin grant
+// on its bucket) and have versioning enabled, and be https unless insecure is set. A target given
+// without secret_access_key keeps the secret of the current target of that name. Returns 400 when a
+// target fails the check, 409 when the bucket is not versioned.
+//
+// PUT /api/v1/buckets/{bucket}/replication
+func (c *Client) SetBucketReplication(ctx context.Context, request *Replication, params SetBucketReplicationParams) (*Replication, error) {
+	res, err := c.sendSetBucketReplication(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetBucketReplication(ctx context.Context, request *Replication, params SetBucketReplicationParams) (res *Replication, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setBucketReplication"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/api/v1/buckets/{bucket}/replication"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetBucketReplicationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/buckets/"
+	{
+		// Encode "bucket" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "bucket",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Bucket))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/replication"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetBucketReplicationRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetBucketReplicationResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
