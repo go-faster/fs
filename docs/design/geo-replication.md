@@ -1,7 +1,8 @@
 # Design: geo-replication
 
 **Status:** in progress: phases 1 (the outbox), 2 (the target), 3 (the
-runner, admin API and CLI) and 4 (backfill) are implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+runner, admin API and CLI), 4 (backfill) and 5 (the status header) are
+implemented; the chaos run and a WAN soak remain. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
@@ -311,16 +312,21 @@ Conflicts resolve the way they do inside a cluster:
 
 ### Status header
 
-`x-amz-replication-status` on GET and HEAD of a bucket with targets:
+`x-amz-replication-status` on GET and HEAD of a version a target takes (its
+key under the target's prefix), or of a replica:
 
 | Value | Meant |
 |-------|-------|
-| `PENDING` | the version's outbox row is pending for a target |
-| `FAILED` | the latest delivery to a target was refused |
-| `COMPLETED` | no target is pending |
-| `REPLICA` | the version arrived through replication |
+| `FAILED` | a target refused the version's latest change (it is retried); wins over the others |
+| `PENDING` | a target has yet to receive the latest change, or the version has no outbox row and a target's backfill is still to walk |
+| `COMPLETED` | every target has it |
+| `REPLICA` | the version arrived through replication (its payload's `Replica` flag) |
 
-It costs one outbox read per request, only in a bucket with targets.
+`COMPLETED`, not `COMPLETE`: the AWS SDKs list both, and the S3 User Guide
+documents `COMPLETED`, also for several destinations. A version with no row
+and no backfill due is `COMPLETED`: its row was shipped and collected. It
+costs one outbox read per request, only in a bucket with a target for the
+key; a read that fails leaves the header out rather than failing the GET.
 
 ## Observability
 
@@ -408,7 +414,7 @@ Each phase is a PR that leaves main working:
 3. **Runner** (done): the `replication` setting, the admin API and CLI,
    shipping, status, metrics, and the integration tests.
 4. **Backfill** (done).
-5. **`x-amz-replication-status`.**
+5. **`x-amz-replication-status`** (done).
 6. **The chaos run:** a second three-node cluster as the target of the
    soak's versioned buckets, behind a fault-injecting proxy (added delay,
    limited bandwidth, dropped and reset connections, outages), so the

@@ -105,7 +105,7 @@ func (e *Engine) GetObjectVersion(ctx context.Context, bucket, key, versionID st
 		return nil, fs.ErrObjectNotFound
 	}
 
-	_, inc, err := e.bucket(ctx, bucket)
+	b, inc, err := e.bucket(ctx, bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -124,11 +124,11 @@ func (e *Engine) GetObjectVersion(ctx context.Context, bucket, key, versionID st
 		return nil, fs.ErrMethodNotAllowedOnDeleteMarker
 	}
 
-	return e.response(ctx, v)
+	return e.response(ctx, b, inc.ID, key, v)
 }
 
-// response serves version v.
-func (e *Engine) response(ctx context.Context, v meta.Version) (*fs.GetObjectResponse, error) {
+// response serves version v of key, in bucket b of ID bucketID.
+func (e *Engine) response(ctx context.Context, b meta.Bucket, bucketID, key string, v meta.Version) (*fs.GetObjectResponse, error) {
 	p, err := decodePayload(v)
 	if err != nil {
 		return nil, err
@@ -155,6 +155,8 @@ func (e *Engine) response(ctx context.Context, v meta.Version) (*fs.GetObjectRes
 	if !v.Null {
 		resp.VersionID = v.ID
 	}
+
+	resp.ReplicationStatus = e.replicationStatus(ctx, b, bucketID, key, v, p)
 
 	return resp, nil
 }

@@ -199,6 +199,59 @@ func (e *Engine) outboxRow(
 	return []table.Row{r}, nil
 }
 
+// replicationStatus is version v's x-amz-replication-status: REPLICA for a
+// version that arrived through replication; for one a target of b takes,
+// FAILED when a target refused its latest change, PENDING while one has yet
+// to receive it, COMPLETED once all have; empty otherwise. It costs an
+// outbox read, only in a bucket with targets. A status that cannot be read
+// is left out rather than failing the read of the object.
+func (e *Engine) replicationStatus(ctx context.Context, b meta.Bucket, bucketID, key string, v meta.Version, p payload) string {
+	if p.Replica {
+		return fs.ReplicationStatusReplica
+	}
+
+	var names []string
+
+	for _, t := range replicationTargets(b) {
+		if strings.HasPrefix(key, t.Prefix) {
+			names = append(names, t.Name)
+		}
+	}
+
+	if len(names) == 0 {
+		return ""
+	}
+
+	o, found, err := e.outbox.Get(ctx, bucketID, meta.OutboxSK(key, v.ID))
+	if err != nil {
+		return ""
+	}
+
+	status := fs.ReplicationStatusCompleted
+
+	for _, name := range names {
+		if !found {
+			// No row: shipped and collected, or written before the target
+			// was set and not yet reached by its backfill.
+			if backfillDue(b, name) {
+				status = fs.ReplicationStatusPending
+			}
+
+			continue
+		}
+
+		if _, refused := o.RefusedBy(name); refused {
+			return fs.ReplicationStatusFailed
+		}
+
+		if o.PendingFor(name) {
+			status = fs.ReplicationStatusPending
+		}
+	}
+
+	return status
+}
+
 // outboxUsage is the replication table's tally: the versions still to ship
 // to some target, and their bytes.
 func outboxUsage(o meta.Outbox) table.Usage {

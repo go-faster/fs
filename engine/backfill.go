@@ -67,6 +67,24 @@ func (b Backfill) Due() bool {
 	return !b.Requested.IsZero() && (b.Progress.Request != b.Requested.UnixNano() || !b.Progress.Done)
 }
 
+// backfillDue reports whether b's backfill to target has a walk to do.
+func backfillDue(b meta.Bucket, target string) bool {
+	var (
+		req int64
+		p   BackfillProgress
+	)
+
+	if s, ok := b.Settings[settingBackfill+target]; !ok || json.Unmarshal(s.V, &req) != nil || req <= 0 {
+		return false
+	}
+
+	if s, ok := b.Settings[settingBackfilled+target]; ok {
+		_ = json.Unmarshal(s.V, &p)
+	}
+
+	return Backfill{Requested: time.Unix(0, req), Progress: p}.Due()
+}
+
 // RequestReplicationBackfill asks for a backfill of a bucket's versions to
 // its target: every version stored is queued to ship again, including those
 // the target has since deleted. Setting a new target asks for one itself.

@@ -239,9 +239,34 @@ func TestReplicationRunner(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	head := func(c *awss3.Client, bucket string) types.ReplicationStatus {
+		out, err := c.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String("big")})
+		require.NoError(t, err)
+
+		return out.ReplicationStatus
+	}
+
+	assert.Equal(t, types.ReplicationStatusPending, head(src, "photos"))
+
 	r := &replication.Runner{Source: srcEngine}
 	_, err = r.Pass(ctx)
 	require.NoError(t, err)
+
+	assert.Equal(t, types.ReplicationStatusCompleted, head(src, "photos"))
+	assert.Equal(t, types.ReplicationStatusReplica, head(dst, "replica"))
+
+	// minio-go reads it from GET as well.
+	st, err := mc.StatObject(ctx, "photos", "big", minio.StatObjectOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "COMPLETED", st.ReplicationStatus)
+
+	obj, err := minioClient(t, dstHost, authAccessKey, authSecretKey).GetObject(ctx, "replica", "big", minio.GetObjectOptions{})
+	require.NoError(t, err)
+
+	info, err := obj.Stat()
+	require.NoError(t, err)
+	require.NoError(t, obj.Close())
+	assert.Equal(t, "REPLICA", info.ReplicationStatus)
 
 	list := func(c *awss3.Client, bucket string) []string {
 		out, err := c.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
