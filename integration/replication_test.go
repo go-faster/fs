@@ -8,7 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -272,4 +275,63 @@ func TestReplicationRunner(t *testing.T) {
 	backlog, err := srcEngine.ReplicationBacklog(ctx, "photos")
 	require.NoError(t, err)
 	assert.Zero(t, backlog.Objects)
+}
+
+// TestReplicationBackfill sets a target on a bucket that already holds
+// versions: the backfill ships them.
+func TestReplicationBackfill(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	srcEngine, srcHost := replicationSite(t, adminConfig())
+	_, dstHost := replicationSite(t, adminConfig())
+
+	src, dst := awsClient(t, srcHost), awsClient(t, dstHost)
+	versionedBucket(t, ctx, src, "photos")
+	versionedBucket(t, ctx, dst, "replica")
+
+	for i, body := range []string{"one", "two"} {
+		_, err := src.PutObject(ctx, &awss3.PutObjectInput{
+			Bucket: aws.String("photos"), Key: aws.String("k"), Body: strings.NewReader(body),
+			Metadata: map[string]string{"n": strconv.Itoa(i)},
+		})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, srcEngine.SetBucketReplication(ctx, "photos", []engine.ReplicationTarget{{
+		Name: "dr", Endpoint: "http://" + dstHost, Bucket: "replica",
+		AccessKeyID: authAccessKey, SecretAccessKey: authSecretKey, Insecure: true,
+	}}))
+
+	r := &replication.Runner{Source: srcEngine, BackfillDelay: time.Nanosecond}
+
+	// The walk, then the shipment. The walk starts once its delay has
+	// passed by the wall clock, which ticks coarsely on some systems.
+	require.Eventually(t, func() bool {
+		_, err := r.Pass(ctx)
+		require.NoError(t, err)
+
+		bfs, err := srcEngine.ReplicationBackfills(ctx, "photos")
+		require.NoError(t, err)
+
+		backlog, err := srcEngine.ReplicationBacklog(ctx, "photos")
+		require.NoError(t, err)
+
+		return !bfs["dr"].Due() && backlog.Objects == 0
+	}, 5*time.Second, 5*time.Millisecond)
+
+	want, err := src.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{Bucket: aws.String("photos")})
+	require.NoError(t, err)
+
+	got, err := dst.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{Bucket: aws.String("replica")})
+	require.NoError(t, err)
+
+	require.Len(t, got.Versions, 2)
+
+	for i := range want.Versions {
+		assert.Equal(t, aws.ToString(want.Versions[i].VersionId), aws.ToString(got.Versions[i].VersionId))
+		assert.Equal(t, aws.ToString(want.Versions[i].ETag), aws.ToString(got.Versions[i].ETag))
+		assert.Equal(t, aws.ToBool(want.Versions[i].IsLatest), aws.ToBool(got.Versions[i].IsLatest))
+	}
 }

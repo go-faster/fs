@@ -25,6 +25,12 @@ func encodeApplyLayoutResponse(response *LayoutChange, w http.ResponseWriter, sp
 	return nil
 }
 
+func encodeBackfillBucketReplicationResponse(response *BackfillBucketReplicationNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
+
+	return nil
+}
+
 func encodeCreateAccessKeyResponse(response *CreatedAccessKey, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(201)

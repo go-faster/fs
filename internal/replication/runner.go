@@ -27,6 +27,13 @@ type Source interface {
 	// ExportReplica and ReadReplicaBlock read what is shipped.
 	ExportReplica(ctx context.Context, bucket, key, versionID string, attrsOnly bool) (fs.ReplicaVersion, error)
 	ReadReplicaBlock(ctx context.Context, b fs.ReplicaBlock) ([]byte, error)
+	// ReplicationBackfills, BackfillReplication and SaveBackfillProgress
+	// walk a bucket for the targets that asked for a backfill.
+	ReplicationBackfills(ctx context.Context, bucket string) (map[string]engine.Backfill, error)
+	BackfillReplication(
+		ctx context.Context, bucket, target string, req int64, p engine.BackfillProgress, limit int,
+	) (engine.BackfillProgress, error)
+	SaveBackfillProgress(ctx context.Context, bucket, target string, p engine.BackfillProgress) error
 }
 
 var _ Source = (*engine.Engine)(nil)
@@ -42,6 +49,11 @@ const (
 	blocksInFlight = 4
 	// maxBackoff caps the wait after a target's failures.
 	maxBackoff = time.Minute
+	// backfillPage is how many keys a backfill walks at a time, and
+	// backfillPages how many pages of a target a pass walks, so that
+	// shipping keeps up with the walk.
+	backfillPage  = 1000
+	backfillPages = 10
 	// refusedRetry is how long a refused version waits before it is tried
 	// again: the refusal is the target's answer, and it rarely changes soon.
 	refusedRetry = time.Minute
@@ -71,6 +83,10 @@ type TargetStats struct {
 	LastError                string
 	// Failing is set from a failure until the next success.
 	Failing bool
+	// Backfilling is set while a backfill is to walk, and BackfillRemaining
+	// estimates the versions it has not reached.
+	Backfilling       bool
+	BackfillRemaining int64
 }
 
 // Runner ships the outbox of every bucket it owns to the bucket's targets.
@@ -88,6 +104,9 @@ type Runner struct {
 	// Interval is how often an idle runner looks for changes; zero means
 	// five seconds.
 	Interval time.Duration
+	// BackfillDelay is how long after its request a backfill starts; zero
+	// means engine.BackfillDelay.
+	BackfillDelay time.Duration
 
 	mu      sync.Mutex
 	targets map[Target]*target
@@ -219,8 +238,13 @@ func (r *Runner) bucketPass(ctx context.Context, bucket string, cfgs []engine.Re
 		r.mu.Unlock()
 	}
 
+	busy, err = r.backfill(ctx, bucket, targets)
+	if err != nil {
+		return busy, err
+	}
+
 	if len(due) == 0 {
-		return false, nil
+		return busy, nil
 	}
 
 	// The tally answers "anything at all?" in one read; an idle bucket
@@ -236,7 +260,9 @@ func (r *Runner) bucketPass(ctx context.Context, bucket string, cfgs []engine.Re
 	}
 
 	if backlog.Objects > 0 {
-		busy, err = r.scanOutbox(ctx, bucket, targets, due, scans)
+		shipped, err := r.scanOutbox(ctx, bucket, targets, due, scans)
+		busy = busy || shipped
+
 		if err != nil {
 			return busy, err
 		}
@@ -252,6 +278,66 @@ func (r *Runner) bucketPass(ctx context.Context, bucket string, cfgs []engine.Re
 		if sc.oldest > 0 {
 			t.stats.Lag = max(now.Sub(time.Unix(0, sc.oldest)), 0)
 		}
+	}
+
+	return busy, nil
+}
+
+// backfill walks a page or more of a bucket for every target whose backfill
+// is due, writing outbox rows for the pass after it to ship, and reports
+// whether it walked anything.
+func (r *Runner) backfill(ctx context.Context, bucket string, targets map[string]*target) (busy bool, err error) {
+	bfs, err := r.Source.ReplicationBackfills(ctx, bucket)
+	if err != nil {
+		return false, errors.Wrap(err, "read backfills")
+	}
+
+	delay := r.BackfillDelay
+	if delay <= 0 {
+		delay = engine.BackfillDelay
+	}
+
+	for name, bf := range bfs {
+		t, ok := targets[name]
+		if !ok {
+			continue
+		}
+
+		if bf.Due() && time.Since(bf.Requested) >= delay {
+			p, req := bf.Progress, bf.Requested.UnixNano()
+
+			for range backfillPages {
+				before := p.Walked
+				if p.Request != req {
+					before = 0
+				}
+
+				if p, err = r.Source.BackfillReplication(ctx, bucket, name, req, p, backfillPage); err != nil {
+					return busy, errors.Wrapf(err, "backfill %q", name)
+				}
+
+				if err := r.Source.SaveBackfillProgress(ctx, bucket, name, p); err != nil {
+					return busy, errors.Wrapf(err, "save backfill of %q", name)
+				}
+
+				busy = true
+				bf.Remaining = max(bf.Remaining-(p.Walked-before), 0)
+
+				if p.Done {
+					r.log().Info("Replication backfill walked",
+						zap.String("bucket", bucket), zap.String("target", name),
+						zap.Int64("versions", p.Walked), zap.Int64("queued", p.Queued))
+
+					break
+				}
+			}
+
+			bf.Progress = p
+		}
+
+		r.mu.Lock()
+		t.stats.Backfilling, t.stats.BackfillRemaining = bf.Due(), bf.Remaining
+		r.mu.Unlock()
 	}
 
 	return busy, nil

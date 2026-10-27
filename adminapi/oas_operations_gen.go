@@ -7,6 +7,7 @@ type OperationName = string
 
 const (
 	ApplyLayoutOperation                OperationName = "ApplyLayout"
+	BackfillBucketReplicationOperation  OperationName = "BackfillBucketReplication"
 	CreateAccessKeyOperation            OperationName = "CreateAccessKey"
 	DeleteAccessKeyOperation            OperationName = "DeleteAccessKey"
 	DeleteBucketReplicationOperation    OperationName = "DeleteBucketReplication"

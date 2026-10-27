@@ -29,8 +29,8 @@ func newReplicator(lg *zap.Logger, e *engine.Engine, member *peer.Member) *repli
 // registerReplicationMetrics exports geo-replication. As a source, by
 // bucket: the backlog, the versions some target has yet to receive and their
 // bytes — what losing this deployment would lose — and by target: the lag,
-// deliveries and refusals, the blocks offered and sent, and whether the
-// target is failing. A bucket is reported by the node that runs its
+// deliveries and refusals, the blocks offered and sent, whether the target
+// is failing, and what its backfill has left. A bucket is reported by the node that runs its
 // replication, so a cluster does not report it once per node. As a target:
 // the versions received and refused.
 func registerReplicationMetrics(mp metric.MeterProvider, e *engine.Engine, r *replication.Runner) error {
@@ -86,6 +86,8 @@ func registerReplicationMetrics(mp metric.MeterProvider, e *engine.Engine, r *re
 		"Blocks a replication target lacked and was sent since start.")
 	bytesSent := counter("fs.replication.sent", "By",
 		"Bytes of blocks sent to a replication target since start.")
+	remaining := gauge("fs.replication.backfill.remaining", "{version}",
+		"Estimated versions a replication target's backfill has not reached yet, by bucket and target; 0 when none runs.")
 	applied := counter("fs.replication.applied", "{version}",
 		"Versions received from other deployments and applied here since start.")
 	refused := counter("fs.replication.refused", "{version}",
@@ -125,6 +127,7 @@ func registerReplicationMetrics(mp metric.MeterProvider, e *engine.Engine, r *re
 			}
 
 			o.ObserveInt64(failing, f, attr)
+			o.ObserveInt64(remaining, ts.BackfillRemaining, attr)
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

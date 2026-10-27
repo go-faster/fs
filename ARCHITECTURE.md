@@ -300,7 +300,10 @@ and records `Shipped` or the target's `Refused` reason in the outbox rows. A
 version deleted since is marked shipped. Rows still pending for a removed
 target are marked shipped. A target's failure backs it off (1s doubling to
 a minute) without stopping the others; a refused version waits a minute.
-`Check` is the handshake the admin API runs before setting a target.
+Before shipping, a pass walks up to ten pages of the bucket for each target
+with a backfill due (`Engine.BackfillReplication`, a minute after its
+request), saving the cursor after each page. `Check` is the handshake the
+admin API runs before setting a target.
 `Runner.Stats` feeds the `fs.replication.*` metrics and the status
 endpoint.
 
@@ -509,7 +512,12 @@ The source side is `Engine.ExportReplica` / `ReadReplicaBlock` and
 `internal/replication.Client`, which signs each request with SigV4, driven
 by `internal/replication.Runner` through `Engine.Outbox` and
 `MarkReplicated`; `Engine.ReplicationStatus` reads per-target backlogs and
-refusals for the admin API.
+refusals for the admin API. Backfill (`engine/backfill.go`) queues the
+versions a target was set after: setting a new target, or
+`RequestReplicationBackfill`, records a request in a bucket setting, and
+the walk keeps its progress in another, one writer each. A PUT whose body
+took over ten seconds reads the bucket settings again before committing, so
+a walk starting a minute after its request cannot miss a write.
 
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays

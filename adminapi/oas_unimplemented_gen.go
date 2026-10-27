@@ -27,6 +27,19 @@ func (UnimplementedHandler) ApplyLayout(ctx context.Context, req *ApplyLayoutReq
 	return r, ht.ErrNotImplemented
 }
 
+// BackfillBucketReplication implements backfillBucketReplication operation.
+//
+// Starts a walk of the bucket's versions that queues every one for the target (or each target, without
+// target) to receive, as setting a new target does. It starts a minute after the request, resumes
+// after a restart, and starts over when asked again. Every version is sent whatever the target holds:
+// blocks it has are not sent again, and versions it holds merge to themselves, but a version the
+// target has deleted comes back. Returns 409 for a target the bucket does not have.
+//
+// POST /api/v1/buckets/{bucket}/replication/backfill
+func (UnimplementedHandler) BackfillBucketReplication(ctx context.Context, params BackfillBucketReplicationParams) error {
+	return ht.ErrNotImplemented
+}
+
 // CreateAccessKey implements createAccessKey operation.
 //
 // Create a runtime credential, stored in the replicated metadata: every node of a cluster accepts it,

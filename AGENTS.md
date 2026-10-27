@@ -156,7 +156,8 @@ automated resumable migration and the public API becomes additive-only.
   referencing them from it, stores those sent, merges the version through
   the ordinary row merge (marked `Replica`, no outbox row, no quota); as a
   source, `ExportReplica`/`ReadReplicaBlock`, and `Outbox`/`MarkReplicated`
-  for the runner; admin API `/api/v1/buckets/{bucket}/replication{,/status}`,
+  for the runner; backfill (`backfill.go`) walks a bucket for a new target
+  or on request, its request and progress in bucket settings; admin API `/api/v1/buckets/{bucket}/replication{,/status,/backfill}`,
   CLI `fs replication`.
   Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 and SSE-C seal

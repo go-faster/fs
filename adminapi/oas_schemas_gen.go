@@ -117,6 +117,9 @@ func (s *ApplyLayoutRequest) SetPartitions(val OptInt) {
 	s.Partitions = val
 }
 
+// BackfillBucketReplicationNoContent is response for BackfillBucketReplication operation.
+type BackfillBucketReplicationNoContent struct{}
+
 // Ref: #/components/schemas/BucketScheme
 type BucketScheme struct {
 	// "rf3" or "ec:K,M", e.g. "ec:4,2".
@@ -957,6 +960,52 @@ func (o OptInt64) Or(d int64) int64 {
 	return d
 }
 
+// NewOptReplicationBackfill returns new OptReplicationBackfill with value set to v.
+func NewOptReplicationBackfill(v ReplicationBackfill) OptReplicationBackfill {
+	return OptReplicationBackfill{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptReplicationBackfill is optional ReplicationBackfill.
+type OptReplicationBackfill struct {
+	Value ReplicationBackfill
+	Set   bool
+}
+
+// IsSet returns true if OptReplicationBackfill was set.
+func (o OptReplicationBackfill) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptReplicationBackfill) Reset() {
+	var v ReplicationBackfill
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptReplicationBackfill) SetTo(v ReplicationBackfill) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptReplicationBackfill) Get() (v ReplicationBackfill, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptReplicationBackfill) Or(d ReplicationBackfill) ReplicationBackfill {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -1236,6 +1285,71 @@ func (s *Replication) SetTargets(val []ReplicationTarget) {
 	s.Targets = val
 }
 
+// The target's backfill, when one was ever asked for.
+// Ref: #/components/schemas/ReplicationBackfill
+type ReplicationBackfill struct {
+	// When the latest backfill was asked for; it starts a minute later.
+	Requested time.Time `json:"requested"`
+	// Whether the walk for it has ended; what it queued may still be shipping (pending).
+	Done bool `json:"done"`
+	// Versions with content walked.
+	Walked int64 `json:"walked"`
+	// Versions queued to ship, delete markers included.
+	Queued int64 `json:"queued"`
+	// Estimated versions with content the walk has not reached.
+	Remaining int64 `json:"remaining"`
+}
+
+// GetRequested returns the value of Requested.
+func (s *ReplicationBackfill) GetRequested() time.Time {
+	return s.Requested
+}
+
+// GetDone returns the value of Done.
+func (s *ReplicationBackfill) GetDone() bool {
+	return s.Done
+}
+
+// GetWalked returns the value of Walked.
+func (s *ReplicationBackfill) GetWalked() int64 {
+	return s.Walked
+}
+
+// GetQueued returns the value of Queued.
+func (s *ReplicationBackfill) GetQueued() int64 {
+	return s.Queued
+}
+
+// GetRemaining returns the value of Remaining.
+func (s *ReplicationBackfill) GetRemaining() int64 {
+	return s.Remaining
+}
+
+// SetRequested sets the value of Requested.
+func (s *ReplicationBackfill) SetRequested(val time.Time) {
+	s.Requested = val
+}
+
+// SetDone sets the value of Done.
+func (s *ReplicationBackfill) SetDone(val bool) {
+	s.Done = val
+}
+
+// SetWalked sets the value of Walked.
+func (s *ReplicationBackfill) SetWalked(val int64) {
+	s.Walked = val
+}
+
+// SetQueued sets the value of Queued.
+func (s *ReplicationBackfill) SetQueued(val int64) {
+	s.Queued = val
+}
+
+// SetRemaining sets the value of Remaining.
+func (s *ReplicationBackfill) SetRemaining(val int64) {
+	s.Remaining = val
+}
+
 // Ref: #/components/schemas/ReplicationRefusal
 type ReplicationRefusal struct {
 	Key       string `json:"key"`
@@ -1475,7 +1589,8 @@ type ReplicationTargetStatus struct {
 	// Runner only: of those, the blocks the target lacked.
 	BlocksSent OptInt64 `json:"blocks_sent"`
 	// Runner only: their bytes.
-	BytesSent OptInt64 `json:"bytes_sent"`
+	BytesSent OptInt64               `json:"bytes_sent"`
+	Backfill  OptReplicationBackfill `json:"backfill"`
 }
 
 // GetName returns the value of Name.
@@ -1548,6 +1663,11 @@ func (s *ReplicationTargetStatus) GetBytesSent() OptInt64 {
 	return s.BytesSent
 }
 
+// GetBackfill returns the value of Backfill.
+func (s *ReplicationTargetStatus) GetBackfill() OptReplicationBackfill {
+	return s.Backfill
+}
+
 // SetName sets the value of Name.
 func (s *ReplicationTargetStatus) SetName(val string) {
 	s.Name = val
@@ -1616,6 +1736,11 @@ func (s *ReplicationTargetStatus) SetBlocksSent(val OptInt64) {
 // SetBytesSent sets the value of BytesSent.
 func (s *ReplicationTargetStatus) SetBytesSent(val OptInt64) {
 	s.BytesSent = val
+}
+
+// SetBackfill sets the value of Backfill.
+func (s *ReplicationTargetStatus) SetBackfill(val OptReplicationBackfill) {
+	s.Backfill = val
 }
 
 // Ref: #/components/schemas/RotateResult

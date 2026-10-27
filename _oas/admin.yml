@@ -407,6 +407,35 @@ paths:
                 $ref: "#/components/schemas/ReplicationStatus"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/buckets/{bucket}/replication/backfill:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: "backfillBucketReplication"
+      summary: "Ship a bucket's existing versions again"
+      description: >
+        Starts a walk of the bucket's versions that queues every one for the
+        target (or each target, without target) to receive, as setting a new
+        target does. It starts a minute after the request, resumes after a
+        restart, and starts over when asked again. Every version is sent
+        whatever the target holds: blocks it has are not sent again, and
+        versions it holds merge to themselves, but a version the target has
+        deleted comes back. Returns 409 for a target the bucket does not
+        have.
+      parameters:
+        - name: target
+          in: query
+          schema:
+            type: string
+      responses:
+        204:
+          description: Requested.
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/cluster/nodes/{id}/skip:
     parameters:
       - name: id
@@ -622,6 +651,37 @@ components:
           type: integer
           format: int64
           description: "Runner only: their bytes."
+        backfill:
+          $ref: "#/components/schemas/ReplicationBackfill"
+    ReplicationBackfill:
+      type: object
+      description: "The target's backfill, when one was ever asked for."
+      required:
+        - requested
+        - done
+        - walked
+        - queued
+        - remaining
+      properties:
+        requested:
+          type: string
+          format: date-time
+          description: "When the latest backfill was asked for; it starts a minute later."
+        done:
+          type: boolean
+          description: "Whether the walk for it has ended; what it queued may still be shipping (pending)."
+        walked:
+          type: integer
+          format: int64
+          description: "Versions with content walked."
+        queued:
+          type: integer
+          format: int64
+          description: "Versions queued to ship, delete markers included."
+        remaining:
+          type: integer
+          format: int64
+          description: "Estimated versions with content the walk has not reached."
     ReplicationStatus:
       type: object
       required:

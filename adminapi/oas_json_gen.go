@@ -2516,6 +2516,39 @@ func (s *OptInt64) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ReplicationBackfill as json.
+func (o OptReplicationBackfill) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ReplicationBackfill from json.
+func (o *OptReplicationBackfill) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptReplicationBackfill to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptReplicationBackfill) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptReplicationBackfill) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes string as json.
 func (o OptString) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -3213,6 +3246,170 @@ func (s *Replication) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *ReplicationBackfill) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ReplicationBackfill) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("requested")
+		json.EncodeDateTime(e, s.Requested)
+	}
+	{
+		e.FieldStart("done")
+		e.Bool(s.Done)
+	}
+	{
+		e.FieldStart("walked")
+		e.Int64(s.Walked)
+	}
+	{
+		e.FieldStart("queued")
+		e.Int64(s.Queued)
+	}
+	{
+		e.FieldStart("remaining")
+		e.Int64(s.Remaining)
+	}
+}
+
+var jsonFieldsNameOfReplicationBackfill = [5]string{
+	0: "requested",
+	1: "done",
+	2: "walked",
+	3: "queued",
+	4: "remaining",
+}
+
+// Decode decodes ReplicationBackfill from json.
+func (s *ReplicationBackfill) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ReplicationBackfill to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "requested":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.Requested = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"requested\"")
+			}
+		case "done":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Done = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"done\"")
+			}
+		case "walked":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Int64()
+				s.Walked = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"walked\"")
+			}
+		case "queued":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Int64()
+				s.Queued = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"queued\"")
+			}
+		case "remaining":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Int64()
+				s.Remaining = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"remaining\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ReplicationBackfill")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00011111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfReplicationBackfill) {
+					name = jsonFieldsNameOfReplicationBackfill[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ReplicationBackfill) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ReplicationBackfill) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *ReplicationRefusal) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -3833,9 +4030,15 @@ func (s *ReplicationTargetStatus) encodeFields(e *jx.Encoder) {
 			s.BytesSent.Encode(e)
 		}
 	}
+	{
+		if s.Backfill.Set {
+			e.FieldStart("backfill")
+			s.Backfill.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfReplicationTargetStatus = [14]string{
+var jsonFieldsNameOfReplicationTargetStatus = [15]string{
 	0:  "name",
 	1:  "pending",
 	2:  "pending_bytes",
@@ -3850,6 +4053,7 @@ var jsonFieldsNameOfReplicationTargetStatus = [14]string{
 	11: "blocks_offered",
 	12: "blocks_sent",
 	13: "bytes_sent",
+	14: "backfill",
 }
 
 // Decode decodes ReplicationTargetStatus from json.
@@ -4018,6 +4222,16 @@ func (s *ReplicationTargetStatus) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"bytes_sent\"")
+			}
+		case "backfill":
+			if err := func() error {
+				s.Backfill.Reset()
+				if err := s.Backfill.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"backfill\"")
 			}
 		default:
 			return d.Skip()

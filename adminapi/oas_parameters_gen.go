@@ -83,6 +83,123 @@ func decodeApplyLayoutParams(args [0]string, argsEscaped bool, r *http.Request) 
 	return params, nil
 }
 
+// BackfillBucketReplicationParams is parameters of backfillBucketReplication operation.
+type BackfillBucketReplicationParams struct {
+	Target OptString `json:",omitempty,omitzero"`
+	Bucket string
+}
+
+func unpackBackfillBucketReplicationParams(packed middleware.Parameters) (params BackfillBucketReplicationParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "target",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.Target = v.(OptString)
+		}
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeBackfillBucketReplicationParams(args [1]string, argsEscaped bool, r *http.Request) (params BackfillBucketReplicationParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Decode query: target.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "target",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotTargetVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotTargetVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Target.SetTo(paramsDotTargetVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "target",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // DeleteAccessKeyParams is parameters of deleteAccessKey operation.
 type DeleteAccessKeyParams struct {
 	// The access key ID to delete.

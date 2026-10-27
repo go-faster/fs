@@ -130,6 +130,41 @@ func (a *AdminAPI) DeleteBucketReplication(ctx context.Context, params adminapi.
 	return nil
 }
 
+// BackfillBucketReplication asks for a backfill of a bucket's versions to a
+// target, or to each without one.
+func (a *AdminAPI) BackfillBucketReplication(ctx context.Context, params adminapi.BackfillBucketReplicationParams) error {
+	e := a.opts.Engine
+	if e == nil {
+		return apiErr(http.StatusNotImplemented, errors.New("no storage engine"))
+	}
+
+	names := []string{params.Target.Or("")}
+
+	if !params.Target.Set {
+		targets, err := e.BucketReplication(ctx, params.Bucket)
+		if err != nil {
+			return replicationErr(err)
+		}
+
+		if len(targets) == 0 {
+			return apiErr(http.StatusConflict, errors.Errorf("bucket %q has no replication targets", params.Bucket))
+		}
+
+		names = names[:0]
+		for _, t := range targets {
+			names = append(names, t.Name)
+		}
+	}
+
+	for _, name := range names {
+		if err := e.RequestReplicationBackfill(ctx, params.Bucket, name); err != nil {
+			return replicationErr(err)
+		}
+	}
+
+	return nil
+}
+
 // GetBucketReplicationStatus reports how far a bucket's replication has
 // got: from its outbox, and from the runner when this node runs it.
 func (a *AdminAPI) GetBucketReplicationStatus(
@@ -151,6 +186,11 @@ func (a *AdminAPI) GetBucketReplicationStatus(
 	}
 
 	byTarget, complete, err := e.ReplicationStatus(ctx, params.Bucket, statusRows, statusRefusals)
+	if err != nil {
+		return nil, replicationErr(err)
+	}
+
+	backfills, err := e.ReplicationBackfills(ctx, params.Bucket)
 	if err != nil {
 		return nil, replicationErr(err)
 	}
@@ -189,6 +229,21 @@ func (a *AdminAPI) GetBucketReplicationStatus(
 		for _, rf := range tb.Recent {
 			ts.RecentRefusals = append(ts.RecentRefusals, adminapi.ReplicationRefusal{
 				Key: rf.Key, VersionID: rf.VersionID, Reason: rf.Reason, At: rf.At,
+			})
+		}
+
+		if bf := backfills[t.Name]; !bf.Requested.IsZero() {
+			p := bf.Progress
+			if p.Request != bf.Requested.UnixNano() {
+				p = engine.BackfillProgress{}
+			}
+
+			ts.Backfill = adminapi.NewOptReplicationBackfill(adminapi.ReplicationBackfill{
+				Requested: bf.Requested,
+				Done:      p.Done,
+				Walked:    p.Walked,
+				Queued:    p.Queued,
+				Remaining: bf.Remaining,
 			})
 		}
 
