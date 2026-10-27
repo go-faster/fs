@@ -226,7 +226,10 @@ backfill: setting a new target starts one a minute later, and
 /api/v1/buckets/{bucket}/replication/backfill`) starts another. It walks the
 bucket, resuming after restarts, and queues every version; blocks and
 versions the target holds are not sent twice, but a version deleted at the
-target comes back. `status` shows its progress.
+target comes back. `status` shows its progress. Clients see each version's
+state as `x-amz-replication-status` on GET and HEAD: `PENDING`, `FAILED`
+(a target refused it; see `status` for why) or `COMPLETED` at the source,
+`REPLICA` at a target.
 
 One node runs each bucket's replication — the one that sweeps its lifecycle
 — polling for changes every five seconds and shipping back to back while

@@ -157,7 +157,8 @@ automated resumable migration and the public API becomes additive-only.
   the ordinary row merge (marked `Replica`, no outbox row, no quota); as a
   source, `ExportReplica`/`ReadReplicaBlock`, and `Outbox`/`MarkReplicated`
   for the runner; backfill (`backfill.go`) walks a bucket for a new target
-  or on request, its request and progress in bucket settings; admin API `/api/v1/buckets/{bucket}/replication{,/status,/backfill}`,
+  or on request, its request and progress in bucket settings; GET/HEAD
+  report `x-amz-replication-status` from the outbox row; admin API `/api/v1/buckets/{bucket}/replication{,/status,/backfill}`,
   CLI `fs replication`.
   Versioning is a view over the
   version list (null versions while unset/suspended). SSE-S3 and SSE-C seal

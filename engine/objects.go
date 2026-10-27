@@ -500,12 +500,22 @@ func (e *Engine) current(ctx context.Context, bucket, key string) (meta.Version,
 }
 
 func (e *Engine) GetObject(ctx context.Context, bucket, key string) (*fs.GetObjectResponse, error) {
-	v, _, err := e.current(ctx, bucket, key)
+	b, inc, err := e.bucket(ctx, bucket)
 	if err != nil {
 		return nil, err
 	}
 
-	return e.response(ctx, v)
+	o, err := e.object(ctx, inc.ID, key)
+	if err != nil {
+		return nil, err
+	}
+
+	v, ok := o.Current()
+	if !ok {
+		return nil, fs.ErrObjectNotFound
+	}
+
+	return e.response(ctx, b, inc.ID, key, v)
 }
 
 func (e *Engine) DeleteObject(ctx context.Context, bucket, key string) error {

@@ -77,6 +77,10 @@ func serveObject(w http.ResponseWriter, r *http.Request, key string, resp *fs.Ge
 		w.Header().Set("x-amz-tagging-count", strconv.Itoa(resp.TagCount))
 	}
 
+	if resp.ReplicationStatus != "" {
+		w.Header().Set("x-amz-replication-status", resp.ReplicationStatus)
+	}
+
 	// response-* query parameters override the stored representation headers,
 	// which is how a presigned URL controls what the browser does with the
 	// object it points at.

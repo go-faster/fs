@@ -515,7 +515,11 @@ by `internal/replication.Runner` through `Engine.Outbox` and
 refusals for the admin API. Backfill (`engine/backfill.go`) queues the
 versions a target was set after: setting a new target, or
 `RequestReplicationBackfill`, records a request in a bucket setting, and
-the walk keeps its progress in another, one writer each. A PUT whose body
+the walk keeps its progress in another, one writer each. GET and HEAD
+report `x-amz-replication-status` (`GetObjectResponse.ReplicationStatus`,
+`replicationStatus` in the engine): `REPLICA` from the payload's flag,
+otherwise, for a key a target takes, `FAILED`/`PENDING`/`COMPLETED` from
+the version's outbox row, one quorum read. A PUT whose body
 took over ten seconds reads the bucket settings again before committing, so
 a walk starting a minute after its request cannot miss a write.
 

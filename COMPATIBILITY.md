@@ -75,7 +75,9 @@ Each requires a design document before commitment:
 - **Geo-replication** — asynchronous, bucket-level replication of versions
   between independent fs deployments
   ([design](docs/design/geo-replication.md), in progress: versions ship,
-  existing ones through a backfill; `x-amz-replication-status` is next).
+  existing ones through a backfill, and GET/HEAD report
+  `x-amz-replication-status`; configured through the admin API, not
+  `?replication`).
 
 ## Out of scope
 

@@ -308,7 +308,26 @@ type GetObjectResponse struct {
 	ChecksumAlgorithm string
 	Checksum          string
 	ChecksumType      string
+
+	// ReplicationStatus is the version's geo-replication status, reported as
+	// x-amz-replication-status: one of the ReplicationStatus* values, or
+	// empty when the version is not replicated.
+	ReplicationStatus string
 }
+
+// The x-amz-replication-status values.
+const (
+	// ReplicationStatusPending: a replication target has yet to receive
+	// the version's latest change.
+	ReplicationStatusPending = "PENDING"
+	// ReplicationStatusCompleted: every target has received it.
+	ReplicationStatusCompleted = "COMPLETED"
+	// ReplicationStatusFailed: a target refused its latest change; it is
+	// retried.
+	ReplicationStatusFailed = "FAILED"
+	// ReplicationStatusReplica: the version arrived through replication.
+	ReplicationStatusReplica = "REPLICA"
+)
 
 // MultipartUpload represents an in-progress multipart upload.
 type MultipartUpload struct {

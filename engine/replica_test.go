@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-faster/fs"
+	"github.com/go-faster/fs/internal/cluster/meta"
 )
 
 // site is a deployment's engine with bucket "b" versioned.
@@ -336,4 +337,78 @@ func TestReplicaRefused(t *testing.T) {
 	info, err := plain.ReplicaInfo(ctx, "b")
 	require.NoError(t, err)
 	assert.Equal(t, fs.ReplicaInfo{Protocol: fs.ReplicaProtocol, Versioning: fs.VersioningUnset}, info)
+}
+
+func TestReplicationStatus(t *testing.T) {
+	ctx := context.Background()
+	src := replicated(t, 3, target("dr"), ReplicationTarget{
+		Name: "logs", Endpoint: "https://s3.example.com", Bucket: "replica",
+		AccessKeyID: "AK", SecretAccessKey: "secret", Prefix: "logs/",
+	})
+	dst := site(t, cluster(t, 1, small)[0].engine)
+
+	status := func(e *Engine, key, versionID string) string {
+		t.Helper()
+
+		resp, err := e.GetObjectVersion(ctx, "b", key, versionID)
+		require.NoError(t, err)
+		require.NoError(t, resp.Reader.Close())
+
+		cur, err := e.GetObject(ctx, "b", key)
+		require.NoError(t, err)
+		require.NoError(t, cur.Reader.Close())
+		assert.Equal(t, resp.ReplicationStatus, cur.ReplicationStatus, "the current version, either way")
+
+		return resp.ReplicationStatus
+	}
+
+	put, err := src.PutObject(ctx, &fs.PutObjectRequest{Bucket: "b", Key: "logs/1", Reader: strings.NewReader("x"), Size: 1})
+	require.NoError(t, err)
+
+	assert.Equal(t, fs.ReplicationStatusPending, status(src, "logs/1", put.VersionID))
+
+	mark := func(target, refused string) {
+		t.Helper()
+
+		o := outboxOf(t, src)[meta.OutboxSK("logs/1", put.VersionID)]
+		require.NoError(t, src.MarkReplicated(ctx, "b", []ReplicationMark{{
+			Key: "logs/1", VersionID: put.VersionID, Target: target, Pending: o.Pending, Refused: refused,
+		}}))
+	}
+
+	// One target has it; the other refused it: the failure shows.
+	mark("dr", "")
+	assert.Equal(t, fs.ReplicationStatusPending, status(src, "logs/1", put.VersionID))
+
+	mark("logs", "no master key")
+	assert.Equal(t, fs.ReplicationStatusFailed, status(src, "logs/1", put.VersionID))
+
+	mark("logs", "")
+	assert.Equal(t, fs.ReplicationStatusCompleted, status(src, "logs/1", put.VersionID))
+
+	// The version that arrives elsewhere is a replica there.
+	_, res := ship(t, ctx, src, dst, "logs/1", put.VersionID, false)
+	require.Empty(t, res.Error)
+	assert.Equal(t, fs.ReplicationStatusReplica, status(dst, "logs/1", put.VersionID))
+
+	// A key no target takes, and a bucket without targets, have none.
+	other, err := src.PutObject(ctx, &fs.PutObjectRequest{Bucket: "b", Key: "x", Reader: strings.NewReader("x"), Size: 1})
+	require.NoError(t, err)
+	assert.Equal(t, fs.ReplicationStatusPending, status(src, "x", other.VersionID), "dr takes every key")
+
+	require.NoError(t, src.SetBucketReplication(ctx, "b", []ReplicationTarget{{
+		Name: "logs", Endpoint: "https://s3.example.com", Bucket: "replica",
+		AccessKeyID: "AK", SecretAccessKey: "secret", Prefix: "logs/",
+	}}))
+	assert.Empty(t, status(src, "x", other.VersionID), "outside every prefix")
+
+	require.NoError(t, src.SetBucketReplication(ctx, "b", nil))
+	assert.Empty(t, status(src, "logs/1", put.VersionID))
+
+	// A version stored before its target was set is pending until the
+	// backfill has walked and shipped it.
+	old, err := src.PutObject(ctx, &fs.PutObjectRequest{Bucket: "b", Key: "old", Reader: strings.NewReader("x"), Size: 1})
+	require.NoError(t, err)
+	require.NoError(t, src.SetBucketReplication(ctx, "b", []ReplicationTarget{target("late")}))
+	assert.Equal(t, fs.ReplicationStatusPending, status(src, "old", old.VersionID))
 }
