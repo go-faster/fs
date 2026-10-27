@@ -118,6 +118,21 @@ func TestBucketReplication(t *testing.T) {
 	assert.GreaterOrEqual(t, st.Targets[0].LagSeconds, 0.0)
 	assert.False(t, st.Targets[0].Shipped.Set, "no runner here")
 
+	// A new target asked for a backfill, which has not started yet.
+	bf, ok := st.Targets[0].Backfill.Get()
+	require.True(t, ok)
+	assert.False(t, bf.Done)
+	assert.False(t, bf.Requested.IsZero())
+
+	require.NoError(t, api.BackfillBucketReplication(ctx, adminapi.BackfillBucketReplicationParams{Bucket: "b"}))
+	requireStatus(t, api.BackfillBucketReplication(ctx, adminapi.BackfillBucketReplicationParams{
+		Bucket: "b", Target: adminapi.NewOptString("nope"),
+	}), http.StatusConflict)
+
+	st2, err := api.GetBucketReplicationStatus(ctx, adminapi.GetBucketReplicationStatusParams{Bucket: "b"})
+	require.NoError(t, err)
+	assert.True(t, st2.Targets[0].Backfill.Value.Requested.After(bf.Requested), "asked again")
+
 	// With a runner on this node, its view too.
 	api.opts.Replication = &replication.Runner{Source: e}
 

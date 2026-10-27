@@ -345,3 +345,101 @@ func TestCheck(t *testing.T) {
 	plain.Bucket = "plain"
 	require.ErrorContains(t, Check(ctx, plain, nil), "versioning")
 }
+
+func TestRunnerBackfill(t *testing.T) {
+	ctx := context.Background()
+	src, dst := newDeployment(t, nil), newDeployment(t, nil)
+
+	// Written before the target exists: no outbox rows.
+	for _, k := range []string{"a", "b", "c", "d", "e"} {
+		src.put(t, k, []byte(k))
+	}
+
+	_, err := src.engine.DeleteObjectVersion(ctx, "data", "e", "")
+	require.NoError(t, err)
+
+	require.NoError(t, src.engine.SetBucketReplication(ctx, "data", []engine.ReplicationTarget{dst.target("dr")}))
+	assert.Zero(t, src.backlog(t))
+
+	bfs, err := src.engine.ReplicationBackfills(ctx, "data")
+	require.NoError(t, err)
+	require.True(t, bfs["dr"].Due(), "a new target is backfilled")
+	assert.Equal(t, int64(5), bfs["dr"].Remaining)
+
+	// Not before the delay: a write still committing with the settings from
+	// before the target must land first.
+	r := &Runner{Source: src.engine}
+	pass(t, r)
+	assert.Empty(t, dst.versions(t))
+	assert.True(t, r.Stats()[Target{"data", "dr"}].Backfilling)
+
+	// A walk interrupted after two keys, as by a restart, resumes from the
+	// saved cursor with another runner.
+	req := bfs["dr"].Requested.UnixNano()
+	p, err := src.engine.BackfillReplication(ctx, "data", "dr", req, engine.BackfillProgress{}, 2)
+	require.NoError(t, err)
+	require.False(t, p.Done)
+	require.NoError(t, src.engine.SaveBackfillProgress(ctx, "data", "dr", p))
+
+	r = &Runner{Source: src.engine, BackfillDelay: time.Nanosecond}
+	pass(t, r) // Walks.
+	pass(t, r) // Ships what the walk queued.
+
+	assert.Equal(t, src.versions(t), dst.versions(t), "every existing version, the marker too")
+	assert.Zero(t, src.backlog(t))
+
+	bfs, err = src.engine.ReplicationBackfills(ctx, "data")
+	require.NoError(t, err)
+	assert.False(t, bfs["dr"].Due())
+	assert.Equal(t, int64(5), bfs["dr"].Progress.Walked, "the first two keys were not walked again")
+	assert.Equal(t, int64(6), bfs["dr"].Progress.Queued)
+	assert.False(t, r.Stats()[Target{"data", "dr"}].Backfilling)
+
+	// Asked again, it walks again from the start; what the target holds
+	// costs no blocks and changes nothing.
+	require.NoError(t, src.engine.RequestReplicationBackfill(ctx, "data", "dr"))
+	require.ErrorIs(t, src.engine.RequestReplicationBackfill(ctx, "data", "nope"), fs.ErrInvalidBucketState)
+
+	pass(t, r)
+	pass(t, r)
+
+	bfs, err = src.engine.ReplicationBackfills(ctx, "data")
+	require.NoError(t, err)
+	assert.False(t, bfs["dr"].Due())
+	assert.Equal(t, int64(5), bfs["dr"].Progress.Walked)
+	assert.Equal(t, src.versions(t), dst.versions(t))
+
+	// Unchanged targets are not backfilled again when the setting is
+	// rewritten.
+	before := bfs["dr"].Requested
+
+	require.NoError(t, src.engine.SetBucketReplication(ctx, "data", []engine.ReplicationTarget{dst.target("dr")}))
+
+	bfs, err = src.engine.ReplicationBackfills(ctx, "data")
+	require.NoError(t, err)
+	assert.Equal(t, before, bfs["dr"].Requested)
+}
+
+func TestRunnerBackfillPrefix(t *testing.T) {
+	ctx := context.Background()
+	src, dst := newDeployment(t, nil), newDeployment(t, nil)
+
+	src.put(t, "img/1", []byte("1"))
+	src.put(t, "log/1", []byte("2"))
+	src.put(t, "img/2", []byte("3"))
+
+	tg := dst.target("dr")
+	tg.Prefix = "img/"
+	require.NoError(t, src.engine.SetBucketReplication(ctx, "data", []engine.ReplicationTarget{tg}))
+
+	r := &Runner{Source: src.engine, BackfillDelay: time.Nanosecond}
+	pass(t, r)
+	pass(t, r)
+
+	var keys []string
+	for _, v := range dst.versions(t) {
+		keys = append(keys, v.Key)
+	}
+
+	assert.Equal(t, []string{"img/1", "img/2"}, keys)
+}

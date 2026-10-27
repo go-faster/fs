@@ -220,8 +220,13 @@ enabled, `https://` (`--insecure` allows http, for tests: the protocol
 carries data keys). Versions written from then on ship with their IDs,
 times, metadata, tags and ACLs, delete markers with `--delete-markers`, and
 later tag or ACL changes too; version deletes and lifecycle actions do not,
-so each side runs its own lifecycle. Versions written before the target was
-set do not ship yet (backfill is the next phase of the design).
+so each side runs its own lifecycle. Versions already stored ship through a
+backfill: setting a new target starts one a minute later, and
+`fs replication backfill photos [dr]` (`POST
+/api/v1/buckets/{bucket}/replication/backfill`) starts another. It walks the
+bucket, resuming after restarts, and queues every version; blocks and
+versions the target holds are not sent twice, but a version deleted at the
+target comes back. `status` shows its progress.
 
 One node runs each bucket's replication — the one that sweeps its lifecycle
 — polling for changes every five seconds and shipping back to back while
@@ -304,7 +309,8 @@ usage read that fails lets the write through
   off; `fs.replication.shipped` and `fs.replication.failed`, versions
   delivered and refused since start; `fs.replication.blocks.offered` and
   `fs.replication.blocks.sent` (their ratio is the dedupe) and
-  `fs.replication.sent` (By). All are reported by the node that runs the
+  `fs.replication.sent` (By); `fs.replication.backfill.remaining`, the
+  versions a backfill has not reached. All are reported by the node that runs the
   bucket's replication. As a target: `fs.replication.applied` and
   `fs.replication.refused`, versions received from other deployments since
   start; refusals are retried by the source, so a climbing `refused` is a

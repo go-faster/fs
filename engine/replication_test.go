@@ -3,10 +3,12 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -238,4 +240,41 @@ func TestReplicationBacklog(t *testing.T) {
 
 		return err == nil && u == Usage{Objects: 1, Bytes: 20}
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// slowBody sets a replication target while it is being read, as an operator
+// would during a long upload.
+type slowBody struct {
+	io.Reader
+	onEOF func()
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if errors.Is(err, io.EOF) && b.onEOF != nil {
+		b.onEOF()
+		b.onEOF = nil
+	}
+
+	return n, err
+}
+
+func TestOutboxTargetSetDuringUpload(t *testing.T) {
+	ctx := context.Background()
+	e := replicated(t, 1)
+	e.stale = 0 // Every PUT counts as a long one.
+
+	body := &slowBody{Reader: strings.NewReader("hello"), onEOF: func() {
+		require.NoError(t, e.SetBucketReplication(ctx, "b", []ReplicationTarget{target("dr")}))
+	}}
+
+	_, err := e.PutObject(ctx, &fs.PutObjectRequest{Bucket: "b", Key: "k", Reader: body, Size: 5})
+	require.NoError(t, err)
+
+	rows := outboxOf(t, e)
+	require.Len(t, rows, 1, "committed with the settings as they are now")
+
+	for _, o := range rows {
+		assert.Equal(t, []string{"dr"}, o.Targets)
+	}
 }

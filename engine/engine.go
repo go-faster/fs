@@ -77,8 +77,11 @@ type Engine struct {
 	keys    *table.Table[meta.LWW[json.RawMessage]]
 	quotas  *table.Table[meta.LWW[json.RawMessage]]
 	outbox  *table.Table[meta.Outbox]
-	blocks  *block.Manager
-	member  *peer.Member
+	// stale is how old the bucket settings a PUT commits with may be
+	// before it reads them again.
+	stale  time.Duration
+	blocks *block.Manager
+	member *peer.Member
 
 	blockSize   int
 	inlineLimit int
@@ -118,6 +121,7 @@ func New(cfg Config) (*Engine, error) {
 		codedMin:    cmp.Or(cfg.CodedMinSize, DefaultCodedMinSize),
 		member:      cfg.Member,
 		keyring:     cfg.Keyring,
+		stale:       staleSettings,
 		db:          cfg.DB,
 		quota:       newQuotaCache(cmp.Or(cfg.QuotaCacheTTL, DefaultQuotaCacheTTL)),
 		now:         time.Now,

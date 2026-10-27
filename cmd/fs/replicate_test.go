@@ -107,6 +107,15 @@ func TestReplicationCommand(t *testing.T) {
 	assert.Contains(t, out, "backlog      0 versions, 0 B\n")
 	assert.Contains(t, out, "shipped      1 versions")
 
+	assert.Contains(t, out, "backfill     ")
+
+	out, err = run("backfill", "photos", "dr")
+	require.NoError(t, err)
+	assert.Equal(t, "backfill requested; it starts in a minute\n", out)
+
+	_, err = run("backfill", "photos", "nope")
+	require.Error(t, err)
+
 	_, err = run("rm", "photos", "nope")
 	require.Error(t, err)
 

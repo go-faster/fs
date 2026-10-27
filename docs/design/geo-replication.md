@@ -1,7 +1,7 @@
 # Design: geo-replication
 
-**Status:** in progress: phases 1 (the outbox), 2 (the target) and 3 (the
-runner, admin API and CLI) are implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** in progress: phases 1 (the outbox), 2 (the target), 3 (the
+runner, admin API and CLI) and 4 (backfill) are implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
@@ -265,15 +265,36 @@ before any encrypted version is sent.
 
 ### Existing objects: backfill
 
-Enabling a target, or `fs replication backfill`, starts a walk of the
-bucket's versions that writes an outbox row (`Pending` = the version's TS)
-for each one the target has not shipped. It is a background task:
+Setting a new target (a name the bucket did not have, or one now pointing at
+another endpoint, bucket or prefix), or `fs replication backfill`, starts a
+walk of the bucket's versions that writes an outbox row for the target
+(`Pending` = the later of the version's and its attrs' TS, `Version` set)
+for each complete version under its prefix, delete markers when it takes
+them. The runner ships those rows like any other. It is a background task:
 
-- its cursor is persisted, so it resumes after a restart or a runner
+- **its state is two bucket settings per target**, each with one writer:
+  the request (its time, written by setting the target or asking again)
+  and the walk's progress (request walked for, cursor, counts, written by
+  the runner after every page). A request newer than the progress starts
+  the walk over; an overlap of two runners walks a page twice, which only
+  rewrites the same rows;
+- **its cursor is persisted**, so it resumes after a restart or a runner
   change;
-- it starts once the setting is a minute old, so every coordinator has seen
-  the target. A write that read the settings before the change still has its
-  version picked up by the walk.
+- **it starts a minute after the request**, so every write that committed
+  with settings from before it has landed. A PUT reads the bucket before
+  its body arrives, so one whose body took longer than ten seconds reads
+  the settings again before committing: no write commits with settings
+  older than that, and the walk cannot pass a key before a write to it
+  that missed the target lands;
+- **the runner walks ten pages of a thousand keys per pass** and target,
+  then ships, so a long walk does not hold deliveries back.
+
+A walk does not know what the target holds, so it queues every version.
+Blocks the target holds are not sent again (claims dedupe them) and versions
+it holds merge to themselves, but a version the target has deleted by
+version and collected comes back: what a backfill means. In two-way
+replication a backfill also ships the other side's replicas back to it,
+which costs claims and changes nothing.
 
 ### Two-way replication
 
@@ -333,7 +354,8 @@ Logs:
   - the last success and the last error, and what was shipped since
     start, from the runner's memory: only the node running the bucket
     answers them (`runner: true`);
-  - backfill progress (phase 4).
+  - backfill progress: when it was asked for, versions walked and queued,
+    an estimate of what is left, and whether the walk is done.
 - A target given without its secret keeps the current one of that name, so
   a target can be edited without the secret at hand.
 - `POST /api/v1/buckets/{bucket}/replication/backfill`: start or restart
@@ -385,7 +407,7 @@ Each phase is a PR that leaves main working:
    flag, export, and `internal/replication.Client`.
 3. **Runner** (done): the `replication` setting, the admin API and CLI,
    shipping, status, metrics, and the integration tests.
-4. **Backfill.**
+4. **Backfill** (done).
 5. **`x-amz-replication-status`.**
 6. **The chaos run:** a second three-node cluster as the target of the
    soak's versioned buckets, behind a fault-injecting proxy (added delay,

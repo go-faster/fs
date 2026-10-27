@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -281,6 +282,7 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 		return nil, err
 	}
 
+	read := time.Now()
 	versioned := versioning(b) == fs.VersioningEnabled
 	cond := req.Conditions()
 	limits := e.limits(ctx, b, inc)
@@ -351,6 +353,16 @@ func (e *Engine) PutObject(ctx context.Context, req *fs.PutObjectRequest) (*fs.P
 	var refs []blockLoc
 	if w.unreferenced {
 		refs = w.blocks
+	}
+
+	// A body that took long to arrive commits with the bucket's settings
+	// as they are now, not as they were before it: a replication target
+	// set meanwhile must get its outbox row, since its backfill, which
+	// waits staleSettings and more, may have walked past the key already.
+	if time.Since(read) > e.stale {
+		if fresh, finc, err := e.bucket(ctx, req.Bucket); err == nil && finc.ID == inc.ID {
+			b = fresh
+		}
 	}
 
 	if err := e.commit(ctx, b, inc.ID, req.Key, id, !versioned, cond, limits, p, attrs{Tags: req.Tags, ACL: req.ACL}, refs); err != nil {

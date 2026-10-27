@@ -124,7 +124,8 @@ func (e *Engine) BucketReplication(ctx context.Context, bucket string) ([]Replic
 }
 
 // SetBucketReplication replaces a bucket's replication targets; none stops
-// replication. The bucket must have versioning enabled: S3 replicates
+// replication. A target new to the bucket, or now pointing elsewhere, is
+// backfilled. The bucket must have versioning enabled: S3 replicates
 // versions, and so does fs.
 func (e *Engine) SetBucketReplication(ctx context.Context, bucket string, targets []ReplicationTarget) error {
 	if err := validTargets(targets); err != nil {
@@ -144,7 +145,12 @@ func (e *Engine) SetBucketReplication(ctx context.Context, bucket string, target
 		return errors.Wrap(fs.ErrInvalidBucketState, "replication needs versioning enabled")
 	}
 
-	return e.setSetting(ctx, bucket, settingReplication, targets)
+	if err := e.setSetting(ctx, bucket, settingReplication, targets); err != nil {
+		return err
+	}
+
+	// A new target is backfilled with what the bucket already holds.
+	return e.requestBackfills(ctx, bucket, replicationTargets(b), targets)
 }
 
 // outboxRow returns the outbox row recording a change to v, a version of key,

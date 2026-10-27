@@ -26,9 +26,9 @@ func Replication() *cobra.Command {
 		Long: `Replicate a bucket's versions to buckets of other fs deployments
 (docs/design/geo-replication.md). The bucket and every target bucket need
 versioning enabled, and each target needs an access key with the admin grant
-on its bucket. Versions written after a target is set ship to it, with their
-IDs, times, metadata, tags and ACLs; version deletes and lifecycle actions do
-not.`,
+on its bucket. Versions ship to a target with their IDs, times, metadata,
+tags and ACLs — those written after it is set, and those already stored,
+through a backfill — version deletes and lifecycle actions do not.`,
 	}
 
 	cmd.PersistentFlags().StringVar(&addr, "admin-addr", envOr("FS_ADMIN_ADDR", "http://"+DefaultAdminAddr), "Admin API base URL")
@@ -174,6 +174,35 @@ removed target yet never will.`,
 	})
 
 	cmd.AddCommand(&cobra.Command{
+		Use:   "backfill BUCKET [NAME]",
+		Short: "Ship a bucket's existing versions to a target, or to every target",
+		Long: `Ship every version the bucket holds to the target NAME, or to every target,
+as setting a new target does. The walk starts a minute later and resumes
+after restarts; status shows its progress. Blocks and versions the target
+holds are not sent twice, but a version the target has deleted comes back.`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := adminClient(addr, token)
+			if err != nil {
+				return err
+			}
+
+			params := adminapi.BackfillBucketReplicationParams{Bucket: args[0]}
+			if len(args) == 2 {
+				params.Target = adminapi.NewOptString(args[1])
+			}
+
+			if err := client.BackfillBucketReplication(cmd.Context(), params); err != nil {
+				return errors.Wrap(err, "request backfill")
+			}
+
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "backfill requested; it starts in a minute")
+
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
 		Use:   "status BUCKET",
 		Short: "Show how far a bucket's replication has got",
 		Args:  cobra.ExactArgs(1),
@@ -245,6 +274,15 @@ func printReplicationStatus(w io.Writer, st *adminapi.ReplicationStatus) {
 		if t.Shipped.Set {
 			_, _ = fmt.Fprintf(w, "shipped      %d versions; %d of %d blocks sent, %s\n",
 				t.Shipped.Value, t.BlocksSent.Or(0), t.BlocksOffered.Or(0), bytes(t.BytesSent.Or(0)))
+		}
+
+		if bf, ok := t.Backfill.Get(); ok {
+			state := fmt.Sprintf("%d walked, %d queued, ~%d to go", bf.Walked, bf.Queued, bf.Remaining)
+			if bf.Done {
+				state = fmt.Sprintf("done: %d walked, %d queued", bf.Walked, bf.Queued)
+			}
+
+			_, _ = fmt.Fprintf(w, "backfill     %s (asked %s)\n", state, bf.Requested.UTC().Format(time.RFC3339))
 		}
 
 		if v, ok := t.LastSuccess.Get(); ok {
