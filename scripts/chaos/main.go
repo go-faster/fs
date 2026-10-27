@@ -74,6 +74,10 @@ type node struct {
 type cluster struct {
 	bin   string
 	nodes []*node
+	// secret authenticates the cluster's peers, and widths are what its
+	// layout spreads for.
+	secret string
+	widths []int
 }
 
 // realistic runs the nodes with fs's own defaults: fsync on, and the
@@ -133,7 +137,29 @@ cluster:
   advertise_addr: "127.0.0.1:%d"
   peers: ["127.0.0.1:%d"]
   secret: %s
-`, n.s3, accessKey, secretKey, n.admin, token, lifecycleInterval(), n.id, n.peer, n.peer, c.nodes[0].peer, secret)
+`, n.s3, accessKey, secretKey, n.admin, token, lifecycleInterval(), n.id, n.peer, n.peer, c.nodes[0].peer, c.secret)
+}
+
+// newNode is node id with its ports, its directory under dir and an S3
+// client of it.
+func newNode(id, zone string, s3, peer, admin int, dir string) (*node, error) {
+	n := &node{id: id, zone: zone, s3: s3, peer: peer, admin: admin, dir: filepath.Join(dir, id)}
+
+	if err := os.MkdirAll(n.dir, 0o750); err != nil {
+		return nil, err
+	}
+
+	var err error
+
+	n.client, err = minio.New(fmt.Sprintf("127.0.0.1:%d", n.s3), &minio.Options{
+		Creds: credentials.NewStaticV4(accessKey, secretKey, ""),
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 15 * time.Second,
+			MaxIdleConnsPerHost:   16,
+		},
+	})
+
+	return n, err
 }
 
 func (c *cluster) start(n *node) error {
@@ -244,7 +270,7 @@ func (bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 // applyLayout makes the members the layout and waits until every live node
 // has adopted it.
 func (c *cluster) applyLayout(ctx context.Context) error {
-	req := &adminapi.ApplyLayoutRequest{Widths: []int{3, 6}, Partitions: adminapi.NewOptInt(64)}
+	req := &adminapi.ApplyLayoutRequest{Widths: c.widths, Partitions: adminapi.NewOptInt(64)}
 
 	for _, n := range c.nodes {
 		if n.member {
@@ -585,6 +611,8 @@ func main() {
 
 	realisticFlag := flag.Bool("realistic", false, "run the nodes with fs's defaults (fsync on, production background cadence) instead of shortened intervals")
 
+	flag.BoolVar(&replicate, "replication", true, "replicate the versioned bucket to a second, three-node deployment through a fault-injecting proxy")
+
 	flag.Parse()
 
 	settleWithin = *settle
@@ -625,50 +653,68 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 
 	minio.MaxRetry = 1
 
-	c := &cluster{bin: abs}
+	c := &cluster{bin: abs, secret: secret, widths: []int{3, 6}}
 	zones := []string{"a", "b", "c", "a", "b", "c", "a"}
 
 	// A port someone else holds — a node left over from an earlier soak, say —
 	// would make a node of this one fail to start while the harness talks to
 	// a stranger in its place, and every finding after that is noise.
-	for i := range 7 {
-		for _, port := range []int{18400 + i, 18500 + i, 18600 + i} {
-			l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-			if err != nil {
-				return fmt.Errorf("port %d is taken; stop whatever holds it (a node of an earlier soak?): %w", port, err)
-			}
+	ports := []int{proxyPort}
 
-			_ = l.Close()
+	for i := range 7 {
+		ports = append(ports, 18400+i, 18500+i, 18600+i)
+	}
+
+	for i := range 3 {
+		ports = append(ports, 18700+i, 18800+i, 18900+i)
+	}
+
+	for _, port := range ports {
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return fmt.Errorf("port %d is taken; stop whatever holds it (a node of an earlier soak?): %w", port, err)
 		}
+
+		_ = l.Close()
 	}
 
 	for i := range 7 {
-		n := &node{
-			id: fmt.Sprintf("n%d", i+1), zone: zones[i], member: i < 6,
-			s3: 18400 + i, peer: 18500 + i, admin: 18600 + i,
-			dir: filepath.Join(dir, fmt.Sprintf("n%d", i+1)),
-		}
-
-		if err := os.MkdirAll(n.dir, 0o750); err != nil {
-			return err
-		}
-
-		n.client, err = minio.New(fmt.Sprintf("127.0.0.1:%d", n.s3), &minio.Options{
-			Creds: credentials.NewStaticV4(accessKey, secretKey, ""),
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: 15 * time.Second,
-				MaxIdleConnsPerHost:   16,
-			},
-		})
+		n, err := newNode(fmt.Sprintf("n%d", i+1), zones[i], 18400+i, 18500+i, 18600+i, dir)
 		if err != nil {
 			return err
 		}
 
+		n.member = i < 6
 		c.nodes = append(c.nodes, n)
 	}
 
-	defer func() {
-		for _, n := range c.nodes {
+	// The replication target: another deployment of three nodes, reached
+	// through a proxy that injects network faults.
+	var dst *cluster
+
+	if replicate {
+		dst = &cluster{bin: abs, secret: secret + "-replica", widths: []int{3}}
+
+		for i := range 3 {
+			n, err := newNode(fmt.Sprintf("t%d", i+1), zones[i], 18700+i, 18800+i, 18900+i, dir)
+			if err != nil {
+				return err
+			}
+
+			n.member = true
+			dst.nodes = append(dst.nodes, n)
+		}
+	}
+
+	// Every node is killed before the data goes: a node still running would
+	// write into the directory as it is being removed.
+	killAll := func() {
+		all := c.nodes
+		if dst != nil {
+			all = append(slices.Clone(all), dst.nodes...)
+		}
+
+		for _, n := range all {
 			n.mu.Lock()
 			cmd := n.cmd
 			n.mu.Unlock()
@@ -679,7 +725,9 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 				_, _ = cmd.Process.Wait()
 			}
 		}
-	}()
+	}
+
+	defer killAll()
 
 	for _, n := range c.nodes[:6] {
 		if err := c.start(n); err != nil {
@@ -722,6 +770,14 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		Enabled: true, MaxObjects: adminapi.NewOptInt64(1 << 40), MaxSize: adminapi.NewOptInt64(1 << 60),
 	}, adminapi.SetBucketQuotaParams{Bucket: "replicated"}); err != nil {
 		return fmt.Errorf("quota: %w", err)
+	}
+
+	var repl *replication
+
+	if dst != nil {
+		if repl, err = setupReplication(ctx, c, dst, seed); err != nil {
+			return err
+		}
 	}
 
 	h := &harness{c: c, rng: rand.New(rand.NewPCG(seed, 1))} //nolint:gosec // A seeded, reproducible workload.
@@ -864,6 +920,11 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 			wg.Go(func() { h.worker(loadCtx, w, seed+uint64(round)) }) //nolint:gosec // round is small and positive.
 		}
 
+		if repl != nil {
+			wg.Go(func() { repl.disrupt(loadCtx, round, load) })
+			wg.Go(func() { repl.deleteAtTarget(loadCtx, seed+uint64(round)) }) //nolint:gosec // round is small and positive.
+		}
+
 		time.Sleep(load)
 
 		actErr := act.do()
@@ -903,7 +964,17 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		fmt.Println("LIFECYCLE", lifecycleErr)
 	}
 
+	var replErr error
+
+	if repl != nil {
+		if replErr = repl.check(ctx); replErr != nil {
+			fmt.Println("REPLICATION", replErr)
+		}
+	}
+
 	h.report()
+
+	fmt.Printf("data: %.1f GiB in %s\n", float64(dirSize(dir))/(1<<30), dir)
 
 	for _, e := range keyErrs {
 		fmt.Println("KEYS " + e)
@@ -913,18 +984,37 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		fmt.Println("USAGE " + e)
 	}
 
-	if len(h.violations) > 0 || readErrs > 0 || len(keyErrs) > 0 || len(usageErrs) > 0 || lifecycleErr != nil {
-		return fmt.Errorf("%d violations, %d read errors with every node up, %d access-key failures, %d usage mismatches, lifecycle: %v; data kept in %s",
-			len(h.violations), readErrs, len(keyErrs), len(usageErrs), lifecycleErr, dir)
+	if len(h.violations) > 0 || readErrs > 0 || len(keyErrs) > 0 || len(usageErrs) > 0 || lifecycleErr != nil || replErr != nil {
+		return fmt.Errorf("%d violations, %d read errors with every node up, %d access-key failures, %d usage mismatches, lifecycle: %v, replication: %v; data kept in %s",
+			len(h.violations), readErrs, len(keyErrs), len(usageErrs), lifecycleErr, replErr, dir)
 	}
 
 	fmt.Println("PASS")
 
 	if !keep {
+		killAll()
+
 		_ = os.RemoveAll(dir)
 	}
 
 	return nil
+}
+
+// dirSize is the bytes of the files under dir.
+func dirSize(dir string) int64 {
+	var n int64
+
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				n += info.Size()
+			}
+		}
+
+		return nil
+	})
+
+	return n
 }
 
 // pick returns n distinct member nodes that are up, in distinct zones.
