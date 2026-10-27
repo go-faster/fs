@@ -314,6 +314,99 @@ paths:
                 $ref: "#/components/schemas/QuotaStatus"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/buckets/{bucket}/replication:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: "getBucketReplication"
+      summary: "A bucket's replication targets"
+      description: >
+        The buckets on other fs deployments this bucket's versions are
+        replicated to (docs/design/geo-replication.md), secrets omitted.
+        Empty when replication is off. Returns 404 for a missing bucket, 501
+        without a storage engine.
+      responses:
+        200:
+          description: The targets.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Replication"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: "setBucketReplication"
+      summary: "Set a bucket's replication targets"
+      description: >
+        Replaces the bucket's targets. Versions written from now on, delete
+        markers when delete_markers is set, and changes of their tags and
+        ACL ship to every target; versions written before do not. The
+        bucket needs versioning enabled, and suspending it is refused while
+        targets exist. Each target is checked first: it must answer the
+        replication handshake with the given credentials (the admin grant
+        on its bucket) and have versioning enabled, and be https unless
+        insecure is set. A target given without secret_access_key keeps the
+        secret of the current target of that name. Returns 400 when a
+        target fails the check, 409 when the bucket is not versioned.
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/Replication"
+      responses:
+        200:
+          description: The targets now in effect.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Replication"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: "deleteBucketReplication"
+      summary: "Stop replicating a bucket"
+      description: >
+        Removes every target. What has not shipped yet never will; the
+        outbox rows for the removed targets are marked shipped by the next
+        pass.
+      responses:
+        204:
+          description: Removed.
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/buckets/{bucket}/replication/status:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: "getBucketReplicationStatus"
+      summary: "How far a bucket's replication has got"
+      description: >
+        Per target: the versions still to ship and the age of the oldest
+        change among them (the recovery point a site loss would have), and
+        the versions the target refused with its reasons, read from the
+        bucket's outbox on any node. When the node answering runs the
+        bucket's replication (runner true), also the runner's view: the
+        last success and failure, and what it shipped since start. In a
+        cluster one node runs each bucket; ask another node, or watch the
+        fs.replication.* metrics, which only that node exports.
+      responses:
+        200:
+          description: The status.
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ReplicationStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/cluster/nodes/{id}/skip:
     parameters:
       - name: id
@@ -409,6 +502,152 @@ components:
         scheme:
           type: string
           description: "\"rf3\" or \"ec:K,M\", e.g. \"ec:4,2\"."
+    ReplicationTarget:
+      type: object
+      required:
+        - name
+        - endpoint
+        - bucket
+        - access_key_id
+      properties:
+        name:
+          type: string
+          description: "Identifies the target within the bucket."
+        endpoint:
+          type: string
+          description: "The target deployment's S3 endpoint, e.g. https://s3.eu.example.com."
+        bucket:
+          type: string
+          description: "The target bucket; it needs versioning enabled."
+        access_key_id:
+          type: string
+          description: "A key with the admin grant on the target bucket."
+        secret_access_key:
+          type: string
+          description: "Its secret. Write-only: never returned."
+        prefix:
+          type: string
+          description: "Replicate only the keys that start with it."
+        delete_markers:
+          type: boolean
+          description: "Replicate delete markers too (S3 DeleteMarkerReplication)."
+        insecure:
+          type: boolean
+          description: "Allow an http:// endpoint. Replication carries data keys; for tests."
+    Replication:
+      type: object
+      required:
+        - targets
+      properties:
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReplicationTarget"
+    ReplicationRefusal:
+      type: object
+      required:
+        - key
+        - version_id
+        - reason
+        - at
+      properties:
+        key:
+          type: string
+        version_id:
+          type: string
+        reason:
+          type: string
+          description: "The target's, or this deployment's when it could not read the version."
+        at:
+          type: string
+          format: date-time
+    ReplicationTargetStatus:
+      type: object
+      required:
+        - name
+        - pending
+        - pending_bytes
+        - lag_seconds
+        - refused
+        - recent_refusals
+      properties:
+        name:
+          type: string
+        pending:
+          type: integer
+          format: int64
+          description: "Versions with a change still to ship to the target."
+        pending_bytes:
+          type: integer
+          format: int64
+        lag_seconds:
+          type: number
+          description: "Age of the oldest change still to ship; 0 when none."
+        refused:
+          type: integer
+          format: int64
+          description: "Pending versions whose latest change the target refused. They are retried every minute."
+        recent_refusals:
+          type: array
+          description: "The latest refusals, newest first, up to 20."
+          items:
+            $ref: "#/components/schemas/ReplicationRefusal"
+        failing:
+          type: boolean
+          description: "Runner only: the last request to the target failed; it is being retried with backoff."
+        last_success:
+          type: string
+          format: date-time
+          description: "Runner only: when a request to the target last succeeded."
+        last_failure:
+          type: string
+          format: date-time
+          description: "Runner only: when one last failed."
+        last_error:
+          type: string
+          description: "Runner only: why."
+        shipped:
+          type: integer
+          format: int64
+          description: "Runner only: versions delivered since start."
+        blocks_offered:
+          type: integer
+          format: int64
+          description: "Runner only: blocks of delivered versions since start."
+        blocks_sent:
+          type: integer
+          format: int64
+          description: "Runner only: of those, the blocks the target lacked."
+        bytes_sent:
+          type: integer
+          format: int64
+          description: "Runner only: their bytes."
+    ReplicationStatus:
+      type: object
+      required:
+        - runner
+        - complete
+        - backlog
+        - backlog_bytes
+        - targets
+      properties:
+        runner:
+          type: boolean
+          description: "Whether the node answering runs the bucket's replication."
+        complete:
+          type: boolean
+          description: "Whether the whole outbox was read; per-target numbers are lower bounds when not (the first 100000 rows)."
+        backlog:
+          type: integer
+          format: int64
+          description: "Versions some target has yet to receive."
+        backlog_bytes:
+          type: integer
+          format: int64
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReplicationTargetStatus"
     RotateResult:
       type: object
       required:

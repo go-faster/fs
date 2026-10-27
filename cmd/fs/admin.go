@@ -19,6 +19,7 @@ import (
 	"github.com/go-faster/fs/engine"
 	"github.com/go-faster/fs/internal/adminhandler"
 	"github.com/go-faster/fs/internal/cluster/peer"
+	"github.com/go-faster/fs/internal/replication"
 )
 
 // buildMeta is version metadata extracted from the build.
@@ -63,6 +64,8 @@ type adminServerConfig struct {
 	Cluster *peer.Member
 	// Engine is the storage, for key rotation.
 	Engine *engine.Engine
+	// Replication is this node's replication runner.
+	Replication *replication.Runner
 }
 
 // runAdminServer serves the admin API on a
@@ -94,6 +97,7 @@ func runAdminServer(ctx context.Context, lg *zap.Logger, t *app.Telemetry, cfg a
 		ConfigRevision: cfg.Reloader.CurrentRevision,
 		Cluster:        cfg.Cluster,
 		Engine:         cfg.Engine,
+		Replication:    cfg.Replication,
 	}
 
 	handler := adminhandler.NewAdminAPI(opts)

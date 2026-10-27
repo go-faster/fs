@@ -1,7 +1,7 @@
 # Design: geo-replication
 
-**Status:** in progress: phases 1 (the outbox) and 2 (the target) are
-implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** in progress: phases 1 (the outbox), 2 (the target) and 3 (the
+runner, admin API and CLI) are implemented. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
@@ -118,11 +118,13 @@ type Outbox struct {
 	Version bool             // the version itself ships, not only its attrs
 	Size    int64            // for the backlog's bytes
 	Shipped map[string]int64 // target name → Pending as last delivered
+	Refused map[string]Refusal // target name → its latest refusal
 }
 ```
 
-- **Merge:** the union of `Targets`, `or` of `Version`, and `max` of
-  `Pending`, `Size` and, per target, `Shipped`. Commutative, associative
+- **Merge:** the union of `Targets`, `or` of `Version`, `max` of
+  `Pending`, `Size` and, per target, `Shipped`, and per target the later
+  `Refused` (by the change refused, then when, then the reason). Commutative, associative
   and idempotent, so a change and a delivery can land in either order on
   any replica.
 - **A version is pending for a target** that `Targets` names while
@@ -167,12 +169,18 @@ bring them back.
      in flight;
   2. **versions:** send the batch, and record `Shipped` for every version
      the destination accepted.
-- **Pacing:** a pass right after a change is noticed (the coordinator nudges
-  the local runner, and a write coordinated elsewhere is found by the next
-  poll, every few seconds), then until the backlog is empty.
-- **Failures** back off per target, doubling up to a minute. A version the
-  destination refuses (below) is marked failed with its reason and retried
-  at the slower pace, so one bad version never blocks the rest.
+- **Pacing:** the runner polls every five seconds, and runs passes back to
+  back while they ship anything. A pass first reads the bucket's backlog
+  tally, one quorum read, and scans the outbox only when it is not zero.
+  The scan reads rows already shipped until tombstone collection drops
+  them, a day later; a time-ordered index is the fix if a busy bucket's
+  passes show up as lag. A nudge from the coordinator was considered and
+  left out: the poll bounds the delay at five seconds already.
+- **Failures** back off per target, doubling from a second up to a minute.
+  A version the destination refuses (below) is recorded in its outbox row
+  (`Refused`, with the reason) and retried every minute, so one bad version
+  never blocks the rest. A block the source cannot read refuses the version
+  the same way, with a `source:` reason.
 
 ### The wire protocol
 
@@ -320,10 +328,14 @@ Logs:
 - `GET`, `PUT` and `DELETE /api/v1/buckets/{bucket}/replication`: the
   targets, without their secrets. `PUT` validates as above.
 - `GET /api/v1/buckets/{bucket}/replication/status`, per target:
-  - backlog and lag;
-  - the last success and the last error;
-  - backfill progress;
-  - the recent refused versions with their reasons.
+  - backlog and lag, read from the outbox by any node;
+  - the recent refused versions with their reasons, likewise;
+  - the last success and the last error, and what was shipped since
+    start, from the runner's memory: only the node running the bucket
+    answers them (`runner: true`);
+  - backfill progress (phase 4).
+- A target given without its secret keeps the current one of that name, so
+  a target can be edited without the secret at hand.
 - `POST /api/v1/buckets/{bucket}/replication/backfill`: start or restart
   the walk.
 - CLI: `fs replication set|get|rm|status|backfill`.
@@ -371,8 +383,8 @@ Each phase is a PR that leaves main working:
 2. **Destination** (done): `?x-fs-replica` and the `admin` action,
    `fs.ReplicaReceiver` in the engine, block claims and intake, the replica
    flag, export, and `internal/replication.Client`.
-3. **Runner:** the `replication` setting, the admin API and CLI, shipping,
-   status, metrics, and the integration tests.
+3. **Runner** (done): the `replication` setting, the admin API and CLI,
+   shipping, status, metrics, and the integration tests.
 4. **Backfill.**
 5. **`x-amz-replication-status`.**
 6. **The chaos run.**

@@ -179,9 +179,14 @@ Command-line flags override YAML configuration values.`,
 					return err
 				}
 
-				if err := registerReplicationMetrics(t.MeterProvider(), eng, member); err != nil {
+				// Geo-replication: ships the outbox of the buckets this node
+				// is elected for to their targets.
+				replicator := newReplicator(lg, eng, member)
+				if err := registerReplicationMetrics(t.MeterProvider(), eng, replicator); err != nil {
 					return err
 				}
+
+				go replicator.Run(ctx)
 
 				var storage fs.Storage = eng
 
@@ -356,6 +361,7 @@ Command-line flags override YAML configuration values.`,
 						Reloader:    rel,
 						Cluster:     member,
 						Engine:      eng,
+						Replication: replicator,
 					}
 
 					grp.Go(func() error {

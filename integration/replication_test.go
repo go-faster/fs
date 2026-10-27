@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/minio/minio-go/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -187,4 +188,88 @@ func TestReplicationProtocol(t *testing.T) {
 	_, err = plain.Apply(ctx, nil)
 	require.True(t, errors.As(err, &refused))
 	assert.Equal(t, "InvalidBucketState", refused.Code)
+}
+
+// TestReplicationRunner writes through both SDKs at the source and lets the
+// runner ship it: versions, IDs, metadata and tags arrive, a delete marker
+// too, and a version deleted at the source before shipping does not.
+func TestReplicationRunner(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	srcEngine, srcHost := replicationSite(t, adminConfig())
+	_, dstHost := replicationSite(t, adminConfig())
+
+	src, dst := awsClient(t, srcHost), awsClient(t, dstHost)
+	versionedBucket(t, ctx, src, "photos")
+	versionedBucket(t, ctx, dst, "replica")
+
+	require.NoError(t, srcEngine.SetBucketReplication(ctx, "photos", []engine.ReplicationTarget{{
+		Name: "dr", Endpoint: "http://" + dstHost, Bucket: "replica",
+		AccessKeyID: authAccessKey, SecretAccessKey: authSecretKey,
+		DeleteMarkers: true, Insecure: true,
+	}}))
+
+	big := bytes.Repeat([]byte("0123456789abcdef"), 1<<17)
+
+	_, err := src.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("photos"), Key: aws.String("big"), Body: bytes.NewReader(big),
+		Metadata: map[string]string{"site": "a"}, Tagging: aws.String("k=v"),
+	})
+	require.NoError(t, err)
+
+	mc := minioClient(t, srcHost, authAccessKey, authSecretKey)
+	_, err = mc.PutObject(ctx, "photos", "small", bytes.NewReader([]byte("hello")), 5, minio.PutObjectOptions{})
+	require.NoError(t, err)
+
+	_, err = src.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("photos"), Key: aws.String("small")})
+	require.NoError(t, err)
+
+	brief, err := src.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("photos"), Key: aws.String("brief"), Body: bytes.NewReader([]byte("x")),
+	})
+	require.NoError(t, err)
+
+	_, err = src.DeleteObject(ctx, &awss3.DeleteObjectInput{
+		Bucket: aws.String("photos"), Key: aws.String("brief"), VersionId: brief.VersionId,
+	})
+	require.NoError(t, err)
+
+	r := &replication.Runner{Source: srcEngine}
+	_, err = r.Pass(ctx)
+	require.NoError(t, err)
+
+	list := func(c *awss3.Client, bucket string) []string {
+		out, err := c.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
+		require.NoError(t, err)
+
+		var ids []string
+		for _, v := range out.Versions {
+			ids = append(ids, aws.ToString(v.Key)+"@"+aws.ToString(v.VersionId))
+		}
+
+		for _, m := range out.DeleteMarkers {
+			ids = append(ids, aws.ToString(m.Key)+"@"+aws.ToString(m.VersionId)+" marker")
+		}
+
+		return ids
+	}
+
+	assert.ElementsMatch(t, list(src, "photos"), list(dst, "replica"))
+
+	got, err := dst.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String("replica"), Key: aws.String("big")})
+	require.NoError(t, err)
+
+	data, err := io.ReadAll(got.Body)
+	require.NoError(t, err)
+	require.NoError(t, got.Body.Close())
+
+	assert.Equal(t, big, data)
+	assert.Equal(t, map[string]string{"site": "a"}, got.Metadata)
+	assert.Equal(t, aws.Int32(1), got.TagCount)
+
+	backlog, err := srcEngine.ReplicationBacklog(ctx, "photos")
+	require.NoError(t, err)
+	assert.Zero(t, backlog.Objects)
 }

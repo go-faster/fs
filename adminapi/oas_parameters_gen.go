@@ -149,6 +149,71 @@ func decodeDeleteAccessKeyParams(args [1]string, argsEscaped bool, r *http.Reque
 	return params, nil
 }
 
+// DeleteBucketReplicationParams is parameters of deleteBucketReplication operation.
+type DeleteBucketReplicationParams struct {
+	Bucket string
+}
+
+func unpackDeleteBucketReplicationParams(packed middleware.Parameters) (params DeleteBucketReplicationParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeDeleteBucketReplicationParams(args [1]string, argsEscaped bool, r *http.Request) (params DeleteBucketReplicationParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetAccountQuotaParams is parameters of getAccountQuota operation.
 type GetAccountQuotaParams struct {
 	// The owner ID buckets record: the canonical user ID of the access key that created them (auth key
@@ -233,6 +298,136 @@ func unpackGetBucketQuotaParams(packed middleware.Parameters) (params GetBucketQ
 }
 
 func decodeGetBucketQuotaParams(args [1]string, argsEscaped bool, r *http.Request) (params GetBucketQuotaParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// GetBucketReplicationParams is parameters of getBucketReplication operation.
+type GetBucketReplicationParams struct {
+	Bucket string
+}
+
+func unpackGetBucketReplicationParams(packed middleware.Parameters) (params GetBucketReplicationParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetBucketReplicationParams(args [1]string, argsEscaped bool, r *http.Request) (params GetBucketReplicationParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// GetBucketReplicationStatusParams is parameters of getBucketReplicationStatus operation.
+type GetBucketReplicationStatusParams struct {
+	Bucket string
+}
+
+func unpackGetBucketReplicationStatusParams(packed middleware.Parameters) (params GetBucketReplicationStatusParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetBucketReplicationStatusParams(args [1]string, argsEscaped bool, r *http.Request) (params GetBucketReplicationStatusParams, _ error) {
 	// Decode path: bucket.
 	if err := func() error {
 		param := args[0]
@@ -430,6 +625,71 @@ func unpackSetBucketQuotaParams(packed middleware.Parameters) (params SetBucketQ
 }
 
 func decodeSetBucketQuotaParams(args [1]string, argsEscaped bool, r *http.Request) (params SetBucketQuotaParams, _ error) {
+	// Decode path: bucket.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "bucket",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Bucket = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "bucket",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// SetBucketReplicationParams is parameters of setBucketReplication operation.
+type SetBucketReplicationParams struct {
+	Bucket string
+}
+
+func unpackSetBucketReplicationParams(packed middleware.Parameters) (params SetBucketReplicationParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "bucket",
+			In:   "path",
+		}
+		params.Bucket = packed[key].(string)
+	}
+	return params
+}
+
+func decodeSetBucketReplicationParams(args [1]string, argsEscaped bool, r *http.Request) (params SetBucketReplicationParams, _ error) {
 	// Decode path: bucket.
 	if err := func() error {
 		param := args[0]

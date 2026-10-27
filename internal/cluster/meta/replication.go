@@ -34,6 +34,34 @@ type Outbox struct {
 	Size int64 `json:"size,omitempty"`
 	// Shipped is, per target, the Pending a delivery last carried.
 	Shipped map[string]int64 `json:"shipped,omitempty"`
+	// Refused is, per target, its latest refusal of the version. It is
+	// current while its Pending is the row's and the target has not
+	// received that change since.
+	Refused map[string]Refusal `json:"refused,omitempty"`
+}
+
+// Refusal is a target's refusal of a change to a version.
+type Refusal struct {
+	// Pending is the change refused, as Outbox.Pending was then.
+	Pending int64 `json:"pending"`
+	// At is when, in Unix nanoseconds.
+	At int64 `json:"at"`
+	// Reason is the target's.
+	Reason string `json:"reason"`
+}
+
+// later reports whether r supersedes o: a later change, a later refusal of
+// it, or — a tie — the greater reason, so that the merge is deterministic.
+func (r Refusal) later(o Refusal) bool {
+	if r.Pending != o.Pending {
+		return r.Pending > o.Pending
+	}
+
+	if r.At != o.At {
+		return r.At > o.At
+	}
+
+	return r.Reason > o.Reason
 }
 
 // PendingFor reports whether the row still has to reach target.
@@ -41,6 +69,14 @@ func (o Outbox) PendingFor(target string) bool {
 	_, ok := slices.BinarySearch(o.Targets, target)
 
 	return ok && o.Shipped[target] < o.Pending
+}
+
+// RefusedBy returns target's refusal of the row's newest change, if that is
+// still the target's last word on it.
+func (o Outbox) RefusedBy(target string) (Refusal, bool) {
+	r, ok := o.Refused[target]
+
+	return r, ok && r.Pending >= o.Pending && o.PendingFor(target)
 }
 
 // Done reports whether every target has the row's newest change.
@@ -54,8 +90,8 @@ func (o Outbox) Done() bool {
 	return true
 }
 
-// MergeOutbox is the replication table's merge: the union of targets, and the
-// greatest of every counter.
+// MergeOutbox is the replication table's merge: the union of targets, the
+// greatest of every counter, and per target the latest refusal.
 func MergeOutbox(a, b Outbox) Outbox {
 	out := Outbox{
 		Targets: slices.Compact(slices.Sorted(slices.Values(slices.Concat(a.Targets, b.Targets)))),
@@ -76,6 +112,19 @@ func MergeOutbox(a, b Outbox) Outbox {
 
 		for t, ts := range b.Shipped {
 			out.Shipped[t] = max(out.Shipped[t], ts)
+		}
+	}
+
+	if len(a.Refused)+len(b.Refused) > 0 {
+		out.Refused = maps.Clone(a.Refused)
+		if out.Refused == nil {
+			out.Refused = make(map[string]Refusal, len(b.Refused))
+		}
+
+		for t, r := range b.Refused {
+			if cur, ok := out.Refused[t]; !ok || r.later(cur) {
+				out.Refused[t] = r
+			}
 		}
 	}
 

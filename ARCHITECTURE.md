@@ -290,7 +290,19 @@ Ships a bucket's versions to buckets of other fs deployments
 ([design](docs/design/geo-replication.md)). `Client` speaks the
 `?x-fs-replica` protocol to one target bucket, SigV4-signed with the
 target's credentials; see "Replication target" under Engine for the other
-side. The runner that drains the outbox through it comes next.
+side. `Runner` drains the outbox through it: one per node, shipping the
+buckets it is elected for (`Owns`, the lifecycle sweeper's election in
+`cmd/fs`). A pass reads each bucket's backlog tally and, when it is not
+zero, the whole outbox a page at a time; per target it exports the pending
+versions (whole the first time, attrs alone after), claims their blocks and
+sends the missing ones (four in flight), applies them in batches of 100,
+and records `Shipped` or the target's `Refused` reason in the outbox rows. A
+version deleted since is marked shipped. Rows still pending for a removed
+target are marked shipped. A target's failure backs it off (1s doubling to
+a minute) without stopping the others; a refused version waits a minute.
+`Check` is the handshake the admin API runs before setting a target.
+`Runner.Stats` feeds the `fs.replication.*` metrics and the status
+endpoint.
 
 ### `integration` and `internal/mock`
 
@@ -472,7 +484,8 @@ CompleteMultipartUpload), delete marker (for targets that take them) and tag
 or ACL change writes the version's row in the same `table.Write` as the
 change, naming the targets whose prefix the key matches and the change's TS
 as `Pending`; deliveries raise `Shipped[target]` to it. The merge takes the
-union of targets and the greatest of every counter, and a row every target
+union of targets, the greatest of every counter and per target the latest
+refusal (`Refused`, with the target's reason), and a row every target
 has received is compacted away by tombstone collection. Version deletes and
 the lifecycle sweep's changes (`fs.WithLifecycleAction`) write no row: S3
 replicates neither. The table tallies rows still pending per bucket, the
@@ -493,8 +506,10 @@ change never creates one — with the payload marked `Replica`, blocks as
 the target stores them, an SSE-S3 data key wrapped by the target's key
 ring and an SSE-C one as the client sealed it; no outbox row, no quota.
 The source side is `Engine.ExportReplica` / `ReadReplicaBlock` and
-`internal/replication.Client`, which signs each request with SigV4. The
-runner that drives them is not built yet.
+`internal/replication.Client`, which signs each request with SigV4, driven
+by `internal/replication.Runner` through `Engine.Outbox` and
+`MarkReplicated`; `Engine.ReplicationStatus` reads per-target backlogs and
+refusals for the admin API.
 
 **Tombstones.** A delete is a merge like any other write: a deleted or aborted
 version stays in its object row as `Gone`, a released block reference stays
