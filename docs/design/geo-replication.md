@@ -166,8 +166,10 @@ bring them back.
   at quorum, keep the rows pending for the target, read their versions, and
   ship:
   1. **blocks:** ask the destination which of the versions' block hashes it
-     lacks, read those (decoding erasure-coded ones) and send them, several
-     in flight;
+     lacks, read those (decoding erasure-coded ones) and send them: 16
+     versions of a batch at once, 4 blocks of each, so that a long round
+     trip is paid once per 16 versions rather than once per version, over
+     a connection kept for each request in flight;
   2. **versions:** send the batch, and record `Shipped` for every version
      the destination accepted.
 - **Pacing:** the runner polls every five seconds, and runs passes back to
