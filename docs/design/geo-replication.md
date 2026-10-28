@@ -1,8 +1,8 @@
 # Design: geo-replication
 
-**Status:** in progress: phases 1 (the outbox), 2 (the target), 3 (the
-runner, admin API and CLI), 4 (backfill), 5 (the status header) and 6 (the
-chaos run) are implemented; a WAN soak remains. Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
+**Status:** implemented: phases 1 (the outbox), 2 (the target), 3 (the
+runner, admin API and CLI), 4 (backfill), 5 (the status header), 6 (the
+chaos run) and 7 (the WAN soak). Required by [COMPATIBILITY.md](../../COMPATIBILITY.md)
 ("Planned: each requires a design document before commitment").
 
 **Scope:** asynchronous, bucket-level replication of object versions from a
