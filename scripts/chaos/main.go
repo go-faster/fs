@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
@@ -35,6 +36,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,6 +76,18 @@ type node struct {
 	frozen bool
 	thawed time.Time
 	client *minio.Client
+	// host is where the node's S3 port is, for a target on another machine;
+	// empty means this one.
+	host string
+}
+
+// s3Addr is the node's S3 address.
+func (n *node) s3Addr() string {
+	if n.host != "" {
+		return net.JoinHostPort(n.host, strconv.Itoa(n.s3))
+	}
+
+	return fmt.Sprintf("127.0.0.1:%d", n.s3)
 }
 
 // thawGrace is how long after a freeze the requests a node held may still
@@ -96,7 +110,14 @@ type cluster struct {
 	// layout spreads for.
 	secret string
 	widths []int
+	// bind is the host its S3 ports listen on, and tls the certificate they
+	// serve, for a target served to another machine (-serve-target).
+	bind string
+	tls  *tlsFiles
 }
+
+// tlsFiles is a certificate and its key.
+type tlsFiles struct{ cert, key string }
 
 // realistic runs the nodes with fs's own defaults: fsync on, and the
 // background work at its production cadence. The shortened intervals make a
@@ -137,9 +158,17 @@ func lifecycleInterval() string {
 }
 
 func (c *cluster) config(n *node) string {
-	return fmt.Sprintf(`server:
-  addr: "127.0.0.1:%d"
-`+storageConfig()+`
+	bind := "127.0.0.1"
+	if c.bind != "" {
+		bind = c.bind
+	}
+
+	server := fmt.Sprintf("server:\n  addr: %q\n", net.JoinHostPort(bind, strconv.Itoa(n.s3)))
+	if c.tls != nil {
+		server += fmt.Sprintf("  tls: {cert_file: %q, key_file: %q}\n", c.tls.cert, c.tls.key)
+	}
+
+	return server + fmt.Sprintf(storageConfig()+`
 auth:
   keys:
     - access_key: %s
@@ -155,7 +184,7 @@ cluster:
   advertise_addr: "127.0.0.1:%d"
   peers: ["127.0.0.1:%d"]
   secret: %s
-`, n.s3, accessKey, secretKey, n.admin, token, lifecycleInterval(), n.id, n.peer, n.peer, c.nodes[0].peer, c.secret)
+`, accessKey, secretKey, n.admin, token, lifecycleInterval(), n.id, n.peer, n.peer, c.nodes[0].peer, c.secret)
 }
 
 // newNode is node id with its ports, its directory under dir and an S3
@@ -195,6 +224,11 @@ func (c *cluster) start(n *node) error {
 
 	cmd.Env = append(os.Environ(), "OTEL_TRACES_EXPORTER=none", "OTEL_METRICS_EXPORTER=none", "OTEL_LOGS_EXPORTER=none")
 
+	// A remote target's certificate is the only one the runner trusts.
+	if targetCA != "" {
+		cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+targetCA)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -203,8 +237,16 @@ func (c *cluster) start(n *node) error {
 	n.cmd, n.up = cmd, true
 	n.mu.Unlock()
 
+	health, get := fmt.Sprintf("http://127.0.0.1:%d/health", n.s3), http.Get //nolint:noctx // Harness.
+	if c.tls != nil {
+		health = fmt.Sprintf("https://%s/health", net.JoinHostPort(c.bind, strconv.Itoa(n.s3)))
+		get = (&http.Client{Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // Its own certificate, just made.
+		}}).Get
+	}
+
 	for range 120 {
-		if resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", n.s3)); err == nil { //nolint:noctx // Harness.
+		if resp, err := get(health); err == nil {
 			_ = resp.Body.Close()
 
 			return nil
@@ -655,6 +697,9 @@ func main() {
 	realisticFlag := flag.Bool("realistic", false, "run the nodes with fs's defaults (fsync on, production background cadence) instead of shortened intervals")
 
 	flag.BoolVar(&replicate, "replication", true, "replicate the versioned bucket to a second, three-node deployment through a fault-injecting proxy")
+	flag.StringVar(&serveTarget, "serve-target", "", "run only the replication target, its S3 ports on this host over TLS, for a soak on another machine (needs -dir)")
+	flag.StringVar(&targetHost, "target", "", "replicate to the target that -serve-target runs on this host, instead of a local one")
+	flag.StringVar(&targetCA, "target-ca", "", "the remote target's certificate ("+targetCert+" in its -dir)")
 
 	flag.Parse()
 
@@ -671,6 +716,15 @@ func main() {
 
 	if realistic && !settleSet {
 		settleWithin = 10 * time.Minute
+	}
+
+	if serveTarget != "" {
+		if err := serveTargetOnly(*bin, *dir, serveTarget); err != nil {
+			fmt.Fprintln(os.Stderr, "chaos:", err)
+			os.Exit(1)
+		}
+
+		return
 	}
 
 	if err := run(*bin, *dir, *rounds, *workers, *keysPer, *load, *seed, *only); err != nil {
@@ -708,8 +762,10 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		ports = append(ports, 18400+i, 18500+i, 18600+i)
 	}
 
-	for i := range 3 {
-		ports = append(ports, 18700+i, 18800+i, 18900+i)
+	if targetHost == "" {
+		for i := range 3 {
+			ports = append(ports, 18700+i, 18800+i, 18900+i)
+		}
 	}
 
 	for _, port := range ports {
@@ -735,17 +791,14 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 	// through a proxy that injects network faults.
 	var dst *cluster
 
-	if replicate {
-		dst = &cluster{bin: abs, secret: secret + "-replica", widths: []int{3}}
-
-		for i := range 3 {
-			n, err := newNode(fmt.Sprintf("t%d", i+1), zones[i], 18700+i, 18800+i, 18900+i, dir)
-			if err != nil {
-				return err
-			}
-
-			n.member = true
-			dst.nodes = append(dst.nodes, n)
+	switch {
+	case replicate && targetHost != "":
+		if dst, err = remoteTarget(targetHost); err != nil {
+			return err
+		}
+	case replicate:
+		if dst, err = newTarget(abs, dir); err != nil {
+			return err
 		}
 	}
 
@@ -966,6 +1019,7 @@ func run(bin, dir string, rounds, workers, keysPer int, load time.Duration, seed
 		if repl != nil {
 			wg.Go(func() { repl.disrupt(loadCtx, round, load) })
 			wg.Go(func() { repl.deleteAtTarget(loadCtx, seed+uint64(round)) }) //nolint:gosec // round is small and positive.
+			wg.Go(func() { repl.watch(loadCtx) })
 		}
 
 		time.Sleep(load)
